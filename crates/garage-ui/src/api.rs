@@ -84,6 +84,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/share", post(share))
         .route("/api/cluster/health", get(cluster_health))
         .route("/api/cluster/status", get(cluster_status))
+        .route("/api/cluster/statistics", get(cluster_statistics))
         .route("/api/garage/{*path}", any(garage))
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
         .layer(DefaultBodyLimit::max(json_limit));
@@ -1514,6 +1515,25 @@ async fn cluster_status(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     read_cluster(&app, &current, &headers, "v2/GetClusterStatus").await
+}
+
+async fn cluster_statistics(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewStats)?;
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetClusterStatistics",
+        None,
+        &[],
+        &headers,
+    )
+    .await
 }
 
 async fn read_cluster(
@@ -4089,5 +4109,71 @@ mod tests {
                 "Garage admin API is not configured",
             );
         }
+    }
+
+    #[tokio::test]
+    async fn cluster_statistics_returns_the_garage_body() {
+        let body = r#"{ "freeform" : "nodes=3 bytes=9007199254740993" , "totalObjectBytes" : 9007199254740993 }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/cluster/statistics", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert_cluster_get(
+            &cluster_calls(&mock, "GetClusterStatistics"),
+            "/v2/GetClusterStatistics",
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_can_read_cluster_statistics() {
+        let body = r#"{ "freeform" : "ok" , "bucketCount" : 9007199254740993 }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/cluster/statistics", None, Some(&viewer)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert_cluster_get(
+            &cluster_calls(&mock, "GetClusterStatistics"),
+            "/v2/GetClusterStatistics",
+        );
+    }
+
+    #[tokio::test]
+    async fn cluster_statistics_requires_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let anonymous = exchange(&app, request("GET", "/api/cluster/statistics", None, None)).await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/cluster/statistics", None, Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        );
     }
 }
