@@ -6,6 +6,7 @@ import { Objects } from "./Objects";
 
 afterEach(() => {
   cleanup();
+  window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -126,13 +127,54 @@ test("moves into a prefix and a breadcrumb segment sets that prefix", async () =
   );
   renderObjects();
   fireEvent.click(await screen.findByRole("button", { name: "photos/2024/" }));
+  expect(window.location.hash).toBe("#buckets/bkt-1/photos/2024/");
   expect(await screen.findByRole("button", { name: "photos/2024/a.txt" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "photos" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "2024" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "photos" }));
+  expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   expect(await screen.findByRole("button", { name: "photos/b.txt" })).toBeTruthy();
   expect(prefixes).toContain("photos/2024/");
   expect(prefixes).toContain("photos/");
+});
+
+test("opens the prefix from the address and follows hashchange", async () => {
+  window.location.hash = "#buckets/bkt-1/photos/2024%20q/";
+  const prefixes: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const prefix = new URL(String(input), "http://ui.local").searchParams.get("prefix") ?? "";
+      prefixes.push(prefix);
+      return json(page([objectRow(`${prefix}a.txt`, 1, "2026-10-11T00:00:00Z")], null, prefix));
+    }),
+  );
+  renderObjects();
+  expect(await screen.findByRole("button", { name: "photos/2024 q/a.txt" })).toBeTruthy();
+  expect(prefixes[0]).toBe("photos/2024 q/");
+  window.location.hash = "#buckets/bkt-1/photos/";
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  expect(await screen.findByRole("button", { name: "photos/a.txt" })).toBeTruthy();
+  expect(prefixes).toContain("photos/");
+});
+
+test("wraps a 64-character bucket id and object key", async () => {
+  const bucketId = "b".repeat(64);
+  const key = "k".repeat(64);
+  window.location.hash = `#buckets/${bucketId}`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(page([objectRow(key, 1, "2026-10-11T00:00:00Z")]))),
+  );
+  renderObjects(bucketId);
+  const idButton = await screen.findByRole("button", { name: bucketId });
+  const keyButton = await screen.findByRole("button", { name: key });
+  expect(idButton.className).toContain("break-all");
+  expect(idButton.className).toContain("min-w-0");
+  expect(idButton.className).toContain("max-w-full");
+  expect(keyButton.className).toContain("break-all");
+  expect(keyButton.className).toContain("min-w-0");
+  expect(keyButton.className).toContain("max-w-full");
 });
 
 test("requests the next token and shows that page", async () => {

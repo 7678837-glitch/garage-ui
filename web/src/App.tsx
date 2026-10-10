@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
@@ -9,7 +9,7 @@ import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
-import { Nav, sectionFromHash, type SectionId } from "./Nav";
+import { Nav, sectionFromHash, useLocationHash, type SectionId } from "./Nav";
 import { ThemeChooser } from "./theme";
 import { Users } from "./Users";
 
@@ -159,18 +159,9 @@ function LoginForm() {
 }
 
 function useHashSection(role: string) {
-  const [hash, setHash] = useState(() => window.location.hash);
-  useEffect(() => {
-    const sync = () => setHash(window.location.hash);
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
-  }, []);
+  const [hash, assignHash] = useLocationHash();
   const select = (id: SectionId) => {
-    const next = `#${id}`;
-    if (window.location.hash !== next) {
-      window.location.hash = next;
-    }
-    setHash(next);
+    assignHash(`#${id}`);
   };
   return { section: sectionFromHash(hash, role), select };
 }

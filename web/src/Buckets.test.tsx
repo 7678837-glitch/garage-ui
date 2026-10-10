@@ -5,6 +5,7 @@ import { Buckets } from "./Buckets";
 
 afterEach(() => {
   cleanup();
+  window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
@@ -718,4 +719,45 @@ test("loads permissions for an encoded bucket id only after the row button is cl
   expect(screen.queryByText("cors-secret.example")).toBeNull();
   expect(screen.queryByText("life-secret")).toBeNull();
   expect(calls.filter((call) => call.startsWith("/api/buckets/"))).toEqual(["/api/buckets/a%26b%3Dc"]);
+});
+
+test("an object address hides create and the table, and back returns to #buckets", async () => {
+  window.location.hash = "#buckets/bkt-1/photos/2024/";
+  const prefixes: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/buckets/bkt-1/objects") {
+        prefixes.push(url.searchParams.get("prefix") ?? "");
+        return json({
+          prefix: url.searchParams.get("prefix") ?? "",
+          entries: [
+            {
+              kind: "object",
+              key: "photos/2024/a.txt",
+              size: 4,
+              etag: "abc",
+              lastModified: "2026-10-11T00:00:00Z",
+            },
+          ],
+          next: null,
+        });
+      }
+      return json({ items: [{ id: "bkt-1", globalAliases: ["east"] }], hasMore: false });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByRole("button", { name: "Back to buckets" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "photos/2024/a.txt" })).toBeTruthy();
+  expect(prefixes).toContain("photos/2024/");
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
+  expect(screen.queryByText("east")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
+  expect(window.location.hash).toBe("#buckets");
+  expect(await screen.findByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
+  expect(screen.getByText("east")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
 });

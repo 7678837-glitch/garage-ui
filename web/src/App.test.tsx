@@ -590,6 +590,19 @@ function stubSignedIn(role: "admin" | "viewer") {
   );
 }
 
+test("the Buckets nav action sets exactly #buckets", async () => {
+  window.location.hash = "#buckets/bucket-ada/photos/2024/";
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByRole("button", { name: "Back to buckets" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  await chooseSection("Buckets");
+  expect(window.location.hash).toBe("#buckets");
+  expect(await screen.findByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(screen.getByText("bucket-ada")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
+});
+
 test("choosing Keys hides the buckets section and sets the hash", async () => {
   window.location.hash = "#buckets";
   stubSignedIn("admin");
@@ -627,6 +640,18 @@ test("an admin sees Users and a viewer opening #users sees overview", async () =
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+});
+
+test("a non-admin #users/x stays on overview and keeps the hash", async () => {
+  window.location.hash = "#users/x";
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
+  expect(window.location.hash).toBe("#users/x");
 });
 
 test("an unknown hash shows overview", async () => {

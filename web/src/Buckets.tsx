@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
+import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 import { Objects } from "./Objects";
 
 type Alias =
@@ -775,7 +776,9 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [browserId, setBrowserId] = useState<string | null>(null);
+  const [hash, assignHash] = useLocationHash();
+  const location = bucketLocationFromHash(hash);
+  const browsing = location.kind === "objects";
   const list = useInfiniteQuery({
     queryKey: ["buckets"],
     initialPageParam: 0,
@@ -809,7 +812,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
   return (
     <section className="grid gap-4" aria-label="Buckets" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Buckets</h2>
-      {canManage ? <CreateBucketForm /> : null}
+      {canManage && !browsing ? <CreateBucketForm /> : null}
       {view.loading ? <p>Loading buckets</p> : null}
       {view.refreshing ? <p>Refreshing buckets</p> : null}
       {view.failure ? (
@@ -828,17 +831,17 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
-      {browserId ? (
+      {browsing ? (
         <Objects
-          key={browserId}
-          bucketId={browserId}
+          key={location.bucketId}
+          bucketId={location.bucketId}
           onBack={() => {
-            setBrowserId(null);
+            assignHash("#buckets");
           }}
         />
       ) : null}
       {view.empty ? <p>There are no buckets.</p> : null}
-      {browserId === null && list.data && rows.length > 0 ? (
+      {!browsing && list.data && rows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -863,7 +866,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
                       className="ml-2 border border-neutral-900 px-2 py-1 text-left"
                       type="button"
                       onClick={() => {
-                        setBrowserId(bucket.id);
+                        assignHash(hashForObjects(bucket.id, ""));
                       }}
                     >
                       Objects for {bucket.id}
@@ -908,7 +911,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
           </table>
         </div>
       ) : null}
-      {browserId === null && view.partial ? (
+      {!browsing && view.partial ? (
         <>
           <p>More buckets are available.</p>
           <button

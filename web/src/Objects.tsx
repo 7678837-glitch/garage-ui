@@ -3,6 +3,7 @@ import { useState } from "react";
 import { encodeObjectKey } from "./App";
 import { ApiError, api } from "./api/client";
 import { bucketUrl } from "./BucketPermissions";
+import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 
 type ObjectEntry = {
   kind: "object";
@@ -49,7 +50,6 @@ type ObjectMeta = {
 type SortChoice = "key" | "size" | "time";
 
 type BrowseState = {
-  prefix: string;
   next: string | null;
   sort: SortChoice;
   search: string | null;
@@ -65,12 +65,13 @@ const PAGE_LIMIT = "100";
 const UNAVAILABLE = "Objects are unavailable";
 
 const initialBrowse: BrowseState = {
-  prefix: "",
   next: null,
   sort: "key",
   search: null,
   selected: null,
 };
+
+const wrap = "min-w-0 max-w-full break-all";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -272,54 +273,69 @@ function matchesAsEntries(matches: SearchMatch[]): ObjectEntry[] {
 }
 
 export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => void }) {
+  const [hash, assignHash] = useLocationHash();
+  const location = bucketLocationFromHash(hash);
+  const prefix =
+    location.kind === "objects" && location.bucketId === bucketId ? location.prefix : "";
   const [browse, setBrowse] = useState(initialBrowse);
   const [draft, setDraft] = useState("");
+  const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
-  const searching = browse.search !== null;
+  let pageToken = browse.next;
+  let search = browse.search;
+  let selected = browse.selected;
+  if (trackedPrefix !== prefix) {
+    pageToken = null;
+    search = null;
+    selected = null;
+    setTrackedPrefix(prefix);
+    setDraft("");
+    setBrowse((current) => ({ ...current, next: null, search: null, selected: null }));
+  }
+  const searching = search !== null;
   const list = useQuery({
-    queryKey: ["bucket-objects", bucketId, browse.prefix, browse.next],
-    queryFn: () => readJson(listPath(bucketId, browse.prefix, browse.next)).then(parsePage),
+    queryKey: ["bucket-objects", bucketId, prefix, pageToken],
+    queryFn: () => readJson(listPath(bucketId, prefix, pageToken)).then(parsePage),
     enabled: !searching,
   });
   const found = useQuery({
-    queryKey: ["bucket-object-search", bucketId, browse.prefix, browse.search],
-    queryFn: () =>
-      readJson(searchPath(bucketId, browse.prefix, browse.search ?? "")).then(parseSearch),
+    queryKey: ["bucket-object-search", bucketId, prefix, search],
+    queryFn: () => readJson(searchPath(bucketId, prefix, search ?? "")).then(parseSearch),
     enabled: searching,
   });
   const meta = useQuery({
-    queryKey: ["bucket-object", bucketId, browse.selected],
-    queryFn: () => readJson(metadataPath(bucketId, browse.selected ?? "")).then(parseMeta),
-    enabled: browse.selected !== null,
+    queryKey: ["bucket-object", bucketId, selected],
+    queryFn: () => readJson(metadataPath(bucketId, selected ?? "")).then(parseMeta),
+    enabled: selected !== null,
   });
   if (!searching && list.data && (kept === null || kept.page !== list.data)) {
-    setKept({ prefix: browse.prefix, page: list.data });
+    setKept({ prefix, page: list.data });
   }
 
-  const page = list.data ?? (kept !== null && kept.prefix === browse.prefix ? kept.page : null);
+  const page = list.data ?? (kept !== null && kept.prefix === prefix ? kept.page : null);
   const entries = searching ? matchesAsEntries(found.data?.matches ?? []) : (page?.entries ?? []);
   const visible = sortLoaded(entries, browse.sort);
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
-  const metaFailure = browse.selected !== null && meta.isError ? failureOf(meta.error) : null;
+  const metaFailure = selected !== null && meta.isError ? failureOf(meta.error) : null;
   const failure = listFailure ?? searchFailure;
   const showRows = visible.length > 0 && (searching ? found.isSuccess : page !== null);
   const showEmpty = searching
     ? found.isSuccess && found.data !== undefined && found.data.matches.length === 0
     : list.isSuccess && list.data !== undefined && list.data.entries.length === 0;
-  const next =
-    !searching && page && page.next && page.next !== browse.next && !list.isError ? page.next : null;
+  const nextPage =
+    !searching && page && page.next && page.next !== pageToken && !list.isError ? page.next : null;
 
-  function openPrefix(prefix: string) {
+  function openPrefix(nextPrefix: string) {
     setDraft("");
     setBrowse((current) => ({
       ...current,
-      prefix,
       next: null,
       search: null,
       selected: null,
     }));
+    assignHash(hashForObjects(bucketId, nextPrefix));
   }
 
   function retry() {
@@ -328,7 +344,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
     } else {
       void list.refetch();
     }
-    if (browse.selected !== null) {
+    if (selected !== null) {
       void meta.refetch();
     }
   }
@@ -344,7 +360,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
       </button>
       <nav aria-label="Prefix" className="flex flex-wrap gap-2">
         <button
-          className="border border-neutral-900 px-2 py-1 text-left"
+          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
           type="button"
           onClick={() => {
             openPrefix("");
@@ -352,10 +368,10 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
         >
           {bucketId}
         </button>
-        {prefixSegments(browse.prefix).map((segment) => (
+        {prefixSegments(prefix).map((segment) => (
           <button
             key={segment.prefix}
-            className="border border-neutral-900 px-2 py-1 text-left"
+            className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
             type="button"
             onClick={() => {
               openPrefix(segment.prefix);
@@ -451,9 +467,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
               {visible.map((entry) =>
                 entry.kind === "prefix" ? (
                   <tr key={`prefix:${entry.prefix}`}>
-                    <td className="py-2 pr-3">
+                    <td className="min-w-0 max-w-full break-all py-2 pr-3">
                       <button
-                        className="border border-neutral-900 px-2 py-1 text-left"
+                        className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
                         type="button"
                         onClick={() => {
                           openPrefix(entry.prefix);
@@ -467,9 +483,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
                   </tr>
                 ) : (
                   <tr key={`object:${entry.key}`}>
-                    <td className="py-2 pr-3">
+                    <td className="min-w-0 max-w-full break-all py-2 pr-3">
                       <button
-                        className="border border-neutral-900 px-2 py-1 text-left"
+                        className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
                         type="button"
                         onClick={() => {
                           setBrowse((current) => ({ ...current, selected: entry.key }));
@@ -487,13 +503,13 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           </table>
         </div>
       ) : null}
-      {meta.data && browse.selected === meta.data.key ? <p>{meta.data.contentType}</p> : null}
-      {next ? (
+      {meta.data && selected === meta.data.key ? <p>{meta.data.contentType}</p> : null}
+      {nextPage ? (
         <button
           className="border border-neutral-900 px-3 py-1 text-left"
           type="button"
           onClick={() => {
-            setBrowse((current) => ({ ...current, next, selected: null }));
+            setBrowse((current) => ({ ...current, next: nextPage, selected: null }));
           }}
         >
           Next page
