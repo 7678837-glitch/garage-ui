@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
+import { BucketPermissions, bucketUrl } from "./BucketPermissions";
 
 type Alias =
   | { scope: "global"; name: string }
@@ -240,10 +241,6 @@ function nextOffset(offset: number, page: BucketPage): number | undefined {
     return undefined;
   }
   return offset + page.items.length;
-}
-
-function bucketUrl(id: string): string {
-  return `/api/buckets/${encodeURIComponent(id)}`;
 }
 
 function createBody(globalAlias: string): { globalAlias?: string } {
@@ -800,6 +797,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
                 <tr key={`${bucket.id}-${index}`}>
                   <td className="py-2 pr-3 align-top">
                     <span>{bucket.id}</span>
+                    <BucketPermissions bucketId={bucket.id} canManage={canManage} />
                     {canManage ? (
                       <button
                         className="ml-2 border border-neutral-900 px-2 py-1 text-left"
