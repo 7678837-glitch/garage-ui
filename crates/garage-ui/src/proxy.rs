@@ -618,6 +618,16 @@ mod lists {
         if upstream.status == StatusCode::NOT_FOUND {
             return Err(ProbeMiss::Absent);
         }
+        // v2.4.1 对未发布的列表接口回 400，正文含这句，和 404 一样表示接口不存在。
+        const UNKNOWN_ENDPOINT: &[u8] = b"Unknown API endpoint";
+        if upstream.status == StatusCode::BAD_REQUEST
+            && upstream
+                .bytes
+                .windows(UNKNOWN_ENDPOINT.len())
+                .any(|window| window == UNKNOWN_ENDPOINT)
+        {
+            return Err(ProbeMiss::Absent);
+        }
         if upstream.status.is_client_error() || upstream.status.is_server_error() {
             return Err(ProbeMiss::Down(upstream_failure(upstream)));
         }
@@ -1285,6 +1295,19 @@ mod tests {
         if status == 404 {
             return ("404 Not Found", r#"{"error":"not found"}"#.to_string());
         }
+        if status == 400 {
+            return (
+                "400 Bad Request",
+                r#"{"message":"Unknown API endpoint"}"#.to_string(),
+            );
+        }
+        // 422 只给测试用：线上仍是 400，但 message 不含未知端点，不能当成接口不存在。
+        if status == 422 {
+            return (
+                "400 Bad Request",
+                r#"{"message":"limit is not valid"}"#.to_string(),
+            );
+        }
         let limit = query(target, "limit")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(count);
@@ -1674,6 +1697,98 @@ mod tests {
                 .iter()
                 .all(|line| !line.contains("ListBuckets "))
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_endpoint_list_falls_back_to_id_lists() {
+        let mock = Mock::start(MockOpts {
+            buckets: 2,
+            keys: 3,
+            bucket_info: 400,
+            key_info: 400,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        let buckets = list_buckets(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&buckets), ["00000", "00001"]);
+        assert!(!buckets.more);
+        assert_eq!(buckets.items[0]["via"], "detail");
+        let keys = list_keys(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&keys), ["00000", "00001", "00002"]);
+        assert!(!keys.more);
+        assert_eq!(keys.items[0]["via"], "detail");
+        let probes = list_probes(app.settings.garage_admin_url.as_deref());
+        assert!(probes.buckets == Probe::Absent);
+        assert!(probes.keys == Probe::Absent);
+        let lines = mock.lines();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListKeysInfo"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBuckets "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListKeys "))
+                .count(),
+            1
+        );
+        let again = list_buckets(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&again), ["00000", "00001"]);
+        assert_eq!(again.items[0]["via"], "detail");
+        assert_eq!(
+            mock.lines()
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_endpoint_list_falls_back_leaves_other_400_down() {
+        let mock = Mock::start(MockOpts {
+            buckets: 2,
+            keys: 0,
+            bucket_info: 422,
+            key_info: 404,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        assert!(list_buckets(&app, 0, 10).await.is_err());
+        let lines = mock.lines();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+        assert!(lines.iter().all(|line| !line.contains("ListBuckets ")));
+        assert!(lines.iter().all(|line| !line.contains("GetBucketInfo")));
+        let probes = list_probes(app.settings.garage_admin_url.as_deref());
+        assert!(probes.buckets != Probe::Absent);
+        assert!(probes.keys != Probe::Absent);
     }
 
     #[tokio::test]
