@@ -8,9 +8,19 @@ type Alias =
 
 type AliasBody = { globalAlias: string } | { localAlias: string; accessKeyId: string };
 
+type WholeNumber = { kind: "digits"; text: string } | { kind: "unset" };
+
+type Quotas = {
+  maxSize: WholeNumber;
+  maxObjects: WholeNumber;
+};
+
 type Bucket = {
   id: string;
   aliases: Alias[];
+  objects: string | null;
+  bytes: string | null;
+  quotas: Quotas | null;
 };
 
 type BucketPage = {
@@ -72,6 +82,16 @@ function parseAliases(value: unknown, scope: "global" | "local"): Alias[] {
   return aliases;
 }
 
+const COUNT_KEYS = new Set(["objects", "bytes", "maxSize", "maxObjects"]);
+
+const DECIMAL_UNITS = [
+  ["PB", 15],
+  ["TB", 12],
+  ["GB", 9],
+  ["MB", 6],
+  ["KB", 3],
+] as const;
+
 function parseBucket(value: unknown): Bucket {
   if (typeof value !== "object" || value === null) {
     throw new Error("Buckets are unavailable");
@@ -83,14 +103,54 @@ function parseBucket(value: unknown): Bucket {
   return {
     id: row.id,
     aliases: [...parseAliases(row.globalAliases, "global"), ...parseAliases(row.localAliases, "local")],
+    objects: digitsOf(row.objects),
+    bytes: digitsOf(row.bytes),
+    quotas: parseQuotas(row.quotas),
   };
 }
 
-function parsePage(body: unknown): BucketPage {
-  if (typeof body !== "object" || body === null) {
+function digitsOf(value: unknown): string | null {
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+    return value;
+  }
+  return null;
+}
+
+function parseQuotas(value: unknown): Quotas | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const maxSize = quotaValue(row.maxSize);
+  const maxObjects = quotaValue(row.maxObjects);
+  if (maxSize === null || maxObjects === null) {
+    return null;
+  }
+  return { maxSize, maxObjects };
+}
+
+function quotaValue(value: unknown): WholeNumber | null {
+  if (value === undefined || value === null) {
+    return { kind: "unset" };
+  }
+  const text = digitsOf(value);
+  if (text === null) {
+    return null;
+  }
+  return { kind: "digits", text };
+}
+
+function parsePage(text: string): BucketPage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(quoteCountLiterals(text)) as unknown;
+  } catch {
     throw new Error("Buckets are unavailable");
   }
-  const page = body as Record<string, unknown>;
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Buckets are unavailable");
+  }
+  const page = parsed as Record<string, unknown>;
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
     throw new Error("Buckets are unavailable");
   }
@@ -98,6 +158,81 @@ function parsePage(body: unknown): BucketPage {
     items: page.items.map(parseBucket),
     hasMore: page.hasMore,
   };
+}
+
+// JSON.parse 会把 9007199254740993 收成 9007199254740992。配额和用量按响应原文保留。
+function quoteCountLiterals(text: string): string {
+  const parts: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] !== '"') {
+      parts.push(text[index]);
+      index += 1;
+      continue;
+    }
+    const end = endOfString(text, index);
+    const raw = text.slice(index, end);
+    parts.push(raw);
+    index = end;
+    let key = "";
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (typeof parsed === "string") {
+        key = parsed;
+      }
+    } catch {
+      key = "";
+    }
+    if (!COUNT_KEYS.has(key)) {
+      continue;
+    }
+    const colon = skipWs(text, index);
+    if (text[colon] !== ":") {
+      continue;
+    }
+    const valueAt = skipWs(text, colon + 1);
+    const numberEnd = endOfDigits(text, valueAt);
+    if (numberEnd === valueAt) {
+      continue;
+    }
+    parts.push(text.slice(index, valueAt));
+    parts.push(`"${text.slice(valueAt, numberEnd)}"`);
+    index = numberEnd;
+  }
+  return parts.join("");
+}
+
+function endOfString(text: string, start: number): number {
+  let index = start + 1;
+  while (index < text.length) {
+    if (text[index] === "\\") {
+      index += 2;
+      continue;
+    }
+    if (text[index] === '"') {
+      return index + 1;
+    }
+    index += 1;
+  }
+  return text.length;
+}
+
+function skipWs(text: string, index: number): number {
+  while (index < text.length && " \n\r\t".includes(text[index])) {
+    index += 1;
+  }
+  return index;
+}
+
+function endOfDigits(text: string, index: number): number {
+  const start = index;
+  while (index < text.length && text[index] >= "0" && text[index] <= "9") {
+    index += 1;
+  }
+  if (index === start || (index < text.length && ".eE".includes(text[index]))) {
+    return start;
+  }
+  return index;
 }
 
 function nextOffset(offset: number, page: BucketPage): number | undefined {
@@ -145,9 +280,216 @@ function removeLabel(alias: Alias): string | null {
   return `Remove local alias ${alias.name} for ${alias.accessKeyId}`;
 }
 
+function errorMessage(text: string, status: number): string {
+  const fallback = `request failed (${status})`;
+  if (!text.startsWith("{")) {
+    return fallback;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed === "object" && parsed && "message" in parsed) {
+    const message = parsed.message;
+    if (typeof message === "string" && message.length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
 async function loadPage(offset: number): Promise<BucketPage> {
-  const body = await api<unknown>(`/api/buckets?offset=${offset}&limit=${PAGE_LIMIT}`);
-  return parsePage(body);
+  const response = await fetch(`/api/buckets?offset=${offset}&limit=${PAGE_LIMIT}`, {
+    credentials: "include",
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(errorMessage(text, response.status));
+  }
+  return parsePage(text);
+}
+
+function objectUsage(bucket: Bucket): string | null {
+  const used = bucket.objects;
+  const quota = bucket.quotas?.maxObjects;
+  if (used !== null && quota?.kind === "digits") {
+    return `${used} of ${quota.text} objects`;
+  }
+  if (used !== null && quota?.kind === "unset") {
+    return `${used} objects. Object quota is not set`;
+  }
+  if (used !== null) {
+    return `${used} objects`;
+  }
+  if (quota?.kind === "digits") {
+    return `Object quota ${quota.text}`;
+  }
+  if (quota?.kind === "unset") {
+    return "Object quota is not set";
+  }
+  return null;
+}
+
+function byteUsage(bucket: Bucket): string | null {
+  const used = bucket.bytes;
+  const quota = bucket.quotas?.maxSize;
+  if (used !== null && quota?.kind === "digits") {
+    return `${used} of ${quota.text} bytes${unitPair(used, quota.text)}`;
+  }
+  if (used !== null && quota?.kind === "unset") {
+    return `${used} bytes${unitSingle(used)}. Size quota is not set`;
+  }
+  if (used !== null) {
+    return `${used} bytes${unitSingle(used)}`;
+  }
+  if (quota?.kind === "digits") {
+    return `Size quota ${quota.text} bytes${unitSingle(quota.text)}`;
+  }
+  if (quota?.kind === "unset") {
+    return "Size quota is not set";
+  }
+  return null;
+}
+
+function unitSingle(digits: string): string {
+  const shown = formatBytes(digits);
+  if (shown.endsWith(" B")) {
+    return "";
+  }
+  return ` (${shown})`;
+}
+
+function unitPair(used: string, quota: string): string {
+  const left = formatBytes(used);
+  const right = formatBytes(quota);
+  if (left.endsWith(" B") && right.endsWith(" B")) {
+    return "";
+  }
+  return ` (${left} of ${right})`;
+}
+
+// 按十进制单位切原文字。不用 Number，避免超过 2^53 的字节被舍入。
+function formatBytes(bytes: string): string {
+  const digits = bytes.replace(/^0+(?=\d)/, "");
+  for (const [unit, scale] of DECIMAL_UNITS) {
+    if (digits.length > scale) {
+      return `${formatInUnit(digits, scale)} ${unit}`;
+    }
+  }
+  return `${digits} B`;
+}
+
+function formatInUnit(bytes: string, scale: number): string {
+  const whole = bytes.length > scale ? bytes.slice(0, bytes.length - scale) : "0";
+  let fraction = bytes.length > scale ? bytes.slice(bytes.length - scale) : bytes.padStart(scale, "0");
+  if (fraction.length < 2) {
+    fraction = fraction.padEnd(2, "0");
+  } else {
+    let end = fraction.length;
+    while (end > 2 && fraction[end - 1] === "0") {
+      end -= 1;
+    }
+    fraction = fraction.slice(0, end);
+  }
+  return `${whole}.${fraction}`;
+}
+
+function fieldText(value: WholeNumber): string {
+  return value.kind === "digits" ? value.text : "";
+}
+
+function fieldLiteral(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return "null";
+  }
+  if (/^[0-9]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+function UsageText({ bucket }: { bucket: Bucket }) {
+  const objects = objectUsage(bucket);
+  const bytes = byteUsage(bucket);
+  if (objects === null && bytes === null) {
+    return null;
+  }
+  return (
+    <div>
+      {objects ? <p>{objects}</p> : null}
+      {bytes ? <p>{bytes}</p> : null}
+    </div>
+  );
+}
+
+function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas }) {
+  const client = useQueryClient();
+  const [maxSize, setMaxSize] = useState(fieldText(quotas.maxSize));
+  const [maxObjects, setMaxObjects] = useState(fieldText(quotas.maxObjects));
+  const [rejected, setRejected] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/quotas`, { method: "PUT", body }),
+    onMutate: () => {
+      setRejected(null);
+    },
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["buckets"] });
+    },
+  });
+  const apiError = save.error instanceof Error ? save.error.message : null;
+  const error = rejected ?? apiError;
+  return (
+    <form
+      className="mt-3 grid max-w-sm gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const size = fieldLiteral(maxSize);
+        const objects = fieldLiteral(maxObjects);
+        if (size === null || objects === null) {
+          save.reset();
+          setRejected("Enter a whole number or leave the quota empty");
+          return;
+        }
+        save.mutate(`{"maxSize":${size},"maxObjects":${objects}}`);
+      }}
+    >
+      <label className="block text-sm">
+        Max size for {bucketId}
+        <input
+          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          inputMode="numeric"
+          autoComplete="off"
+          value={maxSize}
+          onChange={(event) => {
+            setMaxSize(event.target.value);
+          }}
+        />
+      </label>
+      <label className="block text-sm">
+        Max objects for {bucketId}
+        <input
+          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          inputMode="numeric"
+          autoComplete="off"
+          value={maxObjects}
+          onChange={(event) => {
+            setMaxObjects(event.target.value);
+          }}
+        />
+      </label>
+      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="submit"
+        disabled={save.isPending}
+      >
+        {save.isPending ? "Saving quotas" : `Save quotas for ${bucketId}`}
+      </button>
+    </form>
+  );
 }
 
 function CreateBucketForm() {
@@ -445,6 +787,9 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
                 <th className="py-2 pr-3 font-medium" scope="col">
                   Bucket
                 </th>
+                <th className="py-2 pr-3 font-medium" scope="col">
+                  Usage
+                </th>
                 <th className="py-2 font-medium" scope="col">
                   Aliases
                 </th>
@@ -466,6 +811,16 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
                       >
                         Delete {bucket.id}
                       </button>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-3 align-top">
+                    <UsageText bucket={bucket} />
+                    {canManage && bucket.quotas ? (
+                      <QuotaEditor
+                        key={`${index}:${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`}
+                        bucketId={bucket.id}
+                        quotas={bucket.quotas}
+                      />
                     ) : null}
                   </td>
                   <td className="py-2 align-top">
