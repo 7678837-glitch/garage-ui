@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render as renderTree, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderTree, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { UploadPanel } from "./UploadPanel";
@@ -377,4 +377,139 @@ test("accepts a dropped file", () => {
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("drop.txt").textContent).toContain("Uploading");
+});
+
+type DropEntry = {
+  isFile: boolean;
+  isDirectory: boolean;
+  name: string;
+  file?: (done: (file: File) => void) => void;
+  createReader?: () => { readEntries: (done: (entries: DropEntry[]) => void) => void };
+};
+
+function pagedReader(pages: DropEntry[][]) {
+  let index = 0;
+  return {
+    readEntries(done: (entries: DropEntry[]) => void) {
+      const page = pages[index] ?? [];
+      index += 1;
+      done(page);
+    },
+  };
+}
+
+function dropEntries(entries: DropEntry[], files: File[] = []) {
+  fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
+    dataTransfer: {
+      files,
+      items: entries.map((entry) => ({
+        kind: "file",
+        webkitGetAsEntry: () => entry,
+      })),
+    },
+  });
+}
+
+test("a dropped file item keeps its file name", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = new File(["z"], "plain.txt", { type: "text/plain" });
+  dropEntries(
+    [
+      {
+        isFile: true,
+        isDirectory: false,
+        name: "nested/plain.txt",
+        file(done) {
+          done(new File(["other"], "nested.txt", { type: "text/plain" }));
+        },
+      },
+    ],
+    [file],
+  );
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/plain.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
+test("a drop without webkitGetAsEntry keeps the file name", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = new File(["z"], "drop.txt", { type: "text/plain" });
+  fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
+    dataTransfer: {
+      files: [file],
+      items: [{ kind: "file" }],
+    },
+  });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
+test("uploads a dropped directory under its relative path", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = new File(["body"], "a.txt", { type: "text/plain" });
+  const decoy = new File(["no"], "decoy.txt", { type: "text/plain" });
+  const fileEntry: DropEntry = {
+    isFile: true,
+    isDirectory: false,
+    name: "a.txt",
+    file(done) {
+      done(file);
+    },
+  };
+  dropEntries(
+    [
+      {
+        isFile: false,
+        isDirectory: true,
+        name: "docs",
+        createReader: () => pagedReader([[fileEntry], []]),
+      },
+    ],
+    [decoy],
+  );
+  await waitFor(() => {
+    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+  });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+  expect(row("docs/a.txt").textContent).toContain("Uploading");
+});
+
+test("uploads a nested dropped directory under its relative path", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = new File(["body"], "a.txt", { type: "text/plain" });
+  const fileEntry: DropEntry = {
+    isFile: true,
+    isDirectory: false,
+    name: "a.txt",
+    file(done) {
+      done(file);
+    },
+  };
+  const empty: DropEntry = {
+    isFile: false,
+    isDirectory: true,
+    name: "empty",
+    createReader: () => pagedReader([[]]),
+  };
+  const sub: DropEntry = {
+    isFile: false,
+    isDirectory: true,
+    name: "sub",
+    createReader: () => pagedReader([[empty], [fileEntry], []]),
+  };
+  dropEntries([
+    {
+      isFile: false,
+      isDirectory: true,
+      name: "docs",
+      createReader: () => pagedReader([[sub], []]),
+    },
+  ]);
+  await waitFor(() => {
+    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/sub/a.txt");
+  });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.body).toBe(file);
 });

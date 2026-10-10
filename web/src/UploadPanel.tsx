@@ -42,6 +42,101 @@ function objectKey(file: File, directory: boolean): string {
   return file.name;
 }
 
+// 只拼相对路径。上传键仍走 objectKey。前导斜杠不能进对象键。
+function dropRelativePath(parent: string, name: string): string {
+  const joined = parent === "" ? name : `${parent}/${name}`;
+  return joined.replace(/^\/+/, "");
+}
+
+function readDirectory(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  const collected: FileSystemEntry[] = [];
+  return new Promise((resolve, reject) => {
+    // readEntries 一次只给一页，空列表才表示这个目录读完。
+    const pull = () => {
+      reader.readEntries((batch) => {
+        if (batch.length === 0) {
+          resolve(collected);
+          return;
+        }
+        collected.push(...batch);
+        pull();
+      }, reject);
+    };
+    pull();
+  });
+}
+
+function fileFromEntry(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+async function filesInDirectory(
+  directory: FileSystemDirectoryEntry,
+  parent: string,
+): Promise<File[]> {
+  const prefix = dropRelativePath(parent, directory.name);
+  const children = await readDirectory(directory.createReader());
+  const files: File[] = [];
+  for (const child of children) {
+    if (child.isDirectory) {
+      files.push(...(await filesInDirectory(child as FileSystemDirectoryEntry, prefix)));
+      continue;
+    }
+    if (!child.isFile) {
+      continue;
+    }
+    const file = await fileFromEntry(child as FileSystemFileEntry);
+    // 浏览器里这个值是空字符串。没有该属性时同样视为空，避免 objectKey 读到 undefined。
+    if (!file.webkitRelativePath) {
+      Object.defineProperty(file, "webkitRelativePath", {
+        value: dropRelativePath(prefix, child.name),
+      });
+    }
+    files.push(file);
+  }
+  return files;
+}
+
+async function filesFromDrop(entries: readonly FileSystemEntry[]): Promise<File[]> {
+  const files: File[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory) {
+      files.push(...(await filesInDirectory(entry as FileSystemDirectoryEntry, "")));
+      continue;
+    }
+    if (entry.isFile) {
+      files.push(await fileFromEntry(entry as FileSystemFileEntry));
+    }
+  }
+  return files;
+}
+
+function directoryEntries(transfer: DataTransfer): FileSystemEntry[] | null {
+  const items = transfer.items;
+  if (!items || items.length === 0) {
+    return null;
+  }
+  const found: FileSystemEntry[] = [];
+  let exposed = false;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (typeof item.webkitGetAsEntry !== "function") {
+      continue;
+    }
+    exposed = true;
+    const entry = item.webkitGetAsEntry();
+    if (entry) {
+      found.push(entry);
+    }
+  }
+  if (!exposed || !found.some((entry) => entry.isDirectory)) {
+    return null;
+  }
+  return found;
+}
+
 function sharesName(rows: readonly Row[], name: string): boolean {
   let seen = 0;
   for (const row of rows) {
@@ -286,7 +381,15 @@ export function UploadPanel({
 
   function onDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
-    takeFiles(event.dataTransfer.files, false);
+    // DataTransferItem 离开这次事件就失效，entry 必须在这里同步取走。
+    const entries = directoryEntries(event.dataTransfer);
+    if (!entries) {
+      takeFiles(event.dataTransfer.files, false);
+      return;
+    }
+    void filesFromDrop(entries).then((files) => {
+      addFiles(files, true);
+    });
   }
 
   return (
