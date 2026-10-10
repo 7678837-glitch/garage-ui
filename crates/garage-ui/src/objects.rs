@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,7 @@ const SEARCH_MATCHES: usize = 200;
 const SEARCH_PAGES: usize = 20;
 const SEARCH_PAGE_KEYS: i32 = 1000;
 const DELETE_PAGE_KEYS: i32 = 1000;
+const PARTS_IN_FLIGHT: usize = 2;
 
 #[derive(Serialize)]
 pub struct ListPage {
@@ -83,6 +86,11 @@ pub struct PutResult {
     pub key: String,
     pub etag: String,
     pub size: u64,
+}
+
+pub struct PartPlan {
+    pub threshold: u64,
+    pub part_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -213,6 +221,30 @@ pub async fn put(
     size: u64,
     content_type: Option<String>,
     body: axum::body::Body,
+    plan: PartPlan,
+) -> Result<PutResult, ApiError> {
+    if size <= plan.threshold {
+        return put_whole(app, bucket_id, key, size, content_type, body).await;
+    }
+    put_multipart(
+        app,
+        bucket_id,
+        key,
+        size,
+        content_type,
+        body,
+        plan.part_bytes,
+    )
+    .await
+}
+
+async fn put_whole(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    size: u64,
+    content_type: Option<String>,
+    body: axum::body::Body,
 ) -> Result<PutResult, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
@@ -231,6 +263,46 @@ pub async fn put(
             async move {
                 let stream = replay.byte_stream().await?;
                 put_with(&client, &bucket, &key, length, content_type, stream).await
+            }
+        }
+    })
+    .await?;
+    Ok(PutResult { key, etag, size })
+}
+
+async fn put_multipart(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    size: u64,
+    content_type: Option<String>,
+    body: axum::body::Body,
+    part_size: u64,
+) -> Result<PutResult, ApiError> {
+    let bucket = bucket_id.to_string();
+    let key = key.to_string();
+    // Create 返回 403 时 drive 会重试，这时请求体还不能被读走。
+    let source = Arc::new(Mutex::new(Some(body)));
+    let etag = drive(app, bucket.clone(), {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        let source = Arc::clone(&source);
+        move |client| {
+            let bucket = bucket.clone();
+            let key = key.clone();
+            let source = Arc::clone(&source);
+            let content_type = content_type.clone();
+            async move {
+                send_parts(
+                    &client,
+                    &bucket,
+                    &key,
+                    size,
+                    part_size,
+                    content_type,
+                    &source,
+                )
+                .await
             }
         }
     })
@@ -557,6 +629,257 @@ async fn put_with(
         )
     })?;
     Ok(plain_etag(output.e_tag().unwrap_or("")))
+}
+
+struct InflightPart {
+    task: tokio::task::JoinHandle<Result<(i32, String), S3Failure>>,
+}
+
+struct PartReader {
+    body: Pin<Box<axum::body::Body>>,
+    pending: Vec<u8>,
+}
+
+impl PartReader {
+    fn new(body: axum::body::Body) -> Self {
+        Self {
+            body: Box::pin(body),
+            pending: Vec::new(),
+        }
+    }
+
+    async fn read_exact(&mut self, want: usize) -> Result<Vec<u8>, S3Failure> {
+        let mut out = Vec::with_capacity(want);
+        while out.len() < want {
+            if !self.pending.is_empty() {
+                let need = want - out.len();
+                let take = need.min(self.pending.len());
+                out.extend(self.pending.drain(..take));
+                continue;
+            }
+            let Some(next) =
+                std::future::poll_fn(|cx| HttpBody::poll_frame(self.body.as_mut(), cx)).await
+            else {
+                // 客户端断开或体比 Content-Length 短时不能完成分片。
+                return Err(S3Failure::Local);
+            };
+            let frame = next.map_err(|_| S3Failure::Local)?;
+            let Ok(data) = frame.into_data() else {
+                continue;
+            };
+            self.pending.extend_from_slice(&data);
+        }
+        Ok(out)
+    }
+}
+
+async fn send_parts(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    size: u64,
+    part_size: u64,
+    content_type: Option<String>,
+    source: &Mutex<Option<axum::body::Body>>,
+) -> Result<String, S3Failure> {
+    if part_size == 0 {
+        return Err(S3Failure::Local);
+    }
+    let upload_id = open_multipart(client, bucket, key, content_type).await?;
+    let body = source.lock().expect("multipart body").take();
+    let Some(body) = body else {
+        abort_multipart(client, bucket, key, &upload_id).await;
+        return Err(S3Failure::Local);
+    };
+    let mut reader = PartReader::new(body);
+    let mut flights = VecDeque::new();
+    let mut done = Vec::new();
+    let mut next_number = 1i32;
+    let mut left = size;
+    while left > 0 || !flights.is_empty() {
+        if flights.len() >= PARTS_IN_FLIGHT || left == 0 {
+            if let Err(error) = take_part(&mut flights, &mut done).await {
+                return stop_parts(client, bucket, key, &upload_id, &mut flights, error).await;
+            }
+            continue;
+        }
+        let want = usize::try_from(part_size.min(left)).unwrap_or(usize::MAX);
+        let bytes = match reader.read_exact(want).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return stop_parts(client, bucket, key, &upload_id, &mut flights, error).await;
+            }
+        };
+        left = left.saturating_sub(u64::try_from(bytes.len()).unwrap_or(left));
+        let number = next_number;
+        next_number = next_number.saturating_add(1);
+        let task = tokio::spawn({
+            let client = client.clone();
+            let bucket = bucket.to_string();
+            let key = key.to_string();
+            let upload_id = upload_id.clone();
+            async move {
+                let etag = upload_one(&client, &bucket, &key, &upload_id, number, bytes).await?;
+                Ok((number, etag))
+            }
+        });
+        flights.push_back(InflightPart { task });
+    }
+    match finish_multipart(client, bucket, key, &upload_id, done).await {
+        Ok(etag) => Ok(etag),
+        Err(error) => stop_parts(client, bucket, key, &upload_id, &mut flights, error).await,
+    }
+}
+
+async fn take_part(
+    flights: &mut VecDeque<InflightPart>,
+    done: &mut Vec<(i32, String)>,
+) -> Result<(), S3Failure> {
+    let Some(flight) = flights.pop_front() else {
+        return Ok(());
+    };
+    match flight.task.await {
+        Ok(Ok(part)) => {
+            done.push(part);
+            Ok(())
+        }
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(S3Failure::Local),
+    }
+}
+
+async fn stop_parts(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+    flights: &mut VecDeque<InflightPart>,
+    error: S3Failure,
+) -> Result<String, S3Failure> {
+    for flight in flights.drain(..) {
+        flight.task.abort();
+    }
+    abort_multipart(client, bucket, key, upload_id).await;
+    Err(multipart_failure(error))
+}
+
+fn multipart_failure(error: S3Failure) -> S3Failure {
+    // 分片已经开始读请求体。再把 Forbidden 交回 drive 会重跑整段，第二次体是空的。
+    match error {
+        S3Failure::Forbidden(message) => S3Failure::Upstream {
+            status: 403,
+            message,
+        },
+        other => other,
+    }
+}
+
+async fn open_multipart(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    content_type: Option<String>,
+) -> Result<String, S3Failure> {
+    let omit_default_type = content_type.is_none();
+    let mut operation = client
+        .create_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .set_content_type(content_type)
+        .customize();
+    if omit_default_type {
+        operation = operation.mutate_request(|request| {
+            request.headers_mut().remove("content-type");
+        });
+    }
+    let output = operation.send().await.map_err(|error| {
+        classify(
+            error
+                .raw_response()
+                .map(|response| response.status().as_u16()),
+            error.to_string(),
+        )
+    })?;
+    match output.upload_id() {
+        Some(id) if !id.is_empty() => Ok(id.to_string()),
+        _ => Err(S3Failure::Local),
+    }
+}
+
+async fn upload_one(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+    number: i32,
+    bytes: Vec<u8>,
+) -> Result<String, S3Failure> {
+    let length = i64::try_from(bytes.len()).map_err(|_| S3Failure::Local)?;
+    let output = client
+        .upload_part()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .part_number(number)
+        .content_length(length)
+        .body(ByteStream::from(bytes))
+        .send()
+        .await
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+    Ok(plain_etag(output.e_tag().unwrap_or("")))
+}
+
+async fn finish_multipart(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+    mut parts: Vec<(i32, String)>,
+) -> Result<String, S3Failure> {
+    parts.sort_by_key(|(number, _)| *number);
+    let mut completed = aws_sdk_s3::types::CompletedMultipartUpload::builder();
+    for (number, etag) in parts {
+        completed = completed.parts(
+            aws_sdk_s3::types::CompletedPart::builder()
+                .part_number(number)
+                .e_tag(etag)
+                .build(),
+        );
+    }
+    let output = client
+        .complete_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .multipart_upload(completed.build())
+        .send()
+        .await
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+    Ok(plain_etag(output.e_tag().unwrap_or("")))
+}
+
+async fn abort_multipart(client: &Client, bucket: &str, key: &str, upload_id: &str) {
+    let _ = client
+        .abort_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .send()
+        .await;
 }
 
 async fn remove_object(client: &Client, bucket: &str, key: &str) -> Result<(), S3Failure> {

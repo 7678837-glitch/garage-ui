@@ -1555,7 +1555,31 @@ async fn put_bucket_object(
     require(&current.user, Op::WriteObjects)?;
     let size = upload_length(&headers, app.settings.max_upload_bytes)?;
     let content_type = upload_content_type(&headers);
-    let stored = objects::put(&app, &id, &key, size, content_type, body).await?;
+    put_object(
+        &app,
+        &id,
+        &key,
+        size,
+        content_type,
+        body,
+        objects::PartPlan {
+            threshold: 64 * 1024 * 1024,
+            part_bytes: 16 * 1024 * 1024,
+        },
+    )
+    .await
+}
+
+async fn put_object(
+    app: &App,
+    id: &str,
+    key: &str,
+    size: u64,
+    content_type: Option<String>,
+    body: Body,
+    plan: objects::PartPlan,
+) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
+    let stored = objects::put(app, id, key, size, content_type, body, plan).await?;
     Ok((StatusCode::CREATED, Json(stored)))
 }
 
@@ -2002,12 +2026,15 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+    use axum::response::IntoResponse;
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
+    use crate::error::ApiError;
     use crate::limit::test_quota;
+    use crate::objects;
     use crate::router;
     use crate::state::{self, App};
 
@@ -5626,6 +5653,195 @@ mod tests {
             assert_eq!(bucket_of(line), "bkt-1");
             assert_eq!(object_key_of(line), "photos/a.txt");
         }
+    }
+
+    fn s3_operation(line: &str) -> &'static str {
+        let target = request_target(line);
+        if line.starts_with("POST ") && target.contains("uploads") {
+            "create"
+        } else if line.starts_with("PUT ") && query_value(target, "partNumber").is_some() {
+            "part"
+        } else if line.starts_with("POST ") && query_value(target, "uploadId").is_some() {
+            "complete"
+        } else if line.starts_with("DELETE ") && query_value(target, "uploadId").is_some() {
+            "abort"
+        } else if line.starts_with("PUT ") {
+            "put"
+        } else {
+            "other"
+        }
+    }
+
+    fn initiate_xml() -> String {
+        http_xml(
+            r#"<?xml version="1.0" encoding="UTF-8"?><InitiateMultipartUploadResult><Bucket>bkt-1</Bucket><Key>photos/a.txt</Key><UploadId>up-1</UploadId></InitiateMultipartUploadResult>"#,
+        )
+    }
+
+    fn complete_xml() -> String {
+        http_xml(
+            r#"<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUploadResult><Bucket>bkt-1</Bucket><Key>photos/a.txt</Key><ETag>"final-etag"</ETag></CompleteMultipartUploadResult>"#,
+        )
+    }
+
+    fn multipart_reply(line: &str) -> String {
+        match s3_operation(line) {
+            "create" => initiate_xml(),
+            "part" => {
+                let number = query_value(request_target(line), "partNumber").unwrap_or("0");
+                put_ok(&format!("part-{number}"))
+            }
+            "complete" => complete_xml(),
+            "abort" => delete_ok(),
+            _ => put_ok("single-etag"),
+        }
+    }
+
+    async fn decided_put(
+        app: &App,
+        body: &[u8],
+        size: u64,
+        content_type: Option<&str>,
+        threshold: u64,
+        part_bytes: u64,
+    ) -> Result<(StatusCode, objects::PutResult), ApiError> {
+        let (status, stored) = super::put_object(
+            app,
+            "bkt-1",
+            "photos/a.txt",
+            size,
+            content_type.map(str::to_string),
+            Body::from(body.to_vec()),
+            objects::PartPlan {
+                threshold,
+                part_bytes,
+            },
+        )
+        .await?;
+        Ok((status, stored.0))
+    }
+
+    #[tokio::test]
+    async fn object_put_above_threshold_completes_multipart() {
+        let mock = S3Mock::start(multipart_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (status, stored) = decided_put(&app, b"abcde", 5, Some("text/plain"), 2, 2)
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            serde_json::to_value(&stored).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "final-etag", "size": 5 })
+        );
+        let seen = mock.requests();
+        let ops: Vec<_> = seen.iter().map(|line| s3_operation(line)).collect();
+        assert_eq!(ops.first().copied(), Some("create"), "{seen:?}");
+        assert_eq!(ops.last().copied(), Some("complete"), "{seen:?}");
+        assert_eq!(ops.iter().filter(|op| **op == "part").count(), 3, "{ops:?}");
+        assert!(ops.iter().all(|op| *op != "put"), "{ops:?}");
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(object_key_of(&seen[0]), "photos/a.txt");
+        assert_eq!(mock.content_types()[0], Some("text/plain".to_string()));
+        let mut part_bodies = std::collections::BTreeMap::new();
+        let mut complete_body = String::new();
+        for (line, body) in seen.iter().zip(mock.bodies()) {
+            match s3_operation(line) {
+                "part" => {
+                    let number = query_value(request_target(line), "partNumber").unwrap();
+                    part_bodies.insert(number.to_string(), body);
+                }
+                "complete" => complete_body = body,
+                _ => {}
+            }
+        }
+        assert_eq!(part_bodies.get("1").map(String::as_str), Some("ab"));
+        assert_eq!(part_bodies.get("2").map(String::as_str), Some("cd"));
+        assert_eq!(part_bodies.get("3").map(String::as_str), Some("e"));
+        assert!(complete_body.contains("part-1"), "{complete_body}");
+        assert!(complete_body.contains("part-2"), "{complete_body}");
+        assert!(complete_body.contains("part-3"), "{complete_body}");
+        assert!(
+            complete_body.contains("<PartNumber>1</PartNumber>"),
+            "{complete_body}"
+        );
+        assert!(
+            complete_body.contains("<PartNumber>3</PartNumber>"),
+            "{complete_body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn object_put_aborts_when_a_part_fails() {
+        let mock = S3Mock::start(|line| match s3_operation(line) {
+            "create" => initiate_xml(),
+            "part" => {
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_string()
+            }
+            "abort" => delete_ok(),
+            _ => complete_xml(),
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let Err(error) = decided_put(&app, b"abcde", 5, None, 2, 2).await else {
+            panic!("part failure returned 201");
+        };
+        let response = error.into_response();
+        assert_ne!(response.status(), StatusCode::CREATED);
+        let ops: Vec<_> = mock
+            .requests()
+            .iter()
+            .map(|line| s3_operation(line))
+            .collect();
+        assert!(ops.contains(&"abort"), "{ops:?}");
+        assert!(!ops.contains(&"complete"), "{ops:?}");
+        assert!(!ops.contains(&"put"), "{ops:?}");
+    }
+
+    #[tokio::test]
+    async fn object_put_at_threshold_stays_one_put_object() {
+        let mock = S3Mock::start(multipart_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (status, stored) = decided_put(&app, b"hello", 5, None, 5, 2).await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            serde_json::to_value(&stored).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "single-etag", "size": 5 })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(s3_operation(&seen[0]), "put");
+        let (status, stored) = decided_put(&app, b"hey", 3, None, 5, 2).await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(stored.size, 3);
+        let ops: Vec<_> = mock
+            .requests()
+            .iter()
+            .map(|line| s3_operation(line))
+            .collect();
+        assert_eq!(ops, vec!["put", "put"]);
+    }
+
+    #[tokio::test]
+    async fn object_put_aborts_when_the_body_is_short() {
+        let mock = S3Mock::start(multipart_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let Err(error) = decided_put(&app, b"ab", 5, None, 2, 2).await else {
+            panic!("short body returned 201");
+        };
+        assert_ne!(error.into_response().status(), StatusCode::CREATED);
+        let ops: Vec<_> = mock
+            .requests()
+            .iter()
+            .map(|line| s3_operation(line))
+            .collect();
+        assert_eq!(ops.first().copied(), Some("create"), "{ops:?}");
+        assert!(ops.contains(&"abort"), "{ops:?}");
+        assert!(!ops.contains(&"complete"), "{ops:?}");
     }
 
     fn delete_ok() -> String {
