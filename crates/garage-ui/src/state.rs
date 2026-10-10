@@ -38,6 +38,7 @@ pub struct App {
     pub fixtures: Arc<std::sync::Mutex<HashMap<String, Fixture>>>,
     pub write: Arc<Mutex<()>>,
     garage_link: Arc<Mutex<Option<CachedGarageLink>>>,
+    credentials: Arc<Mutex<credentials::CredentialCache>>,
     pub key_id: Arc<String>,
     #[cfg(test)]
     pub log_sink: Arc<std::sync::Mutex<Vec<String>>>,
@@ -101,6 +102,23 @@ impl App {
         *self.garage_link.lock().await = None;
     }
 
+    pub(crate) async fn clear_credential_cache(&self, mutation: &credentials::KeyMutation) {
+        self.credentials.lock().await.clear(mutation);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn resolve_bucket_credential(
+        &self,
+        bucket_id: &str,
+        now: i64,
+        sources: &credentials::CredentialSources,
+    ) -> Result<credentials::BucketCredential, credentials::NoUsableKey> {
+        self.credentials
+            .lock()
+            .await
+            .resolve(bucket_id, now, sources)
+    }
+
     pub fn record_access(&self, line: &str) {
         #[cfg(test)]
         self.log_sink
@@ -146,6 +164,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         fixtures: Arc::new(std::sync::Mutex::new(HashMap::new())),
         write: Arc::new(Mutex::new(())),
         garage_link: Arc::new(Mutex::new(None)),
+        credentials: Arc::new(Mutex::new(credentials::CredentialCache::new(60))),
         key_id: Arc::new(key_id),
         #[cfg(test)]
         log_sink: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -260,7 +279,7 @@ mod tests {
     }
 }
 
-// 路由还没读这份缓存。清除函数给测试和后续接线用，这一波不从 proxy.rs 挂钩。
+// 对象浏览还没调用 resolve。这个 allow 只盖住 lib 目标里暂时只有测试走到的读取路径。
 #[allow(dead_code)]
 pub mod credentials {
     use std::collections::HashMap;
