@@ -8,7 +8,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, patch, post};
+use axum::routing::{any, delete, get, patch, post, put};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -68,6 +68,7 @@ pub fn routes(app: App) -> Router<App> {
             "/api/buckets/{id}/aliases",
             post(add_bucket_alias).delete(remove_bucket_alias),
         )
+        .route("/api/buckets/{id}/quotas", put(put_bucket_quotas))
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
@@ -728,6 +729,27 @@ async fn delete_bucket(
     post_garage(&app, &current, &headers, "DeleteBucket", Some(&query), &[]).await
 }
 
+async fn put_bucket_quotas(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeBuckets)?;
+    let bytes = quota_update(&body)?;
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "UpdateBucket",
+        Some(&query),
+        &bytes,
+    )
+    .await
+}
+
 async fn add_bucket_alias(
     State(app): State<App>,
     Authed(current): Authed,
@@ -819,6 +841,166 @@ fn percent_encode(value: &str) -> String {
         }
     }
     out
+}
+
+struct QuotaWire<'a> {
+    max_size: &'a str,
+    max_objects: &'a str,
+}
+
+fn invalid_quota() -> ApiError {
+    ApiError::bad_request(
+        "invalid_quota",
+        "maxSize and maxObjects must be non-negative integers or null",
+    )
+}
+
+// 配额整数按请求里的数字原文转发。经 f64 会把 9007199254740993 收成 9007199254740992。
+fn quota_update(body: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let wire = parse_quota_body(body)?;
+    let mut out = Vec::new();
+    out.extend_from_slice(br#"{"quotas":{"maxSize":"#);
+    out.extend_from_slice(wire.max_size.as_bytes());
+    out.extend_from_slice(br#","maxObjects":"#);
+    out.extend_from_slice(wire.max_objects.as_bytes());
+    out.extend_from_slice(br#"}}"#);
+    Ok(out)
+}
+
+fn parse_quota_body(body: &[u8]) -> Result<QuotaWire<'_>, ApiError> {
+    let mut scan = Scan { input: body, at: 0 };
+    if !scan.eat(b'{') {
+        return Err(invalid_quota());
+    }
+    let mut max_size = None;
+    let mut max_objects = None;
+    scan.skip();
+    if scan.peek() != Some(b'}') {
+        loop {
+            let key = scan.key()?;
+            if !scan.eat(b':') {
+                return Err(invalid_quota());
+            }
+            let literal = scan.literal()?;
+            match key {
+                "maxSize" if max_size.is_none() => max_size = Some(literal),
+                "maxObjects" if max_objects.is_none() => max_objects = Some(literal),
+                _ => return Err(invalid_quota()),
+            }
+            if !scan.eat(b',') {
+                break;
+            }
+        }
+    }
+    if !scan.eat(b'}') {
+        return Err(invalid_quota());
+    }
+    scan.skip();
+    if scan.at != scan.input.len() {
+        return Err(invalid_quota());
+    }
+    let (Some(max_size), Some(max_objects)) = (max_size, max_objects) else {
+        return Err(invalid_quota());
+    };
+    Ok(QuotaWire {
+        max_size,
+        max_objects,
+    })
+}
+
+struct Scan<'a> {
+    input: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Scan<'a> {
+    fn skip(&mut self) {
+        while self.input.get(self.at).is_some_and(is_json_ws) {
+            self.at += 1;
+        }
+    }
+
+    fn peek(&mut self) -> Option<u8> {
+        self.skip();
+        self.input.get(self.at).copied()
+    }
+
+    fn eat(&mut self, byte: u8) -> bool {
+        self.skip();
+        if self.input.get(self.at) == Some(&byte) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn key(&mut self) -> Result<&'a str, ApiError> {
+        self.skip();
+        if self.input.get(self.at) != Some(&b'"') {
+            return Err(invalid_quota());
+        }
+        self.at += 1;
+        let start = self.at;
+        while let Some(&byte) = self.input.get(self.at) {
+            if byte == b'"' {
+                let text = std::str::from_utf8(&self.input[start..self.at])
+                    .map_err(|_| invalid_quota())?;
+                self.at += 1;
+                return Ok(text);
+            }
+            if byte == b'\\' || byte < 0x20 {
+                return Err(invalid_quota());
+            }
+            self.at += 1;
+        }
+        Err(invalid_quota())
+    }
+
+    fn literal(&mut self) -> Result<&'a str, ApiError> {
+        self.skip();
+        let bytes = &self.input[self.at..];
+        if bytes.starts_with(b"null") && bytes.get(4).is_none_or(|byte| is_literal_end(*byte)) {
+            self.at += 4;
+            return Ok("null");
+        }
+        if bytes
+            .first()
+            .is_some_and(|byte| *byte == b'-' || matches!(*byte, b'.' | b'+' | b'e' | b'E'))
+        {
+            return Err(invalid_quota());
+        }
+        if !bytes.first().is_some_and(u8::is_ascii_digit) {
+            return Err(invalid_quota());
+        }
+        let mut end = 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if bytes[0] == b'0' && end > 1 {
+            return Err(invalid_quota());
+        }
+        if bytes
+            .get(end)
+            .is_some_and(|byte| matches!(*byte, b'.' | b'e' | b'E' | b'+' | b'-'))
+        {
+            return Err(invalid_quota());
+        }
+        if bytes.get(end).is_some_and(|byte| !is_literal_end(*byte)) {
+            return Err(invalid_quota());
+        }
+        let digits = std::str::from_utf8(&bytes[..end]).map_err(|_| invalid_quota())?;
+        self.at += end;
+        Ok(digits)
+    }
+}
+
+fn is_json_ws(byte: &u8) -> bool {
+    matches!(*byte, b' ' | b'\n' | b'\r' | b'\t')
+}
+
+fn is_literal_end(byte: u8) -> bool {
+    matches!(byte, b',' | b'}' | b' ' | b'\n' | b'\r' | b'\t')
 }
 
 async fn list_keys(
@@ -2539,6 +2721,185 @@ mod tests {
         let response = exchange(
             &app,
             request("POST", "/api/buckets", Some("{}"), Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn quota_keeps_the_large_size_digits() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/a%20b%26c%3Dd/quotas",
+                Some(r#"{"maxObjects":12,"maxSize":9007199254740993}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, r#"{"id":"bkt-1"}"#);
+        let updates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("UpdateBucket"))
+            .collect();
+        assert_eq!(
+            updates.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            updates[0]
+                .line
+                .contains("POST /v2/UpdateBucket?id=a%20b%26c%3Dd "),
+            "{}",
+            updates[0].line
+        );
+        assert_eq!(
+            updates[0].body,
+            r#"{"quotas":{"maxSize":9007199254740993,"maxObjects":12}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn quota_nulls_clear_both_fields() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxObjects":null,"maxSize":null}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let updates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/UpdateBucket?id=bkt-1 "))
+            .collect();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].body,
+            r#"{"quotas":{"maxSize":null,"maxObjects":null}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_quota_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        for body in [
+            r#"{"maxSize":1}"#,
+            r#"{"maxObjects":1}"#,
+            r#"{"maxSize":-1,"maxObjects":1}"#,
+            r#"{"maxSize":1.5,"maxObjects":1}"#,
+            r#"{"maxSize":1e2,"maxObjects":2}"#,
+            r#"{"maxSize":01,"maxObjects":1}"#,
+        ] {
+            let response = exchange(
+                &app,
+                request("PUT", "/api/buckets/bkt-1/quotas", Some(body), Some(&admin)),
+            )
+            .await;
+            assert_error(
+                &response,
+                StatusCode::BAD_REQUEST,
+                "invalid_quota",
+                "maxSize and maxObjects must be non-negative integers or null",
+            );
+        }
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_quota_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxSize":1,"maxObjects":2}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn quota_requires_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let anonymous = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxSize":1,"maxObjects":2}"#),
+                None,
+            ),
+        )
+        .await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxSize":1,"maxObjects":2}"#),
+                Some(&admin),
+            ),
         )
         .await;
         assert_error(
