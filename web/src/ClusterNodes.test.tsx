@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -59,14 +59,24 @@ function session(role: "admin" | "viewer") {
   };
 }
 
-function installFetch(role: "admin" | "viewer", statusResponse: () => Response) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+function installFetch(
+  role: "admin" | "viewer",
+  statusResponse: () => Response,
+  connectResponse?: () => Response,
+) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/auth/status")) {
       return json(session(role));
     }
     if (url === "/api/cluster/status") {
       return statusResponse();
+    }
+    if (url === "/api/cluster/connect") {
+      if (init?.method?.toUpperCase() !== "POST") {
+        return new Response("no", { status: 405 });
+      }
+      return connectResponse ? connectResponse() : new Response("no", { status: 500 });
     }
     if (url === "/api/cluster/health") {
       return json(health);
@@ -84,6 +94,10 @@ function installFetch(role: "admin" | "viewer", statusResponse: () => Response) 
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function connectCalls(fetchMock: ReturnType<typeof installFetch>) {
+  return fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/cluster/connect");
 }
 
 const listed = `{
@@ -187,4 +201,128 @@ test("does not show cluster nodes to a viewer or request them", async () => {
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
     false,
   );
+});
+
+test("does not send a connect request when the address is blank", async () => {
+  const fetchMock = installFetch("admin", () => textResponse(listed));
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  const button = screen.getByRole("button", { name: "Connect node" });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(button);
+  fireEvent.change(screen.getByLabelText("Node address"), { target: { value: "   " } });
+  const blank = screen.getByRole("button", { name: "Connect node" });
+  expect((blank as HTMLButtonElement).disabled).toBe(true);
+  const form = blank.closest("form");
+  expect(form).toBeTruthy();
+  fireEvent.submit(form as HTMLFormElement);
+  expect(connectCalls(fetchMock)).toHaveLength(0);
+  expect(screen.getByText("node-up")).toBeTruthy();
+  expect(screen.getByText("alpha")).toBeTruthy();
+  expect(screen.getByText("Down")).toBeTruthy();
+});
+
+test("posts one trimmed address as a json array and reloads nodes", async () => {
+  let statusHits = 0;
+  const fetchMock = installFetch(
+    "admin",
+    () => {
+      statusHits += 1;
+      if (statusHits === 1) {
+        return textResponse(listed);
+      }
+      return json({
+        nodes: [
+          {
+            id: "node-up",
+            hostname: "alpha",
+            addr: "10.0.0.1:3901",
+            garageVersion: "v2.4.1",
+            isUp: true,
+            draining: false,
+          },
+          {
+            id: "node-joined",
+            hostname: "beta",
+            addr: "127.0.0.1:3901",
+            garageVersion: "v2.4.1",
+            isUp: true,
+            draining: false,
+          },
+        ],
+      });
+    },
+    () => json([{ success: true }]),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  expect(screen.queryByText("node-joined")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "  abcd@127.0.0.1:3901  " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  expect(await screen.findByText("Connected")).toBeTruthy();
+  expect(await screen.findByText("node-joined")).toBeTruthy();
+  expect(screen.getByText("node-up")).toBeTruthy();
+  expect(screen.getByText("alpha")).toBeTruthy();
+  const posts = connectCalls(fetchMock);
+  expect(posts).toHaveLength(1);
+  const init = posts[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("POST");
+  expect(init?.body).toBe('["abcd@127.0.0.1:3901"]');
+  expect(new Headers(init?.headers).get("x-confirm")).toBeNull();
+  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+});
+
+test("shows each connect result in order when an item fails", async () => {
+  installFetch("admin", () => textResponse(listed), () =>
+    json([
+      { success: true },
+      { success: false, error: "no route to host" },
+      { success: false, error: "" },
+      { success: false },
+    ]),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "abcd@127.0.0.1:3901" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  expect(await screen.findByText("no route to host")).toBeTruthy();
+  const texts = screen.getAllByRole("listitem").map((item) => item.textContent);
+  expect(texts.slice(0, 4)).toEqual([
+    "Connected",
+    "no route to host",
+    "Connection failed",
+    "Connection failed",
+  ]);
+  expect(screen.getByText("node-up")).toBeTruthy();
+  expect(screen.getByText("alpha")).toBeTruthy();
+  expect(screen.getByText("Down")).toBeTruthy();
+  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+});
+
+test("shows the connect API message in a paragraph and keeps the nodes", async () => {
+  const fetchMock = installFetch("admin", () => textResponse(listed), () =>
+    json({ code: "garage_unavailable", message: "Garage admin API is not reachable" }, 502),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  const statusCalls = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/cluster/status").length;
+  const before = statusCalls();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "abcd@127.0.0.1:3901" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  const message = await screen.findByText("Garage admin API is not reachable");
+  expect(message.tagName).toBe("P");
+  expect(message.getAttribute("role")).toBeNull();
+  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Connected")).toBeNull();
+  expect(screen.getByText("node-up")).toBeTruthy();
+  expect(screen.getByText("Down")).toBeTruthy();
+  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  expect(statusCalls()).toBe(before);
 });

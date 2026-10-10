@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
+import { api } from "./api/client";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -12,6 +14,7 @@ const HIDDEN = new Set([
 ]);
 
 const UNAVAILABLE = "Nodes are unavailable";
+const CONNECT_FAILED = "Connection failed";
 
 type NodeLine = {
   id: string;
@@ -221,15 +224,85 @@ async function loadNodes(): Promise<NodeLine[]> {
   return parseNodes(text);
 }
 
+function connectLine(value: unknown): string {
+  if (typeof value !== "object" || value === null) {
+    return CONNECT_FAILED;
+  }
+  const row = value as Record<string, unknown>;
+  if (row.success === true) {
+    return "Connected";
+  }
+  if (typeof row.error === "string" && row.error.length > 0) {
+    return row.error;
+  }
+  return CONNECT_FAILED;
+}
+
+async function connectNode(address: string): Promise<string[]> {
+  const body = await api<unknown>("/api/cluster/connect", {
+    method: "POST",
+    body: JSON.stringify([address]),
+  });
+  if (!Array.isArray(body)) {
+    throw new Error(CONNECT_FAILED);
+  }
+  return body.map(connectLine);
+}
+
 export function ClusterNodes() {
+  const client = useQueryClient();
+  const [address, setAddress] = useState("");
+  const [lines, setLines] = useState<string[] | null>(null);
   const nodes = useQuery({
     queryKey: ["cluster", "status"],
     queryFn: loadNodes,
   });
+  const connect = useMutation({
+    mutationFn: connectNode,
+    onSuccess: async (next) => {
+      setLines(next);
+      await client.invalidateQueries({ queryKey: ["cluster", "status"] });
+    },
+  });
+  const trimmed = address.trim();
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (trimmed.length === 0 || connect.isPending) {
+      return;
+    }
+    setLines(null);
+    connect.mutate(trimmed);
+  }
   const message = nodes.error instanceof Error ? nodes.error.message : UNAVAILABLE;
+  const connectFailure = connect.error instanceof Error ? connect.error.message : CONNECT_FAILED;
   return (
     <section className="grid gap-4" aria-label="Cluster nodes">
       <h2 className="text-lg font-semibold">Nodes</h2>
+      <form className="grid gap-3" onSubmit={submit}>
+        <label className="block">
+          <span className="text-sm">Node address</span>
+          <input
+            className="mt-1 w-full border border-neutral-300 px-2 py-1"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+        </label>
+        <button
+          className="border border-neutral-900 px-3 py-1 text-left"
+          type="submit"
+          disabled={trimmed.length === 0 || connect.isPending}
+        >
+          Connect node
+        </button>
+      </form>
+      {connect.isError ? <p>{connectFailure}</p> : null}
+      {lines !== null && lines.length > 0 ? (
+        <ul>
+          {lines.map((line, index) => (
+            <li key={index}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
       {nodes.isPending ? <p>Loading nodes</p> : null}
       {nodes.isError ? <p>{message}</p> : null}
       {nodes.isSuccess && nodes.data.length === 0 ? <p>There are no nodes.</p> : null}
