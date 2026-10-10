@@ -8,6 +8,7 @@ mod error;
 mod health;
 mod http;
 mod limit;
+mod objects;
 mod password;
 mod preview;
 mod proxy;

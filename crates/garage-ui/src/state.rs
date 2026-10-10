@@ -106,6 +106,41 @@ impl App {
         self.credentials.lock().await.clear(mutation);
     }
 
+    // CredentialCache::read 是同步的。请求线程里 block_on 会 panic，所以 S3 放到独立 runtime。
+    pub(crate) async fn read_credential<T, F, Fut>(
+        &self,
+        bucket_id: &str,
+        load: credentials::CredentialSources,
+        mut operation: F,
+    ) -> Result<T, credentials::ReadFailure>
+    where
+        T: Send + 'static,
+        F: FnMut(credentials::BucketCredential) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = credentials::Operation<T>> + Send + 'static,
+    {
+        let cache = Arc::clone(&self.credentials);
+        let bucket_id = bucket_id.to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("s3 runtime");
+            let mut guard = cache.blocking_lock();
+            guard.read(
+                &bucket_id,
+                now,
+                || load.clone(),
+                |credential| runtime.block_on(operation(credential.clone())),
+            )
+        })
+        .await
+        .expect("credential read")
+    }
+
     #[cfg(test)]
     pub(crate) async fn resolve_bucket_credential(
         &self,
@@ -279,7 +314,7 @@ mod tests {
     }
 }
 
-// 对象浏览还没调用 resolve。这个 allow 只盖住 lib 目标里暂时只有测试走到的读取路径。
+// read_write_keys 不参与选择。非测试构建里没有人读这个字段。
 #[allow(dead_code)]
 pub mod credentials {
     use std::collections::HashMap;

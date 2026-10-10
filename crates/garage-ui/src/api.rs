@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::access::{self, Op};
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
+use crate::objects;
 use crate::password;
 use crate::preview::preview_policy;
 use crate::proxy::{self, confirmed};
@@ -74,6 +75,9 @@ pub fn routes(app: App) -> Router<App> {
             "/api/buckets/{id}/permissions",
             post(grant_bucket_permissions).delete(revoke_bucket_permissions),
         )
+        .route("/api/buckets/{id}/objects", get(list_bucket_objects))
+        .route("/api/buckets/{id}/objects/{*key}", get(object_metadata))
+        .route("/api/buckets/{id}/search", get(search_bucket_objects))
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
@@ -1520,6 +1524,64 @@ async fn upload_object(
     ))
 }
 
+#[derive(Deserialize)]
+struct ObjectListQuery {
+    prefix: Option<String>,
+    limit: Option<i64>,
+    next: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ObjectSearchQuery {
+    q: Option<String>,
+    prefix: Option<String>,
+}
+
+async fn list_bucket_objects(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    Query(query): Query<ObjectListQuery>,
+) -> Result<Json<objects::ListPage>, ApiError> {
+    require(&current.user, Op::ReadObjects)?;
+    let page = objects::list(
+        &app,
+        &id,
+        query.prefix.as_deref().unwrap_or(""),
+        query.limit,
+        query.next.as_deref().unwrap_or(""),
+    )
+    .await?;
+    Ok(Json(page))
+}
+
+async fn search_bucket_objects(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    Query(query): Query<ObjectSearchQuery>,
+) -> Result<Json<objects::SearchPage>, ApiError> {
+    require(&current.user, Op::ReadObjects)?;
+    let page = objects::search(
+        &app,
+        &id,
+        query.q.as_deref().unwrap_or(""),
+        query.prefix.as_deref().unwrap_or(""),
+    )
+    .await?;
+    Ok(Json(page))
+}
+
+async fn object_metadata(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, key)): Path<(String, String)>,
+) -> Result<Json<objects::ObjectMeta>, ApiError> {
+    require(&current.user, Op::ReadObjects)?;
+    let meta = objects::metadata(&app, &id, &key).await?;
+    Ok(Json(meta))
+}
+
 async fn cluster_health(
     State(app): State<App>,
     Authed(current): Authed,
@@ -1757,6 +1819,7 @@ async fn record(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use axum::body::Body;
     use axum::http::{HeaderMap, Request, StatusCode};
@@ -4697,5 +4760,484 @@ mod tests {
         );
         assert_eq!(hits.load(Ordering::SeqCst), tried);
         task.abort();
+    }
+
+    struct S3Mock {
+        url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for S3Mock {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl S3Mock {
+        async fn start(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let requests_task = Arc::clone(&requests);
+            let reply = Arc::new(reply);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let requests_task = Arc::clone(&requests_task);
+                    let reply = Arc::clone(&reply);
+                    tokio::spawn(async move {
+                        let mut buf = Vec::new();
+                        let mut tmp = [0_u8; 4096];
+                        let header_end = loop {
+                            let Ok(Ok(read)) =
+                                tokio::time::timeout(Duration::from_secs(2), socket.read(&mut tmp))
+                                    .await
+                            else {
+                                return;
+                            };
+                            if read == 0 {
+                                return;
+                            }
+                            buf.extend_from_slice(&tmp[..read]);
+                            if let Some(pos) =
+                                buf.windows(4).position(|window| window == b"\r\n\r\n")
+                            {
+                                break pos;
+                            }
+                            if buf.len() > 64 * 1024 {
+                                return;
+                            }
+                        };
+                        let text = String::from_utf8_lossy(&buf[..header_end]);
+                        let line = text.lines().next().unwrap_or("").to_string();
+                        requests_task
+                            .lock()
+                            .expect("s3 requests")
+                            .push(line.clone());
+                        let response = reply(&line);
+                        let _ = socket.write_all(response.as_bytes()).await;
+                        let _ = socket.shutdown().await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                requests,
+                task,
+            }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().expect("s3 requests").clone()
+        }
+    }
+
+    async fn object_app(dir: &std::path::Path, endpoint: &str, with_key: bool) -> App {
+        if with_key {
+            state::test_app_with(
+                dir,
+                &[
+                    ("S3_ENDPOINT_URL", endpoint),
+                    ("S3_REGION", "garage"),
+                    ("S3_ACCESS_KEY_ID", "PROJECT"),
+                    ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+                ],
+                test_quota(),
+            )
+            .await
+        } else {
+            state::test_app_with(
+                dir,
+                &[("S3_ENDPOINT_URL", endpoint), ("S3_REGION", "garage")],
+                test_quota(),
+            )
+            .await
+        }
+    }
+
+    fn http_xml(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn list_xml(
+        truncated: bool,
+        token: Option<&str>,
+        objects: &[(&str, i64, &str)],
+        prefixes: &[&str],
+    ) -> String {
+        let mut xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
+        );
+        xml.push_str(&format!(
+            "<KeyCount>{}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>{}</IsTruncated>",
+            objects.len() + prefixes.len(),
+            if truncated { "true" } else { "false" }
+        ));
+        if let Some(token) = token {
+            xml.push_str(&format!(
+                "<NextContinuationToken>{token}</NextContinuationToken>"
+            ));
+        }
+        for (key, size, etag) in objects {
+            xml.push_str(&format!(
+                "<Contents><Key>{key}</Key><LastModified>2026-10-11T00:00:00.000Z</LastModified><ETag>\"{etag}\"</ETag><Size>{size}</Size><StorageClass>STANDARD</StorageClass></Contents>"
+            ));
+        }
+        for prefix in prefixes {
+            xml.push_str(&format!(
+                "<CommonPrefixes><Prefix>{prefix}</Prefix></CommonPrefixes>"
+            ));
+        }
+        xml.push_str("</ListBucketResult>");
+        http_xml(&xml)
+    }
+
+    fn head_ok() -> String {
+        "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nETag: \"abc\"\r\nLast-Modified: Sun, 11 Oct 2026 00:00:00 GMT\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n"
+            .to_string()
+    }
+
+    fn head_missing() -> String {
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nContent-Type: application/xml\r\nConnection: close\r\n\r\n"
+            .to_string()
+    }
+
+    fn request_target(line: &str) -> &str {
+        line.split_whitespace().nth(1).unwrap_or("")
+    }
+
+    fn percent_decode(value: &str) -> String {
+        let bytes = value.as_bytes();
+        let mut out = Vec::new();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' && index + 2 < bytes.len() {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    out.push(byte);
+                    index += 3;
+                    continue;
+                }
+            }
+            out.push(bytes[index]);
+            index += 1;
+        }
+        String::from_utf8(out).expect("decoded path")
+    }
+
+    fn encode_key(key: &str) -> String {
+        const PLAIN: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/";
+        let mut out = String::new();
+        for byte in key.as_bytes() {
+            if PLAIN.contains(byte) {
+                out.push(char::from(*byte));
+            } else {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        out
+    }
+
+    fn bucket_of(line: &str) -> String {
+        let path = request_target(line).split('?').next().unwrap_or("");
+        let trimmed = path.trim_start_matches('/');
+        percent_decode(trimmed.split('/').next().unwrap_or(""))
+    }
+
+    #[tokio::test]
+    async fn object_list_pages_and_clamps_max_keys() {
+        let mock = S3Mock::start(|line| {
+            let target = request_target(line);
+            if query_value(target, "continuation-token") == Some("page-2") {
+                return list_xml(false, None, &[("photos/b.txt", 4, "def")], &[]);
+            }
+            if query_value(target, "max-keys") == Some("1000") {
+                return list_xml(false, None, &[], &[]);
+            }
+            list_xml(
+                true,
+                Some("page-2"),
+                &[("photos/a.txt", 12, "abc")],
+                &["photos/"],
+            )
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+
+        let first = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&first.body).unwrap(),
+            json!({
+                "prefix": "",
+                "entries": [
+                    {"kind": "prefix", "prefix": "photos/"},
+                    {"kind": "object", "key": "photos/a.txt", "size": 12, "etag": "abc", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "next": "page-2"
+            })
+        );
+        let seen = mock.requests();
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(
+            query_value(request_target(&seen[0]), "max-keys"),
+            Some("100")
+        );
+        assert!(
+            request_target(&seen[0]).contains("delimiter=%2F")
+                || request_target(&seen[0]).contains("delimiter=/")
+        );
+
+        let second = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects?next=page-2",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&second.body).unwrap(),
+            json!({
+                "prefix": "",
+                "entries": [
+                    {"kind": "object", "key": "photos/b.txt", "size": 4, "etag": "def", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "next": null
+            })
+        );
+        let seen = mock.requests();
+        assert_eq!(
+            query_value(request_target(&seen[1]), "continuation-token"),
+            Some("page-2")
+        );
+        assert_eq!(bucket_of(&seen[1]), "bkt-1");
+
+        let clamped = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects?limit=5000",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(clamped.status, StatusCode::OK, "{}", clamped.body);
+        let seen = mock.requests();
+        assert_eq!(
+            query_value(request_target(&seen[2]), "max-keys"),
+            Some("1000")
+        );
+        assert_eq!(bucket_of(&seen[2]), "bkt-1");
+    }
+
+    #[tokio::test]
+    async fn object_list_without_a_project_key_does_not_call_s3() {
+        let mock = S3Mock::start(|_| head_missing()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_routes_require_a_session_and_the_download_bit() {
+        let mock = S3Mock::start(|_| list_xml(false, None, &[("a.txt", 1, "abc")], &[])).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let anon = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, None),
+        )
+        .await;
+        assert_eq!(anon.status, StatusCode::UNAUTHORIZED, "{}", anon.body);
+        assert!(mock.requests().is_empty());
+
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert!(mock.requests().is_empty());
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": "viewer horse",
+                        "role": "viewer",
+                        "can_download": true
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let allowed = sign_in(&app, "Cara", "viewer horse").await;
+        let listed = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/search?q=txt",
+                None,
+                Some(&allowed),
+            ),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap()["matches"][0]["key"],
+            "a.txt"
+        );
+        assert_eq!(bucket_of(&mock.requests()[0]), "bkt-1");
+        assert!(!request_target(&mock.requests()[0]).contains("delimiter="));
+    }
+
+    #[tokio::test]
+    async fn object_search_rejects_a_short_query_and_stops_at_two_hundred() {
+        let mock = S3Mock::start(|_| {
+            let mut objects = String::new();
+            for index in 0..250 {
+                objects.push_str(&format!(
+                    "<Contents><Key>m-{index:03}</Key><LastModified>2026-10-11T00:00:00.000Z</LastModified><ETag>\"abc\"</ETag><Size>12</Size></Contents>"
+                ));
+            }
+            http_xml(&format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>more</NextContinuationToken><KeyCount>250</KeyCount>{objects}</ListBucketResult>"#
+            ))
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let short = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/search?q=a", None, Some(&session)),
+        )
+        .await;
+        assert_error(
+            &short,
+            StatusCode::BAD_REQUEST,
+            "query_too_short",
+            "Search needs at least 2 characters",
+        );
+        assert!(mock.requests().is_empty(), "a 1-character search called S3");
+
+        let found = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/search?q=m-",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+        let body: Value = serde_json::from_str(&found.body).unwrap();
+        assert_eq!(body["truncated"], true);
+        assert_eq!(body["reason"], "result_limit");
+        assert_eq!(body["matches"].as_array().unwrap().len(), 200);
+        assert_eq!(body["matches"][0]["key"], "m-000");
+        assert_eq!(body["matches"][199]["key"], "m-199");
+        assert_eq!(body["matches"][199]["size"], 12);
+        assert_eq!(body["matches"][199]["etag"], "abc");
+        assert_eq!(body["matches"][199]["lastModified"], "2026-10-11T00:00:00Z");
+        assert_eq!(mock.requests().len(), 1);
+        assert_eq!(bucket_of(&mock.requests()[0]), "bkt-1");
+    }
+
+    #[tokio::test]
+    async fn object_metadata_round_trips_odd_keys_and_a_missing_object_is_404() {
+        let mock = S3Mock::start(|line| {
+            if request_target(line).contains("missing") {
+                head_missing()
+            } else {
+                head_ok()
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        for key in ["a?b#c%20d=e", "照片.txt"] {
+            let response = exchange(
+                &app,
+                request(
+                    "GET",
+                    &format!("/api/buckets/bkt-1/objects/{}", encode_key(key)),
+                    None,
+                    Some(&session),
+                ),
+            )
+            .await;
+            assert_eq!(response.status, StatusCode::OK, "{key} {}", response.body);
+            assert_eq!(
+                serde_json::from_str::<Value>(&response.body).unwrap(),
+                json!({
+                    "key": key,
+                    "size": 1,
+                    "etag": "abc",
+                    "lastModified": "2026-10-11T00:00:00Z",
+                    "contentType": "text/plain"
+                })
+            );
+        }
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2);
+        for (line, key) in seen.iter().zip(["a?b#c%20d=e", "照片.txt"]) {
+            let path = request_target(line).split('?').next().unwrap_or("");
+            let decoded = percent_decode(path.trim_start_matches('/'));
+            let (bucket, object_key) = decoded.split_once('/').unwrap();
+            assert_eq!(bucket, "bkt-1");
+            assert_eq!(object_key, key);
+            assert!(line.starts_with("HEAD "), "{line}");
+        }
+        let missing = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/missing",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(&missing, StatusCode::NOT_FOUND, "not_found", "Not found");
     }
 }
