@@ -85,6 +85,62 @@ function parseAccounts(body: unknown): Account[] {
   return body.map(parseAccount);
 }
 
+type UserListFailure = {
+  message: string;
+  code: string | null;
+};
+
+class UserListError extends Error {
+  readonly code: string | null;
+
+  constructor(failure: UserListFailure) {
+    super(failure.message);
+    this.name = "UserListError";
+    this.code = failure.code;
+  }
+}
+
+// api() 只把 message 放进 Error。用户列表还要显示 body 里的 code，所以这里自己读响应。
+function failureFrom(text: string, status: number): UserListFailure {
+  const fallback = `request failed (${status})`;
+  if (!text.startsWith("{")) {
+    return { message: fallback, code: null };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { message: fallback, code: null };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { message: fallback, code: null };
+  }
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
+}
+
+function userListFailure(error: unknown): UserListFailure {
+  if (error instanceof UserListError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Users are unavailable", code: null };
+}
+
+async function loadUsers(): Promise<Account[]> {
+  const response = await fetch("/api/users", { credentials: "include" });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new UserListError(failureFrom(text, response.status));
+  }
+  return parseAccounts(text ? (JSON.parse(text) as unknown) : undefined);
+}
+
 function AccountRow({ account, self }: { account: Account; self: boolean }) {
   const client = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -368,17 +424,38 @@ function CreateAccount() {
 export function Users({ selfUsername }: { selfUsername: string }) {
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: async () => parseAccounts(await api<unknown>("/api/users")),
+    queryFn: loadUsers,
   });
+  const accounts = users.data ?? [];
+  const view = {
+    busy: users.isPending,
+    refreshing: accounts.length > 0 && users.isFetching && !users.isPending,
+    empty: Boolean(users.data) && accounts.length === 0,
+    failure: users.isError ? userListFailure(users.error) : null,
+  };
 
   return (
-    <section className="grid gap-4" aria-label="Users">
+    <section className="grid gap-4" aria-label="Users" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Users</h2>
-      {users.isPending ? <p>Loading users</p> : null}
-      {users.isError ? (
-        <p>{users.error instanceof Error ? users.error.message : "Users are unavailable"}</p>
+      {view.busy ? <p>Loading users</p> : null}
+      {view.refreshing ? <p>Refreshing users</p> : null}
+      {view.failure ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void users.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
       ) : null}
-      {users.isSuccess ? (
+      {view.empty ? <p>There are no users</p> : null}
+      {users.data && accounts.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -407,7 +484,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               </tr>
             </thead>
             <tbody>
-              {users.data.map((account) => (
+              {accounts.map((account) => (
                 <AccountRow
                   key={account.id}
                   account={account}
