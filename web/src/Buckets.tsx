@@ -277,24 +277,51 @@ function removeLabel(alias: Alias): string | null {
   return `Remove local alias ${alias.name} for ${alias.accessKeyId}`;
 }
 
-function errorMessage(text: string, status: number): string {
+type BucketListFailure = {
+  message: string;
+  code: string | null;
+};
+
+class BucketListError extends Error {
+  readonly code: string | null;
+
+  constructor(failure: BucketListFailure) {
+    super(failure.message);
+    this.name = "BucketListError";
+    this.code = failure.code;
+  }
+}
+
+// api() 只把 message 放进 Error。桶列表还要显示 body 里的 code，所以这里自己读响应。
+function failureFrom(text: string, status: number): BucketListFailure {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
-    return fallback;
+    return { message: fallback, code: null };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    return fallback;
+    return { message: fallback, code: null };
   }
-  if (typeof parsed === "object" && parsed && "message" in parsed) {
-    const message = parsed.message;
-    if (typeof message === "string" && message.length > 0) {
-      return message;
-    }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { message: fallback, code: null };
   }
-  return fallback;
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
+}
+
+function bucketListFailure(error: unknown): BucketListFailure {
+  if (error instanceof BucketListError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Buckets are unavailable", code: null };
 }
 
 async function loadPage(offset: number): Promise<BucketPage> {
@@ -303,7 +330,7 @@ async function loadPage(offset: number): Promise<BucketPage> {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(errorMessage(text, response.status));
+    throw new BucketListError(failureFrom(text, response.status));
   }
   return parsePage(text);
 }
@@ -765,17 +792,41 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
     },
   });
   const rows = list.data?.pages.flatMap((page) => page.items) ?? [];
-  const message = list.error instanceof Error ? list.error.message : "Buckets are unavailable";
+  const loading = list.isPending;
+  const refreshing = rows.length > 0 && list.isFetching && !list.isPending;
+  const view = {
+    loading,
+    refreshing,
+    busy: loading || refreshing,
+    empty: Boolean(list.data) && rows.length === 0,
+    failure: list.isError ? bucketListFailure(list.error) : null,
+    partial: list.hasNextPage,
+  };
   const deleteError = removeBucket.error instanceof Error ? removeBucket.error.message : null;
 
   return (
-    <section className="grid gap-4" aria-label="Buckets">
+    <section className="grid gap-4" aria-label="Buckets" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Buckets</h2>
       {canManage ? <CreateBucketForm /> : null}
-      {list.isPending ? <p>Loading buckets</p> : null}
-      {list.isError ? <p>{message}</p> : null}
+      {view.loading ? <p>Loading buckets</p> : null}
+      {view.refreshing ? <p>Refreshing buckets</p> : null}
+      {view.failure ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void list.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
       {notice ? <p>{notice}</p> : null}
-      {list.data && rows.length === 0 ? <p>There are no buckets.</p> : null}
+      {view.empty ? <p>There are no buckets.</p> : null}
       {list.data && rows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
@@ -837,17 +888,20 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
           </table>
         </div>
       ) : null}
-      {list.hasNextPage ? (
-        <button
-          className="border border-neutral-900 px-3 py-1 text-left"
-          type="button"
-          disabled={list.isFetchingNextPage}
-          onClick={() => {
-            void list.fetchNextPage();
-          }}
-        >
-          Load more
-        </button>
+      {view.partial ? (
+        <>
+          <p>More buckets are available.</p>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={list.isFetchingNextPage}
+            onClick={() => {
+              void list.fetchNextPage();
+            }}
+          >
+            Load more
+          </button>
+        </>
       ) : null}
       {deleteId !== null ? (
         <DeleteBucketDialog
