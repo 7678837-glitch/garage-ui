@@ -2,6 +2,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { putObject } from "./api/client";
 
+// React 18 的 input 属性类型没有 webkitdirectory。目录选择只看这个属性在不在。
+declare module "react" {
+  interface InputHTMLAttributes<T> {
+    webkitdirectory?: T extends HTMLInputElement ? "" : never;
+  }
+}
+
 const IN_FLIGHT_LIMIT = 3;
 
 type Verdict = "pending" | "overwrite";
@@ -26,6 +33,14 @@ const STATUS_LABEL = {
   failed: "Failed",
   cancelled: "Cancelled",
 } as const;
+
+function objectKey(file: File, directory: boolean): string {
+  const relative = file.webkitRelativePath;
+  if (directory && relative !== "") {
+    return relative;
+  }
+  return file.name;
+}
 
 function sharesName(rows: readonly Row[], name: string): boolean {
   let seen = 0;
@@ -147,7 +162,7 @@ export function UploadPanel({
     pump();
   }
 
-  function addFiles(list: File[]) {
+  function addFiles(list: File[], directory: boolean) {
     if (list.length === 0) {
       return;
     }
@@ -156,7 +171,7 @@ export function UploadPanel({
       nextIdRef.current += 1;
       const row: Row = {
         id,
-        name: file.name,
+        name: objectKey(file, directory),
         file,
         verdict: "pending",
         phase: { kind: "queued" },
@@ -240,16 +255,16 @@ export function UploadPanel({
 
   const keys = new Set(existingKeys);
 
-  function takeFiles(list: FileList | null) {
+  function takeFiles(list: FileList | null, directory: boolean) {
     if (!list) {
       return;
     }
-    addFiles(Array.from(list));
+    addFiles(Array.from(list), directory);
   }
 
   function onDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
-    takeFiles(event.dataTransfer.files);
+    takeFiles(event.dataTransfer.files, false);
   }
 
   return (
@@ -270,7 +285,20 @@ export function UploadPanel({
           multiple
           type="file"
           onChange={(event) => {
-            takeFiles(event.currentTarget.files);
+            takeFiles(event.currentTarget.files, false);
+            event.currentTarget.value = "";
+          }}
+        />
+      </label>
+      <label className="grid gap-1">
+        Choose folder
+        <input
+          className="border border-ink px-3 py-1"
+          multiple
+          type="file"
+          webkitdirectory=""
+          onChange={(event) => {
+            takeFiles(event.currentTarget.files, true);
             event.currentTarget.value = "";
           }}
         />

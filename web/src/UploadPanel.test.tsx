@@ -270,6 +270,73 @@ test("does not refetch bucket objects after a failed upload", async () => {
   expect(invalidate).not.toHaveBeenCalled();
 });
 
+function withRelativePath(name: string, relativePath: string) {
+  const file = new File(["body"], name, { type: "text/plain" });
+  Object.defineProperty(file, "webkitRelativePath", { value: relativePath });
+  return file;
+}
+
+test("uploads a chosen folder file at its relative path", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = withRelativePath("a.txt", "docs/a.txt");
+  fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+  expect(row("docs/a.txt").textContent).toContain("Uploading");
+});
+
+test("asks before uploading a folder path that already exists", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={["docs/a.txt"]} />);
+  const file = withRelativePath("a.txt", "docs/a.txt");
+  fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(row("docs/a.txt").textContent).toContain("Queued");
+  fireEvent.click(within(row("docs/a.txt")).getByRole("button", { name: "Overwrite" }));
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
+test("uploads a folder file at its name when the relative path is empty", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = withRelativePath("a.txt", "");
+  fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
+test("uploads a chosen file at its name when the relative path is empty", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = withRelativePath("a.txt", "");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+  expect(row("a.txt").textContent).toContain("Uploading");
+});
+
+test("keeps directory selection on the folder input only", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const files = screen.getByLabelText("Choose files");
+  const folder = screen.getByLabelText("Choose folder");
+  expect(files.hasAttribute("webkitdirectory")).toBe(false);
+  expect(files.hasAttribute("multiple")).toBe(true);
+  expect(folder.hasAttribute("webkitdirectory")).toBe(true);
+  expect(folder.hasAttribute("multiple")).toBe(true);
+});
+
+test("a dropped file keeps its file name when a relative path is set", () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  const file = withRelativePath("a.txt", "docs/a.txt");
+  fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
+    dataTransfer: { files: [file] },
+  });
+  expect(FakeRequest.sent).toHaveLength(1);
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
 test("accepts a dropped file", () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = new File(["z"], "drop.txt", { type: "text/plain" });
