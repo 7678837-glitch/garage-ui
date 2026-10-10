@@ -79,3 +79,77 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return JSON.parse(text) as T;
 }
+
+// 与 App.encodeObjectKey 同一套非保留字符。encodeURIComponent 会留下 !'()*，对象路径对不上。
+const UNRESERVED = /[A-Za-z0-9._~-]/;
+
+function encodeKey(key: string): string {
+  return key.split("/").map(encodeSegment).join("/");
+}
+
+function encodeSegment(segment: string): string {
+  let out = "";
+  for (const byte of new TextEncoder().encode(segment)) {
+    const character = String.fromCharCode(byte);
+    if (UNRESERVED.test(character)) {
+      out += character;
+    } else {
+      out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    }
+  }
+  return out;
+}
+
+export function putObject(input: {
+  bucketId: string;
+  key: string;
+  body: Blob;
+  contentType: string;
+  onProgress: (percent: number | null) => void;
+}): { promise: Promise<void>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  let aborted = false;
+  xhr.open(
+    "PUT",
+    `/api/buckets/${encodeURIComponent(input.bucketId)}/objects/${encodeKey(input.key)}`,
+  );
+  xhr.withCredentials = true;
+  xhr.setRequestHeader("content-type", input.contentType);
+  xhr.setRequestHeader("x-csrf-token", csrfToken());
+  xhr.upload.onprogress = (event) => {
+    if (!event.lengthComputable || event.total <= 0) {
+      input.onProgress(null);
+      return;
+    }
+    input.onProgress(Math.floor((event.loaded / event.total) * 100));
+  };
+  const promise = new Promise<void>((resolve, reject) => {
+    xhr.onload = () => {
+      if (aborted) {
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
+      reject(new Error(`request failed (${xhr.status})`));
+    };
+    xhr.onerror = () => {
+      if (!aborted) {
+        reject(new Error("request failed"));
+      }
+    };
+    xhr.onabort = () => {
+      aborted = true;
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+  });
+  xhr.send(input.body);
+  return {
+    promise,
+    abort() {
+      aborted = true;
+      xhr.abort();
+    },
+  };
+}
