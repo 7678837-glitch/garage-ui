@@ -300,15 +300,7 @@ fn base_tag(base_path: &str) -> String {
 }
 
 // 更新检查默认关闭。没有地址时直接返回，避免构造请求。
-pub fn maybe_check_updates(update_url: Option<&str>) {
-    if update_url
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .is_none()
-    {
-        return;
-    }
-}
+pub fn maybe_check_updates(_update_url: Option<&str>) {}
 
 fn normalize_base(raw: &str) -> anyhow::Result<String> {
     let raw = raw.trim();
