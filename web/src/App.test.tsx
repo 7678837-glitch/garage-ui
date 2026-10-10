@@ -7,6 +7,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.cookie = "garage_csrf=; Max-Age=0";
 });
 
 function renderApp() {
@@ -109,6 +110,89 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(notice.textContent).toBe("Garage v2.3.0 or newer is required");
   expect(screen.getByText("Ada · admin")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+});
+
+test("shows user management for an admin and locks that signed-in row", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/users")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 7,
+              username: "Ada",
+              role: "admin",
+              can_download: false,
+              can_share: false,
+              disabled: false,
+              password_hash: "$2b$12$from-the-api",
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  const remove = (await screen.findByRole("button", { name: "Delete Ada" })) as HTMLButtonElement;
+  expect(remove.disabled).toBe(true);
+  expect((screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLSelectElement).disabled).toBe(
+    true,
+  );
+  expect(
+    (screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLInputElement).disabled,
+  ).toBe(true);
+  expect(document.body.textContent).not.toContain("$2b$12$from-the-api");
+  expect(await screen.findByText("ok · test")).toBeTruthy();
+});
+
+test("hides user management from a viewer", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/auth/status")) {
+      return new Response(
+        JSON.stringify({
+          initialized: true,
+          authenticated: true,
+          username: "Bea",
+          role: "viewer",
+          can_download: false,
+          can_share: false,
+          garage_version: "v2.4.1",
+          garage_write_blocked: false,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
 });
 
 test("encodes each object key segment and allows the spec folder names", () => {

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
+import { Users } from "./Users";
 
 const credentials = z.object({
   username: z.string().min(1).max(64),
@@ -28,11 +29,12 @@ type SessionStatus = AuthStatus & {
   garage_write_blocked: boolean;
 };
 
-function Shell({ children }: { children: ReactNode }) {
+function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+  const width = wide ? "max-w-5xl px-6 pb-10" : "max-w-sm px-6 pb-10";
   return (
     <main className="min-h-screen bg-white text-neutral-900">
       <h1 className="p-6 text-xl font-semibold">Garage UI</h1>
-      <div className="max-w-sm px-6 pb-10">{children}</div>
+      <div className={width}>{children}</div>
     </main>
   );
 }
@@ -166,48 +168,53 @@ function Home({ status }: { status: SessionStatus }) {
   }
   return (
     <div className="grid gap-6">
-      {status.garage_write_blocked === true ? (
-        <p role="alert">Garage v2.3.0 or newer is required</p>
-      ) : null}
-      <p>
-        {status.username} · {status.role}
-      </p>
-      <p>{healthText}</p>
-      <form
-        className="grid gap-3"
-        onSubmit={form.handleSubmit((input) => change.mutate(input))}
-      >
-        <label className="block">
-          <span className="text-sm">Current password</span>
-          <input
-            className="mt-1 w-full border border-neutral-300 px-2 py-1"
-            type="password"
-            autoComplete="current-password"
-            {...form.register("current_password")}
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm">New password</span>
-          <input
-            className="mt-1 w-full border border-neutral-300 px-2 py-1"
-            type="password"
-            autoComplete="new-password"
-            {...form.register("new_password")}
-          />
-        </label>
-        <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
-        <ErrorText message={change.error instanceof Error ? change.error.message : undefined} />
-        <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
-          Change password
+      <div className="grid max-w-sm gap-6">
+        {status.garage_write_blocked === true ? (
+          <p role="alert">Garage v2.3.0 or newer is required</p>
+        ) : null}
+        <p>
+          {status.username} · {status.role}
+        </p>
+        <p>{healthText}</p>
+        <form
+          className="grid gap-3"
+          onSubmit={form.handleSubmit((input) => change.mutate(input))}
+        >
+          <label className="block">
+            <span className="text-sm">Current password</span>
+            <input
+              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              type="password"
+              autoComplete="current-password"
+              {...form.register("current_password")}
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm">New password</span>
+            <input
+              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              type="password"
+              autoComplete="new-password"
+              {...form.register("new_password")}
+            />
+          </label>
+          <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
+          <ErrorText message={change.error instanceof Error ? change.error.message : undefined} />
+          <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+            Change password
+          </button>
+        </form>
+        <button
+          className="border border-neutral-900 px-3 py-1 text-left"
+          type="button"
+          onClick={() => logout.mutate()}
+        >
+          Log out
         </button>
-      </form>
-      <button
-        className="border border-neutral-900 px-3 py-1 text-left"
-        type="button"
-        onClick={() => logout.mutate()}
-      >
-        Log out
-      </button>
+      </div>
+      {status.role === "admin" && status.username ? (
+        <Users selfUsername={status.username} />
+      ) : null}
     </div>
   );
 }
@@ -246,7 +253,7 @@ export function App() {
     );
   }
   return (
-    <Shell>
+    <Shell wide>
       <Home status={status.data} />
     </Shell>
   );
