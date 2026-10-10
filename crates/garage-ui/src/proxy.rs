@@ -662,7 +662,7 @@ mod lists {
         };
         let http = app.http.clone();
         let endpoint = endpoint.to_string();
-        let results = limit::fan_out(limit::DEFAULT_FANOUT_IN_FLIGHT, ids, move |id| {
+        let results = limit::fan_out(app.settings.fanout_in_flight, ids, move |id| {
             let http = http.clone();
             let base = base.clone();
             let token = token.clone();
@@ -1495,6 +1495,59 @@ mod tests {
         assert!(lines.iter().all(|line| !line.contains(ADMIN_TOKEN)));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(ADMIN_TOKEN));
+    }
+
+    #[tokio::test]
+    async fn fanout_limit_two_keeps_details_at_or_under_two() {
+        let mock = Mock::start(MockOpts {
+            buckets: 40,
+            keys: 0,
+            bucket_info: 404,
+            key_info: 404,
+            hold_details: true,
+            info_failures: 0,
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", mock.url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", ADMIN_TOKEN),
+                ("GARAGE_METRICS_TOKEN", METRICS_TOKEN),
+                ("FANOUT_LIMIT", "2"),
+            ],
+            crate::limit::test_quota(),
+        )
+        .await;
+        assert_eq!(app.settings.fanout_in_flight.get(), 2);
+        let app_task = app.clone();
+        let task = tokio::spawn(async move { list_buckets(&app_task, 0, 40).await });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = mock.inner.inflight.load(Ordering::SeqCst);
+            assert!(now <= 2, "in flight {now}");
+            if now == 2 {
+                tokio::task::yield_now().await;
+                let again = mock.inner.inflight.load(Ordering::SeqCst);
+                assert!(again <= 2, "in flight {again}");
+                break;
+            }
+            assert!(Instant::now() < deadline, "in flight stayed at {now}");
+            tokio::task::yield_now().await;
+        }
+        mock.inner.release.store(true, Ordering::SeqCst);
+        let page = tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("detail page")
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.items.len(), 40);
+        assert_eq!(page.items[0]["id"], "00000");
+        assert_eq!(page.items[39]["id"], "00039");
+        assert_eq!(page.items[0]["via"], "detail");
+        assert!(mock.inner.high.load(Ordering::SeqCst) <= 2);
+        assert_eq!(mock.inner.details.load(Ordering::SeqCst), 40);
     }
 
     #[tokio::test]

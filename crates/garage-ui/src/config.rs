@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ pub struct Settings {
     pub bcrypt_cost: u32,
     pub json_body_limit: usize,
     pub max_upload_bytes: u64,
+    pub fanout_in_flight: NonZeroUsize,
     pub s3_region: String,
     pub website_root_domain: String,
     pub public_s3_url: Option<String>,
@@ -144,6 +146,7 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             bcrypt_cost: PRODUCTION_BCRYPT_COST,
             json_body_limit: JSON_BODY_LIMIT,
             max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
+            fanout_in_flight: fanout_in_flight(env.get("FANOUT_LIMIT").map(String::as_str)),
             s3_region: env
                 .get("S3_REGION")
                 .cloned()
@@ -252,6 +255,13 @@ fn cookie_secure(value: Option<&str>) -> anyhow::Result<bool> {
         Some("false") => Ok(false),
         Some(_) => anyhow::bail!("COOKIE_SECURE 无法解析，拒绝启动"),
     }
+}
+
+fn fanout_in_flight(value: Option<&str>) -> NonZeroUsize {
+    value
+        .and_then(|text| text.parse::<usize>().ok())
+        .and_then(NonZeroUsize::new)
+        .unwrap_or(crate::limit::DEFAULT_FANOUT_IN_FLIGHT)
 }
 
 fn duration_or_default(value: Option<&str>, default: u64) -> Duration {
@@ -543,6 +553,20 @@ mod tests {
             probe.await.unwrap().is_err(),
             "maybe_check_updates contacted 127.0.0.1:{port}"
         );
+    }
+
+    #[test]
+    fn fanout_limit_falls_back_to_eight_unless_positive() {
+        let unset = load_map(&map(&[])).unwrap();
+        assert_eq!(unset.settings.fanout_in_flight.get(), 8);
+        for value in ["0", "-1", "nope", "1.5", ""] {
+            let loaded = load_map(&map(&[("FANOUT_LIMIT", value)])).unwrap();
+            assert_eq!(loaded.settings.fanout_in_flight.get(), 8, "{value}");
+        }
+        let two = load_map(&map(&[("FANOUT_LIMIT", "2")])).unwrap();
+        assert_eq!(two.settings.fanout_in_flight.get(), 2);
+        let wide = load_map(&map(&[("FANOUT_LIMIT", "1000000")])).unwrap();
+        assert_eq!(wide.settings.fanout_in_flight.get(), 1_000_000);
     }
 
     #[test]
