@@ -131,6 +131,11 @@ pub async fn dispatch(
     }
     let filtered = forwarded_query(name, query);
     let response = send(app, name, method, &filtered, body).await?;
+    if response.status().is_success()
+        && let Some(mutation) = credential_mutation(name, &filtered, body)
+    {
+        app.clear_credential_cache(&mutation).await;
+    }
     if endpoint.audit {
         let status = i64::from(response.status().as_u16());
         audit(
@@ -293,6 +298,43 @@ fn garage_unconfigured() -> ApiError {
 
 fn garage_down() -> ApiError {
     ApiError::unavailable("garage_unavailable", "Garage admin API is not reachable")
+}
+
+fn credential_mutation(
+    name: &str,
+    query: &str,
+    body: &[u8],
+) -> Option<crate::state::credentials::KeyMutation> {
+    use crate::state::credentials::KeyMutation;
+    match name {
+        "AllowBucketKey" => Some(KeyMutation::AllowBucketKey {
+            bucket_id: json_string(body, "bucketId")?,
+        }),
+        "DenyBucketKey" => Some(KeyMutation::DenyBucketKey {
+            bucket_id: json_string(body, "bucketId")?,
+        }),
+        // DeleteKey 与 UpdateKey 的 id 在 query，OpenAPI 没有把这个字段放进 body。
+        "DeleteKey" => Some(KeyMutation::DeleteKey {
+            key_id: query_value(query, "id")?,
+        }),
+        "UpdateKey" => Some(KeyMutation::UpdateKey {
+            key_id: query_value(query, "id")?,
+        }),
+        _ => None,
+    }
+}
+
+fn json_string(body: &[u8], field: &str) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let text = value.get(field)?.as_str()?;
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn query_value(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (name == key && !value.is_empty()).then(|| value.to_string())
+    })
 }
 
 // api 接入前库目标看不到分页入口，整段会变成死代码。
@@ -1573,5 +1615,337 @@ mod tests {
                 .iter()
                 .all(|line| !line.contains(METRICS_TOKEN))
         );
+    }
+
+    const CACHED_SECRET: &str = "secret-key-do-not-log";
+
+    struct RawAdmin {
+        url: String,
+        lines: Arc<Mutex<Vec<String>>>,
+        codes: Arc<Mutex<std::collections::HashMap<String, u16>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for RawAdmin {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl RawAdmin {
+        async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let codes = Arc::new(Mutex::new(std::collections::HashMap::new()));
+            let serve_lines = Arc::clone(&lines);
+            let serve_codes = Arc::clone(&codes);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let lines = Arc::clone(&serve_lines);
+                    let codes = Arc::clone(&serve_codes);
+                    tokio::spawn(async move {
+                        let header = consume_request(&mut socket).await.unwrap_or_default();
+                        let request_line = header.lines().next().unwrap_or("").to_string();
+                        lines.lock().expect("lines").push(request_line.clone());
+                        let path = request_line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("")
+                            .split('?')
+                            .next()
+                            .unwrap_or("");
+                        let name = path.rsplit('/').next().unwrap_or("");
+                        let code = if name == "GetNodeInfo" {
+                            200
+                        } else {
+                            codes
+                                .lock()
+                                .expect("codes")
+                                .get(name)
+                                .copied()
+                                .unwrap_or(404)
+                        };
+                        let status = match code {
+                            200 => "200 OK",
+                            500 => "500 Internal Server Error",
+                            _ => "404 Not Found",
+                        };
+                        let body = if name == "GetNodeInfo" {
+                            r#"{"garageVersion":"v2.3.0"}"#
+                        } else {
+                            "{}"
+                        };
+                        let _ = write_json(&mut socket, status, body).await;
+                        let _ = socket.shutdown().await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                lines,
+                codes,
+                task,
+            }
+        }
+
+        fn set(&self, name: &str, code: u16) {
+            self.codes
+                .lock()
+                .expect("codes")
+                .insert(name.to_string(), code);
+        }
+
+        fn lines(&self) -> Vec<String> {
+            self.lines.lock().expect("lines").clone()
+        }
+    }
+
+    async fn consume_request(socket: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 1024];
+        let header_end = loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break None;
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                break Some(pos + 4);
+            }
+            if buf.len() > 65536 {
+                break None;
+            }
+        };
+        let Some(header_end) = header_end else {
+            return Ok(String::from_utf8_lossy(&buf).into_owned());
+        };
+        let header = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+        let length = content_length(&header);
+        let mut have = buf.len() - header_end;
+        while have < length {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break;
+            }
+            have += read;
+        }
+        Ok(header)
+    }
+
+    fn content_length(header: &str) -> usize {
+        header
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("content-length") {
+                    value.trim().parse().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    fn bucket_sources(id: &str) -> crate::state::credentials::CredentialSources {
+        use crate::state::credentials::{BucketCredential, CredentialSources};
+        CredentialSources {
+            project_key: None,
+            explicit_key: Some(BucketCredential::new(id, CACHED_SECRET)),
+            read_write_keys: Vec::new(),
+        }
+    }
+
+    async fn admin_user(app: &App) -> crate::db::User {
+        crate::db::insert_user(&app.db, "ada", "hash", "admin", false, false)
+            .await
+            .unwrap();
+        crate::db::find_user_by_name(&app.db, "ada")
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn post_admin(
+        app: &App,
+        user: &crate::db::User,
+        path: &str,
+        query: Option<&str>,
+        body: &[u8],
+    ) -> Response<Body> {
+        dispatch(
+            app,
+            user,
+            "127.0.0.1",
+            &Method::POST,
+            path,
+            query,
+            body,
+            &HeaderMap::new(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn successful_deny_drops_the_cached_credential_and_a_500_keeps_it() {
+        let upstream = RawAdmin::start().await;
+        upstream.set("DenyBucketKey", 200);
+        let app = app_at(&upstream.url).await;
+        let user = admin_user(&app).await;
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 0, &bucket_sources("KEYA"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("other", 0, &bucket_sources("KEEP"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEEP"
+        );
+        let body = br#"{"bucketId":"photos","accessKeyId":"KEYA","permissions":{"read":true}}"#;
+        let ok = post_admin(&app, &user, "v2/DenyBucketKey", None, body).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 1, &bucket_sources("KEYB"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYB"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("other", 1, &bucket_sources("CHANGED"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEEP"
+        );
+
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 61, &bucket_sources("KEYA"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        upstream.set("DenyBucketKey", 500);
+        let failed = post_admin(&app, &user, "v2/DenyBucketKey", None, body).await;
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 62, &bucket_sources("KEYB"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        let lines = upstream.lines();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("POST /v2/DenyBucketKey "))
+        );
+        assert!(lines.iter().all(|line| !line.contains(ADMIN_TOKEN)));
+        assert!(lines.iter().all(|line| !line.contains(CACHED_SECRET)));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(ADMIN_TOKEN));
+        assert!(!sink.contains(CACHED_SECRET));
+    }
+
+    #[tokio::test]
+    async fn delete_and_update_clear_the_key_named_in_the_query() {
+        let upstream = RawAdmin::start().await;
+        upstream.set("DeleteKey", 200);
+        upstream.set("UpdateKey", 200);
+        let app = app_at(&upstream.url).await;
+        let user = admin_user(&app).await;
+        let key = bucket_sources("KEYA");
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 0, &key)
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("album", 0, &key)
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("other", 0, &bucket_sources("KEEP"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEEP"
+        );
+        let deleted = post_admin(&app, &user, "v2/DeleteKey", Some("id=KEYA"), b"").await;
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 1, &bucket_sources("KEYB"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYB"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("album", 1, &bucket_sources("KEYB"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYB"
+        );
+        assert_eq!(
+            app.resolve_bucket_credential("other", 1, &bucket_sources("CHANGED"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEEP"
+        );
+
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 61, &key)
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYA"
+        );
+        let updated = post_admin(
+            &app,
+            &user,
+            "v2/UpdateKey",
+            Some("id=KEYA"),
+            br#"{"name":"renamed"}"#,
+        )
+        .await;
+        assert_eq!(updated.status(), StatusCode::OK);
+        assert_eq!(
+            app.resolve_bucket_credential("photos", 62, &bucket_sources("KEYC"))
+                .await
+                .unwrap()
+                .access_key_id(),
+            "KEYC"
+        );
+        let lines = upstream.lines();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("POST /v2/DeleteKey?id=KEYA "))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("POST /v2/UpdateKey?id=KEYA "))
+        );
+        assert!(lines.iter().all(|line| !line.contains(ADMIN_TOKEN)));
+        assert!(lines.iter().all(|line| !line.contains(CACHED_SECRET)));
     }
 }
