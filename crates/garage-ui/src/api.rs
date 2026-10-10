@@ -96,6 +96,7 @@ pub fn routes(app: App) -> Router<App> {
         .layer(DefaultBodyLimit::max(json_limit));
     let upload = Router::new()
         .route("/api/objects", post(upload_object))
+        .route("/api/buckets/{id}/objects/{*key}", put(put_bucket_object))
         .layer(middleware::from_fn_with_state(app, csrf))
         .layer(DefaultBodyLimit::max(upload_limit));
     json_routes.merge(upload)
@@ -1495,12 +1496,7 @@ async fn share(
     Err(ApiError::forbidden("forbidden", "Not allowed"))
 }
 
-async fn upload_object(
-    State(app): State<App>,
-    Authed(current): Authed,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    require(&current.user, Op::WriteObjects)?;
+fn upload_length(headers: &HeaderMap, limit: u64) -> Result<u64, ApiError> {
     let Some(length) = headers
         .get("content-length")
         .and_then(|value| value.to_str().ok())
@@ -1511,17 +1507,40 @@ async fn upload_object(
             "Content-Length is required",
         ));
     };
-    if length > app.settings.max_upload_bytes {
+    if length > limit {
         return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "payload_too_large",
             "Upload is too large",
         ));
     }
+    Ok(length)
+}
+
+async fn upload_object(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    upload_length(&headers, app.settings.max_upload_bytes)?;
     Err(ApiError::not_implemented(
         "not_implemented",
         "Object upload is not available",
     ))
+}
+
+async fn put_bucket_object(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    let size = upload_length(&headers, app.settings.max_upload_bytes)?;
+    let stored = objects::put(&app, &id, &key, size, body).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
 }
 
 #[derive(Deserialize)]
@@ -4817,6 +4836,26 @@ mod tests {
                             .lock()
                             .expect("s3 requests")
                             .push(line.clone());
+                        if line.starts_with("PUT ") {
+                            let length = header_value(&text, "content-length")
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            let mut have = buf.len().saturating_sub(header_end.saturating_add(4));
+                            while have < length {
+                                let Ok(Ok(read)) = tokio::time::timeout(
+                                    Duration::from_secs(2),
+                                    socket.read(&mut tmp),
+                                )
+                                .await
+                                else {
+                                    return;
+                                };
+                                if read == 0 {
+                                    break;
+                                }
+                                have = have.saturating_add(read);
+                            }
+                        }
                         let response = reply(&line);
                         let _ = socket.write_all(response.as_bytes()).await;
                         let _ = socket.shutdown().await;
@@ -4948,6 +4987,45 @@ mod tests {
         let path = request_target(line).split('?').next().unwrap_or("");
         let trimmed = path.trim_start_matches('/');
         percent_decode(trimmed.split('/').next().unwrap_or(""))
+    }
+
+    fn object_key_of(line: &str) -> String {
+        let path = request_target(line).split('?').next().unwrap_or("");
+        let trimmed = path.trim_start_matches('/');
+        let Some((_, key)) = trimmed.split_once('/') else {
+            return String::new();
+        };
+        percent_decode(key)
+    }
+
+    fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+        headers.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+
+    fn put_ok(etag: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nETag: \"{etag}\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    fn put_bytes(
+        uri: &str,
+        body: &[u8],
+        content_length: Option<&str>,
+        session: &Session,
+    ) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("PUT")
+            .uri(uri)
+            .header("cookie", cookie_header(session))
+            .header("x-csrf-token", &session.csrf);
+        if let Some(length) = content_length {
+            builder = builder.header("content-length", length);
+        }
+        builder.body(Body::from(body.to_vec())).unwrap()
     }
 
     #[tokio::test]
@@ -5140,6 +5218,170 @@ mod tests {
         for line in &seen {
             assert_eq!(bucket_of(line), "bkt-1");
             assert!(request_target(line).contains("list-type=2"), "{line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn object_put_returns_key_etag_and_size() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            put_ok("abc123")
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let body = b"hello";
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                body,
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::CREATED, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "abc123", "size": 5 })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("PUT "), "{}", seen[0]);
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(object_key_of(&seen[0]), "photos/a.txt");
+    }
+
+    #[tokio::test]
+    async fn object_put_rejects_bad_length_without_calling_s3() {
+        let mock = S3Mock::start(|_| put_ok("abc")).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let uri = "/api/buckets/bkt-1/objects/photos/a.txt";
+        let missing = exchange(&app, put_bytes(uri, b"hello", None, &session)).await;
+        assert_error(
+            &missing,
+            StatusCode::BAD_REQUEST,
+            "length_required",
+            "Content-Length is required",
+        );
+        let invalid = exchange(&app, put_bytes(uri, b"hello", Some("nope"), &session)).await;
+        assert_error(
+            &invalid,
+            StatusCode::BAD_REQUEST,
+            "length_required",
+            "Content-Length is required",
+        );
+        let too_big = exchange(&app, put_bytes(uri, b"hello", Some("9999999999"), &session)).await;
+        assert_error(
+            &too_big,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "Upload is too large",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_put_without_a_project_key_does_not_call_s3() {
+        let mock = S3Mock::start(|_| put_ok("abc")).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_put_without_an_endpoint_is_unavailable() {
+        let mock = S3Mock::start(|_| put_ok("abc")).await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage is unavailable",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_put_retries_once_when_s3_returns_403() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        let mock = S3Mock::start(move |line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            let call = counted.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                s3_denied()
+            } else {
+                put_ok("abc123")
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::CREATED, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "abc123", "size": 5 })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for line in &seen {
+            assert!(line.starts_with("PUT "), "{line}");
+            assert_eq!(bucket_of(line), "bkt-1");
+            assert_eq!(object_key_of(line), "photos/a.txt");
         }
     }
 

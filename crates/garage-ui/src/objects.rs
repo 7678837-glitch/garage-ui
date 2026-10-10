@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aws_sdk_s3::Client;
@@ -5,7 +8,8 @@ use aws_sdk_s3::config::retry::RetryConfig;
 use aws_sdk_s3::config::{
     Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
-use aws_sdk_s3::primitives::{DateTime, DateTimeFormat};
+use aws_sdk_s3::primitives::{ByteStream, DateTime, DateTimeFormat};
+use axum::body::HttpBody;
 use axum::http::{HeaderValue, StatusCode};
 use serde::Serialize;
 
@@ -73,11 +77,19 @@ pub struct ObjectMeta {
     pub content_type: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct PutResult {
+    pub key: String,
+    pub etag: String,
+    pub size: u64,
+}
+
 enum S3Failure {
     Forbidden(String),
     NotFound,
     Upstream { status: u16, message: String },
     Down,
+    Local,
 }
 
 struct Page {
@@ -157,6 +169,36 @@ pub async fn metadata(app: &App, bucket_id: &str, key: &str) -> Result<ObjectMet
         async move { head(&client, &bucket, &key).await }
     })
     .await
+}
+
+pub async fn put(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    size: u64,
+    body: axum::body::Body,
+) -> Result<PutResult, ApiError> {
+    let bucket = bucket_id.to_string();
+    let key = key.to_string();
+    let length = i64::try_from(size).unwrap_or(i64::MAX);
+    // drive 在 403 时会再请求一次。请求体只能读一遍，按块落盘后两次都从文件建 ByteStream。
+    let replay = ReplayBody::new(app.settings.data_dir.clone(), size, body);
+    let etag = drive(app, bucket.clone(), {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        let replay = Arc::clone(&replay);
+        move |client| {
+            let bucket = bucket.clone();
+            let key = key.clone();
+            let replay = Arc::clone(&replay);
+            async move {
+                let stream = replay.byte_stream().await?;
+                put_with(&client, &bucket, &key, length, stream).await
+            }
+        }
+    })
+    .await?;
+    Ok(PutResult { key, etag, size })
 }
 
 fn page_size(limit: Option<i64>) -> i32 {
@@ -349,6 +391,127 @@ async fn head(client: &Client, bucket: &str, key: &str) -> Result<ObjectMeta, S3
     })
 }
 
+async fn put_with(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    length: i64,
+    body: ByteStream,
+) -> Result<String, S3Failure> {
+    let output = client
+        .put_object()
+        .bucket(bucket)
+        .key(key)
+        .content_length(length)
+        .body(body)
+        .send()
+        .await
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+    Ok(plain_etag(output.e_tag().unwrap_or("")))
+}
+
+struct ReplayBody {
+    source: Mutex<Option<axum::body::Body>>,
+    path: Mutex<Option<PathBuf>>,
+    dir: PathBuf,
+    size: u64,
+}
+
+impl ReplayBody {
+    fn new(dir: PathBuf, size: u64, body: axum::body::Body) -> Arc<Self> {
+        Arc::new(Self {
+            source: Mutex::new(Some(body)),
+            path: Mutex::new(None),
+            dir,
+            size,
+        })
+    }
+
+    async fn byte_stream(&self) -> Result<ByteStream, S3Failure> {
+        let ready = self.path.lock().expect("put spool").clone();
+        let path = if let Some(path) = ready {
+            path
+        } else {
+            let body = self
+                .source
+                .lock()
+                .expect("put body")
+                .take()
+                .ok_or(S3Failure::Local)?;
+            let path = write_body(&self.dir, self.size, body).await?;
+            *self.path.lock().expect("put spool") = Some(path.clone());
+            path
+        };
+        ByteStream::from_path(&path)
+            .await
+            .map_err(|_| S3Failure::Local)
+    }
+}
+
+impl Drop for ReplayBody {
+    fn drop(&mut self) {
+        let Ok(path) = self.path.lock() else {
+            return;
+        };
+        if let Some(path) = path.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+async fn write_body(dir: &Path, size: u64, body: axum::body::Body) -> Result<PathBuf, S3Failure> {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let path = dir.join(format!(
+        ".put-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = std::fs::File::create(&path).map_err(|_| S3Failure::Local)?;
+    let mut written = 0u64;
+    let mut body = std::pin::pin!(body);
+    loop {
+        if written >= size {
+            break;
+        }
+        let Some(next) = std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
+        else {
+            break;
+        };
+        let frame = match next {
+            Ok(frame) => frame,
+            Err(_) => return Err(discard_spool(&path)),
+        };
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        let room = usize::try_from(size - written).unwrap_or(usize::MAX);
+        let take = data.len().min(room);
+        if file.write_all(&data[..take]).is_err() {
+            return Err(discard_spool(&path));
+        }
+        written = written.saturating_add(take as u64);
+        if take < data.len() {
+            break;
+        }
+    }
+    if file.flush().is_err() {
+        return Err(discard_spool(&path));
+    }
+    Ok(path)
+}
+
+fn discard_spool(path: &Path) -> S3Failure {
+    let _ = std::fs::remove_file(path);
+    S3Failure::Local
+}
+
 fn plain_etag(raw: &str) -> String {
     raw.strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
@@ -416,6 +579,7 @@ where
             "garage_unavailable",
             "Garage is unavailable",
         )),
+        Ok(Err(S3Failure::Local)) => Err(ApiError::internal()),
         Err(credentials::ReadFailure::NoUsableKey(missing)) => Err(ApiError::new(
             StatusCode::from_u16(missing.status()).expect("412"),
             missing.code(),
