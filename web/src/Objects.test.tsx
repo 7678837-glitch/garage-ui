@@ -593,6 +593,45 @@ test("shows Delete only when exactly one object is selected", async () => {
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
+test("shows Preview and Download only for one selected object", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return json(
+        page([
+          objectRow("dir/a?b.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects("b k");
+  expect(await screen.findByRole("checkbox", { name: "Select dir/a?b.txt" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select dir/a?b.txt" }));
+  const preview = screen.getByRole("link", { name: "Preview" });
+  const download = screen.getByRole("link", { name: "Download" });
+  expect(preview.getAttribute("href")).toBe("/api/buckets/b%20k/objects/dir/a%3Fb.txt?preview=1");
+  expect(download.getAttribute("href")).toBe("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
+  expect(preview.getAttribute("target")).toBe("_blank");
+  expect(download.getAttribute("target")).toBe("_blank");
+  expect(preview.getAttribute("rel")).toBe("noopener");
+  expect(download.getAttribute("rel")).toBe("noopener");
+  expect(calls.some((call) => call.includes("preview=1") || call.includes("download=1"))).toBe(
+    false,
+  );
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+});
+
 test("cancels an object delete without a request, then removes the row after 204", async () => {
   const calls: { url: string; method: string }[] = [];
   let deleted = false;

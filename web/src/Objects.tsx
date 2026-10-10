@@ -404,8 +404,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const visibleKeys = objectKeys(visible);
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
+  const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
   // 批量删除是高风险。选择条只在恰好一个可见对象键时给出中风险删除。
-  const deleteTarget = shownPicked.length === 1 ? shownPicked[0] : null;
+  const deleteTarget = singleKey;
   const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
@@ -588,6 +589,26 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
             >
               Delete
             </button>
+          ) : null}
+          {singleKey !== null ? (
+            <>
+              <a
+                className="border border-neutral-900 px-3 py-1 text-left"
+                href={`${metadataPath(bucketId, singleKey)}?preview=1`}
+                target="_blank"
+                rel="noopener"
+              >
+                Preview
+              </a>
+              <a
+                className="border border-neutral-900 px-3 py-1 text-left"
+                href={`${metadataPath(bucketId, singleKey)}?download=1`}
+                target="_blank"
+                rel="noopener"
+              >
+                Download
+              </a>
+            </>
           ) : null}
           {copyNote === "copied" ? <p>Copied</p> : null}
           {copyNote === "manual" ? (
