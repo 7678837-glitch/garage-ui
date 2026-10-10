@@ -5,6 +5,7 @@ import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
 import { Buckets } from "./Buckets";
+import { ClusterHealth } from "./ClusterHealth";
 import { Keys } from "./Keys";
 import { Users } from "./Users";
 
@@ -214,6 +215,7 @@ function Home({ status }: { status: SessionStatus }) {
           Log out
         </button>
       </div>
+      {status.role === "admin" ? <ClusterHealth /> : null}
       <Buckets canManage={status.role === "admin"} />
       <Keys canManage={status.role === "admin"} />
       {status.role === "admin" && status.username ? (
