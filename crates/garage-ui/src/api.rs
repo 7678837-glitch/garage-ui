@@ -62,6 +62,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/{id}", patch(patch_user).delete(remove_user))
         .route("/api/users/{id}/reset-password", post(reset_password))
+        .route("/api/buckets", get(list_buckets))
         .route("/api/keys", get(list_keys))
         .route("/api/keys/{id}/secret", post(key_secret))
         .route("/api/objects/preview", get(preview_object))
@@ -164,6 +165,12 @@ struct ResetBody {
 #[derive(Deserialize)]
 struct NameQuery {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct PageQuery {
+    offset: Option<String>,
+    limit: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -644,22 +651,55 @@ async fn reset_password(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn list_buckets(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    require(&current.user, Op::ViewBuckets)?;
+    let (offset, limit) = page_bounds(&query)?;
+    let page = proxy::list_buckets(&app, offset, limit).await?;
+    Ok(page_json(page))
+}
+
 async fn list_keys(
     State(app): State<App>,
     Authed(current): Authed,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    proxy::dispatch(
-        &app,
-        &current.user,
-        &current.ip,
-        &Method::GET,
-        "v2/ListKeys",
-        None,
-        &[],
-        &headers,
-    )
-    .await
+    Query(query): Query<PageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    require(&current.user, Op::ViewKeys)?;
+    let (offset, limit) = page_bounds(&query)?;
+    let page = proxy::list_keys(&app, offset, limit).await?;
+    Ok(page_json(page))
+}
+
+fn page_bounds(query: &PageQuery) -> Result<(u64, usize), ApiError> {
+    let offset = match query.offset.as_deref() {
+        None => 0,
+        Some(text) => text.parse::<u64>().map_err(|_| {
+            ApiError::bad_request("invalid_offset", "Offset must be a non-negative integer")
+        })?,
+    };
+    let limit = match query.limit.as_deref() {
+        None => 100,
+        Some(text) => text.parse::<usize>().map_err(|_| {
+            ApiError::bad_request("invalid_limit", "Limit must be a non-negative integer")
+        })?,
+    };
+    if limit > 1000 {
+        return Err(ApiError::bad_request(
+            "limit_too_large",
+            "Limit cannot exceed 1000",
+        ));
+    }
+    Ok((offset, limit))
+}
+
+fn page_json(page: proxy::Page) -> Json<Value> {
+    Json(json!({
+        "items": page.items,
+        "more": page.more,
+    }))
 }
 
 async fn key_secret(
@@ -1467,5 +1507,333 @@ mod tests {
             body: String::from_utf8(bytes.to_vec()).unwrap(),
             disposition,
         }
+    }
+
+    struct CatalogMock {
+        url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for CatalogMock {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl CatalogMock {
+        async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let requests_task = Arc::clone(&requests);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let _ = serve_catalog(socket, Arc::clone(&requests_task)).await;
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                requests,
+                task,
+            }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().expect("requests").clone()
+        }
+    }
+
+    async fn serve_catalog(
+        mut socket: tokio::net::TcpStream,
+        requests: Arc<Mutex<Vec<String>>>,
+    ) -> std::io::Result<()> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 1024];
+        loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 65536 {
+                break;
+            }
+        }
+        let text = String::from_utf8_lossy(&buf);
+        let line = text.lines().next().unwrap_or("").to_string();
+        requests.lock().expect("requests").push(line.clone());
+        let target = line.split_whitespace().nth(1).unwrap_or("");
+        let path = target.split('?').next().unwrap_or("");
+        let (status, body) = match path {
+            "/v2/ListBucketsInfo" => ("200 OK", catalog_json(&["b0", "b1", "b2"], target)),
+            "/v2/ListKeysInfo" => ("200 OK", catalog_json(&["k0", "k1", "k2"], target)),
+            _ => ("404 Not Found", r#"{"error":"not found"}"#.to_string()),
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await?;
+        let _ = socket.shutdown().await;
+        Ok(())
+    }
+
+    fn catalog_json(ids: &[&str], target: &str) -> String {
+        let limit = query_value(target, "limit")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(ids.len());
+        let start = query_value(target, "offset")
+            .and_then(|id| ids.iter().position(|item| *item == id))
+            .unwrap_or(0);
+        let end = start.saturating_add(limit).min(ids.len());
+        let items: Vec<_> = ids[start..end]
+            .iter()
+            .map(|id| json!({ "id": id }))
+            .collect();
+        serde_json::to_string(&items).unwrap()
+    }
+
+    fn query_value<'a>(target: &'a str, key: &str) -> Option<&'a str> {
+        let query = target.split_once('?')?.1;
+        query.split('&').find_map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (name == key).then_some(value)
+        })
+    }
+
+    fn assert_error(response: &Exchange, status: StatusCode, code: &str, message: &str) {
+        assert_eq!(response.status, status, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "code": code, "message": message })
+        );
+    }
+
+    fn assert_page(response: &Exchange, items: Value, more: bool) {
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(!response.body.contains(TOKEN), "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "items": items, "more": more })
+        );
+    }
+
+    async fn sign_in(app: &App, username: &str, password: &str) -> Session {
+        let response = router(app.clone())
+            .oneshot(request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": username, "password": password }).to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        session_from(response.headers())
+    }
+
+    #[tokio::test]
+    async fn anonymous_catalog_pages_are_unauthorized() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        for path in [
+            "/api/buckets",
+            "/api/keys",
+            "/api/buckets?limit=nope",
+            "/api/keys?offset=abc",
+        ] {
+            let response = exchange(&app, request("GET", path, None, None)).await;
+            assert_error(
+                &response,
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
+                "Login required",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_pages_without_garage_are_unavailable() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let (session, _) = login(&app).await;
+        for path in ["/api/buckets", "/api/keys"] {
+            let response = exchange(&app, request("GET", path, None, Some(&session))).await;
+            assert_error(
+                &response,
+                StatusCode::BAD_GATEWAY,
+                "garage_unavailable",
+                "Garage admin API is not configured",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_pages_reject_a_bad_window() {
+        let mock = CatalogMock::start().await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+        for (path, code, message) in [
+            (
+                "/api/buckets?offset=abc&limit=2",
+                "invalid_offset",
+                "Offset must be a non-negative integer",
+            ),
+            (
+                "/api/keys?offset=",
+                "invalid_offset",
+                "Offset must be a non-negative integer",
+            ),
+            (
+                "/api/buckets?offset=-1&limit=2",
+                "invalid_offset",
+                "Offset must be a non-negative integer",
+            ),
+            (
+                "/api/keys?offset=1&limit=abc",
+                "invalid_limit",
+                "Limit must be a non-negative integer",
+            ),
+            (
+                "/api/buckets?limit=",
+                "invalid_limit",
+                "Limit must be a non-negative integer",
+            ),
+            (
+                "/api/keys?offset=0&limit=1001",
+                "limit_too_large",
+                "Limit cannot exceed 1000",
+            ),
+            (
+                "/api/buckets?limit=1001",
+                "limit_too_large",
+                "Limit cannot exceed 1000",
+            ),
+        ] {
+            let response = exchange(&app, request("GET", path, None, Some(&session))).await;
+            assert_error(&response, StatusCode::BAD_REQUEST, code, message);
+        }
+        assert!(
+            mock.requests().is_empty(),
+            "a rejected window called Garage: {:?}",
+            mock.requests()
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_pages_return_items_and_more() {
+        let mock = CatalogMock::start().await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+
+        let first = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=2", None, Some(&admin)),
+        )
+        .await;
+        assert_page(&first, json!([{ "id": "b0" }, { "id": "b1" }]), true);
+        assert_eq!(mock.requests().len(), 1, "{:?}", mock.requests());
+        assert!(mock.requests()[0].contains("GET /v2/ListBucketsInfo?limit=2 "));
+        assert!(!mock.requests()[0].contains("offset="));
+
+        let tail = exchange(
+            &app,
+            request("GET", "/api/buckets?offset=2&limit=2", None, Some(&admin)),
+        )
+        .await;
+        assert_page(&tail, json!([{ "id": "b2" }]), false);
+
+        let defaults = exchange(&app, request("GET", "/api/buckets", None, Some(&admin))).await;
+        assert_page(
+            &defaults,
+            json!([{ "id": "b0" }, { "id": "b1" }, { "id": "b2" }]),
+            false,
+        );
+        let bucket_lines: Vec<_> = mock
+            .requests()
+            .into_iter()
+            .filter(|line| line.contains("ListBucketsInfo?limit=100 "))
+            .collect();
+        assert_eq!(bucket_lines.len(), 1, "{:?}", mock.requests());
+        assert!(bucket_lines[0].contains("GET /v2/ListBucketsInfo?limit=100 "));
+        assert!(!bucket_lines[0].contains("offset="));
+
+        let wide = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1000", None, Some(&admin)),
+        )
+        .await;
+        assert_page(
+            &wide,
+            json!([{ "id": "b0" }, { "id": "b1" }, { "id": "b2" }]),
+            false,
+        );
+        assert!(
+            mock.requests()
+                .iter()
+                .any(|line| line.contains("ListBucketsInfo?limit=1000 "))
+        );
+
+        let empty = exchange(
+            &app,
+            request("GET", "/api/keys?limit=0", None, Some(&admin)),
+        )
+        .await;
+        assert_page(&empty, json!([]), true);
+        assert!(
+            mock.requests()
+                .iter()
+                .any(|line| line.contains("GET /v2/ListKeysInfo?limit=0 "))
+        );
+
+        let keys = exchange(
+            &app,
+            request("GET", "/api/keys?offset=2&limit=2", None, Some(&admin)),
+        )
+        .await;
+        assert_page(&keys, json!([{ "id": "k2" }]), false);
+        assert!(
+            mock.requests()
+                .iter()
+                .all(|line| !line.contains("GetBucketInfo") && !line.contains("GetKeyInfo"))
+        );
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Bea",
+                        "password": "viewer horse",
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let viewer = sign_in(&app, "Bea", "viewer horse").await;
+        let viewer_buckets = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1", None, Some(&viewer)),
+        )
+        .await;
+        assert_page(&viewer_buckets, json!([{ "id": "b0" }]), true);
+        let viewer_keys = exchange(
+            &app,
+            request("GET", "/api/keys?limit=1", None, Some(&viewer)),
+        )
+        .await;
+        assert_page(&viewer_keys, json!([{ "id": "k0" }]), true);
     }
 }
