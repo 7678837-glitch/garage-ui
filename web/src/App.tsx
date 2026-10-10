@@ -214,7 +214,7 @@ function Home({ status }: { status: SessionStatus }) {
           Log out
         </button>
       </div>
-      <Buckets />
+      <Buckets canManage={status.role === "admin"} />
       <Keys />
       {status.role === "admin" && status.username ? (
         <Users selfUsername={status.username} />

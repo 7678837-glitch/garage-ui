@@ -251,6 +251,7 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(screen.getByText("ada-key")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETADA");
 });
 
@@ -307,7 +308,24 @@ test("shows a bucket id to a viewer", async () => {
   expect(document.body.textContent).not.toContain("SECRETBEa");
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add alias to bucket-bea" })).toBeNull();
+  expect(
+    fetchMock.mock.calls.filter((call) => {
+      const method = methodOf(call).toUpperCase();
+      return method !== "GET" && String(call[0]).includes("/api/buckets");
+    }),
+  ).toEqual([]);
 });
+
+function methodOf(call: readonly unknown[]): string {
+  const init = call[1];
+  if (typeof init !== "object" || init === null || !("method" in init)) {
+    return "GET";
+  }
+  return typeof init.method === "string" ? init.method : "GET";
+}
 
 test("encodes each object key segment and allows the spec folder names", () => {
   expect(encodeObjectKey("a?b#c%20d=e")).toBe("a%3Fb%23c%2520d%3De");
