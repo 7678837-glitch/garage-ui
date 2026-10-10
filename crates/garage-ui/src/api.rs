@@ -23,7 +23,7 @@ use crate::session::{
     self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
 };
 use crate::state::App;
-use crate::util::{hex_encode, random_bytes};
+use crate::util::{self, hex_encode, random_bytes};
 use crate::version;
 
 struct Authed(Current);
@@ -700,7 +700,7 @@ async fn preview_object(
     Authed(current): Authed,
     Query(query): Query<NameQuery>,
 ) -> Result<Response, ApiError> {
-    object_body(&app, &current, &query.name).await
+    object_body(&app, &current, &query.name, ObjectBody::Preview).await
 }
 
 async fn download_object(
@@ -708,7 +708,7 @@ async fn download_object(
     Authed(current): Authed,
     Query(query): Query<NameQuery>,
 ) -> Result<Response, ApiError> {
-    object_body(&app, &current, &query.name).await
+    object_body(&app, &current, &query.name, ObjectBody::Download).await
 }
 
 async fn thumbnail_object(
@@ -716,10 +716,20 @@ async fn thumbnail_object(
     Authed(current): Authed,
     Query(query): Query<NameQuery>,
 ) -> Result<Response, ApiError> {
-    object_body(&app, &current, &query.name).await
+    object_body(&app, &current, &query.name, ObjectBody::Preview).await
 }
 
-async fn object_body(app: &App, current: &Current, name: &str) -> Result<Response, ApiError> {
+enum ObjectBody {
+    Preview,
+    Download,
+}
+
+async fn object_body(
+    app: &App,
+    current: &Current,
+    name: &str,
+    view: ObjectBody,
+) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
     let fixtures = app.fixtures.lock().expect("fixtures");
     let Some(fixture) = fixtures.get(name).cloned() else {
@@ -727,6 +737,7 @@ async fn object_body(app: &App, current: &Current, name: &str) -> Result<Respons
     };
     drop(fixtures);
     let policy = preview_policy(&fixture.content_type, &fixture.filename);
+    let filename = fixture.filename.clone();
     let mut response = Response::new(Body::from(fixture.body));
     let headers = response.headers_mut();
     if let Ok(value) = HeaderValue::from_str(&policy.content_type) {
@@ -741,10 +752,19 @@ async fn object_body(app: &App, current: &Current, name: &str) -> Result<Respons
         "cache-control",
         HeaderValue::from_static("private, no-store"),
     );
-    if let Some(disposition) = policy.content_disposition
-        && let Ok(value) = HeaderValue::from_str(&disposition)
-    {
-        headers.insert("content-disposition", value);
+    match view {
+        ObjectBody::Download => {
+            let disposition = util::content_disposition_attachment(&filename);
+            let value = HeaderValue::from_str(&disposition).map_err(|_| ApiError::internal())?;
+            headers.insert("content-disposition", value);
+        }
+        ObjectBody::Preview => {
+            if let Some(disposition) = policy.content_disposition
+                && let Ok(value) = HeaderValue::from_str(&disposition)
+            {
+                headers.insert("content-disposition", value);
+            }
+        }
     }
     Ok(response)
 }
@@ -1383,5 +1403,69 @@ mod tests {
                 .contains("POST /v2/CreateBucket ")
         );
         assert!(!old.requests().join("\n").contains("CreateBucket"));
+    }
+
+    #[tokio::test]
+    async fn download_filename_uses_rfc5987() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let (session, _) = login(&app).await;
+        for (name, filename) in [("report", "报告.txt"), ("odd", "a?b#c%20d=e")] {
+            app.fixtures.lock().expect("fixtures").insert(
+                name.into(),
+                state::Fixture {
+                    content_type: "application/octet-stream".into(),
+                    filename: filename.into(),
+                    body: b"bytes".to_vec(),
+                },
+            );
+        }
+        let report = download(&app, &session, "report").await;
+        assert_eq!(report.status, StatusCode::OK);
+        assert_eq!(report.body, "bytes");
+        assert_eq!(
+            report.disposition,
+            "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A.txt"
+        );
+        let odd = download(&app, &session, "odd").await;
+        assert_eq!(odd.status, StatusCode::OK);
+        assert_eq!(odd.body, "bytes");
+        assert_eq!(
+            odd.disposition,
+            "attachment; filename*=UTF-8''a%3Fb#c%2520d%3De"
+        );
+    }
+
+    struct Download {
+        status: StatusCode,
+        body: String,
+        disposition: String,
+    }
+
+    async fn download(app: &App, session: &Session, name: &str) -> Download {
+        let response = router(app.clone())
+            .oneshot(request(
+                "GET",
+                &format!("/api/objects/download?name={name}"),
+                None,
+                Some(session),
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let disposition = response
+            .headers()
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        Download {
+            status,
+            body: String::from_utf8(bytes.to_vec()).unwrap(),
+            disposition,
+        }
     }
 }

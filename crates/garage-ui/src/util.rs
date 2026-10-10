@@ -53,6 +53,118 @@ pub fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+// 对象路由还没按段解码。下载头已经走 content_disposition_attachment。
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectKeyError;
+
+#[allow(dead_code)]
+pub fn encode_object_key(key: &str) -> String {
+    key.split('/')
+        .map(encode_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[allow(dead_code)]
+pub fn decode_object_key(encoded: &str) -> Result<Vec<u8>, ObjectKeyError> {
+    let mut out = Vec::new();
+    for (index, segment) in encoded.split('/').enumerate() {
+        if index > 0 {
+            out.push(b'/');
+        }
+        decode_segment(segment, &mut out)?;
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+pub fn folder_name_allowed(name: &str) -> bool {
+    !name
+        .chars()
+        .any(|character| character == '/' || character.is_control())
+}
+
+pub fn content_disposition_attachment(filename: &str) -> String {
+    let name = if filename.is_empty() {
+        "object"
+    } else {
+        filename
+    };
+    format!("attachment; filename*=UTF-8''{}", rfc5987(name))
+}
+
+fn encode_segment(segment: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::new();
+    for byte in segment.bytes() {
+        if is_unreserved(byte) {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0xf) as usize] as char);
+        }
+    }
+    out
+}
+
+fn decode_segment(segment: &str, out: &mut Vec<u8>) -> Result<(), ObjectKeyError> {
+    let bytes = segment.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(ObjectKeyError);
+            }
+            let hi = hex_value(bytes[index + 1])?;
+            let lo = hex_value(bytes[index + 2])?;
+            out.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn hex_value(byte: u8) -> Result<u8, ObjectKeyError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(ObjectKeyError),
+    }
+}
+
+fn is_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn rfc5987(name: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::new();
+    for byte in name.bytes() {
+        if is_rfc5987_attr(byte) {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0xf) as usize] as char);
+        }
+    }
+    out
+}
+
+fn is_rfc5987_attr(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
+}
+
 // 路由还没调用这些纯函数。这一阶段只在这里把 4.1、4.3、4.4 定下来。
 #[allow(dead_code)]
 pub mod bucket {
@@ -411,5 +523,62 @@ pub mod bucket {
             *cursor = end;
             page
         }
+    }
+}
+
+#[cfg(test)]
+mod object_key_tests {
+    use super::{
+        content_disposition_attachment, decode_object_key, encode_object_key, folder_name_allowed,
+    };
+
+    #[test]
+    fn path_segments_round_trip_the_spec_keys() {
+        for key in ["a?b#c%20d=e", "报告.txt", "dir/报告.txt", "dir/a?b#c%20d=e"] {
+            let encoded = encode_object_key(key);
+            assert_eq!(decode_object_key(&encoded).unwrap(), key.as_bytes());
+        }
+        assert_eq!(encode_object_key("a?b#c%20d=e"), "a%3Fb%23c%2520d%3De");
+        assert_eq!(
+            decode_object_key("a%3Fb%23c%2520d%3De").unwrap(),
+            b"a?b#c%20d=e"
+        );
+        assert_eq!(encode_object_key("报告.txt"), "%E6%8A%A5%E5%91%8A.txt");
+        assert_eq!(
+            decode_object_key("%E6%8A%A5%E5%91%8A.txt").unwrap(),
+            "报告.txt".as_bytes()
+        );
+        assert_eq!(
+            encode_object_key("dir/a?b#c%20d=e"),
+            "dir/a%3Fb%23c%2520d%3De"
+        );
+        assert!(decode_object_key("%").is_err());
+        assert!(decode_object_key("%2").is_err());
+        assert!(decode_object_key("%GG").is_err());
+    }
+
+    #[test]
+    fn folder_names_reject_controls_and_slashes_only() {
+        for name in ["a?b#c%20d=e", "报告.txt", "a b", "=#?% "] {
+            assert!(folder_name_allowed(name), "{name}");
+        }
+        assert!(!folder_name_allowed("a/b"));
+        assert!(!folder_name_allowed("a\nb"));
+        assert!(!folder_name_allowed("a\u{0000}b"));
+        assert!(!folder_name_allowed("a\u{007f}b"));
+        assert!(!folder_name_allowed("a\u{009f}b"));
+    }
+
+    #[test]
+    fn download_names_use_rfc5987() {
+        assert_eq!(
+            content_disposition_attachment("a?b#c%20d=e"),
+            "attachment; filename*=UTF-8''a%3Fb#c%2520d%3De"
+        );
+        assert_eq!(
+            content_disposition_attachment("报告.txt"),
+            "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A.txt"
+        );
+        assert!(content_disposition_attachment("报告.txt").is_ascii());
     }
 }

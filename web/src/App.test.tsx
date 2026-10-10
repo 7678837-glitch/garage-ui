@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { App } from "./App";
+import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
 
 afterEach(() => {
   cleanup();
@@ -109,4 +109,20 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(notice.textContent).toBe("Garage v2.3.0 or newer is required");
   expect(screen.getByText("Ada · admin")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+});
+
+test("encodes each object key segment and allows the spec folder names", () => {
+  expect(encodeObjectKey("a?b#c%20d=e")).toBe("a%3Fb%23c%2520d%3De");
+  expect(decodeObjectKey("a%3Fb%23c%2520d%3De")).toBe("a?b#c%20d=e");
+  expect(encodeObjectKey("报告.txt")).toBe("%E6%8A%A5%E5%91%8A.txt");
+  expect(decodeObjectKey("%E6%8A%A5%E5%91%8A.txt")).toBe("报告.txt");
+  expect(encodeObjectKey("dir/报告.txt")).toBe("dir/%E6%8A%A5%E5%91%8A.txt");
+  expect(decodeObjectKey("dir/%E6%8A%A5%E5%91%8A.txt")).toBe("dir/报告.txt");
+  expect(folderNameAllowed("a?b#c%20d=e")).toBe(true);
+  expect(folderNameAllowed("报告.txt")).toBe(true);
+  expect(folderNameAllowed("a b")).toBe(true);
+  expect(folderNameAllowed("=#?% ")).toBe(true);
+  expect(folderNameAllowed("a/b")).toBe(false);
+  expect(folderNameAllowed("a\nb")).toBe(false);
+  expect(folderNameAllowed("a\u0000b")).toBe(false);
 });

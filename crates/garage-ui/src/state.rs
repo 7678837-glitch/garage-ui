@@ -259,3 +259,430 @@ mod tests {
         assert!(unparsed.writes_allowed);
     }
 }
+
+// 路由还没读这份缓存。清除函数给测试和后续接线用，这一波不从 proxy.rs 挂钩。
+#[allow(dead_code)]
+pub mod credentials {
+    use std::collections::HashMap;
+
+    const MAX_TTL_SECS: i64 = 60;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct BucketCredential {
+        access_key_id: String,
+        secret_key: String,
+    }
+
+    impl BucketCredential {
+        pub fn new(access_key_id: impl Into<String>, secret_key: impl Into<String>) -> Self {
+            Self {
+                access_key_id: access_key_id.into(),
+                secret_key: secret_key.into(),
+            }
+        }
+
+        pub fn access_key_id(&self) -> &str {
+            &self.access_key_id
+        }
+
+        pub fn secret_key(&self) -> &str {
+            &self.secret_key
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct CredentialSources {
+        pub project_key: Option<BucketCredential>,
+        pub explicit_key: Option<BucketCredential>,
+        pub read_write_keys: Vec<BucketCredential>,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct NoUsableKey;
+
+    impl NoUsableKey {
+        pub fn status(self) -> u16 {
+            412
+        }
+
+        pub fn code(self) -> &'static str {
+            "no_usable_key"
+        }
+
+        pub fn message(self) -> &'static str {
+            "This bucket has no usable read-write key"
+        }
+    }
+
+    #[allow(clippy::enum_variant_names)]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum KeyMutation {
+        AllowBucketKey { bucket_id: String },
+        DenyBucketKey { bucket_id: String },
+        DeleteKey { key_id: String },
+        UpdateKey { key_id: String },
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum Operation<T> {
+        Done(T),
+        Forbidden,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum ReadFailure {
+        NoUsableKey(NoUsableKey),
+        Forbidden,
+    }
+
+    struct Entry {
+        credential: BucketCredential,
+        stored_at: i64,
+    }
+
+    pub struct CredentialCache {
+        ttl_secs: i64,
+        entries: HashMap<String, Entry>,
+    }
+
+    impl CredentialCache {
+        pub fn new(ttl_secs: i64) -> Self {
+            Self {
+                ttl_secs: ttl_secs.clamp(0, MAX_TTL_SECS),
+                entries: HashMap::new(),
+            }
+        }
+
+        pub fn resolve(
+            &mut self,
+            bucket_id: &str,
+            now: i64,
+            sources: &CredentialSources,
+        ) -> Result<BucketCredential, NoUsableKey> {
+            if let Some(hit) = self.fresh(bucket_id, now) {
+                return Ok(hit.clone());
+            }
+            self.entries.remove(bucket_id);
+            let selected = select(sources)?;
+            self.entries.insert(
+                bucket_id.to_string(),
+                Entry {
+                    credential: selected.clone(),
+                    stored_at: now,
+                },
+            );
+            Ok(selected)
+        }
+
+        pub fn clear(&mut self, mutation: &KeyMutation) {
+            match mutation {
+                KeyMutation::AllowBucketKey { bucket_id, .. }
+                | KeyMutation::DenyBucketKey { bucket_id, .. } => {
+                    self.entries.remove(bucket_id);
+                }
+                KeyMutation::DeleteKey { key_id } | KeyMutation::UpdateKey { key_id } => {
+                    self.entries
+                        .retain(|_, entry| entry.credential.access_key_id != *key_id);
+                }
+            }
+        }
+
+        pub fn read<T>(
+            &mut self,
+            bucket_id: &str,
+            now: i64,
+            mut load: impl FnMut() -> CredentialSources,
+            mut operation: impl FnMut(&BucketCredential) -> Operation<T>,
+        ) -> Result<T, ReadFailure> {
+            let first = self
+                .resolve(bucket_id, now, &load())
+                .map_err(ReadFailure::NoUsableKey)?;
+            match operation(&first) {
+                Operation::Done(value) => Ok(value),
+                Operation::Forbidden => {
+                    self.entries.remove(bucket_id);
+                    let second = self
+                        .resolve(bucket_id, now, &load())
+                        .map_err(ReadFailure::NoUsableKey)?;
+                    match operation(&second) {
+                        Operation::Done(value) => Ok(value),
+                        Operation::Forbidden => {
+                            self.entries.remove(bucket_id);
+                            Err(ReadFailure::Forbidden)
+                        }
+                    }
+                }
+            }
+        }
+
+        fn fresh(&self, bucket_id: &str, now: i64) -> Option<&BucketCredential> {
+            let entry = self.entries.get(bucket_id)?;
+            if now.saturating_sub(entry.stored_at) >= self.ttl_secs {
+                None
+            } else {
+                Some(&entry.credential)
+            }
+        }
+    }
+
+    fn select(sources: &CredentialSources) -> Result<BucketCredential, NoUsableKey> {
+        if let Some(key) = &sources.project_key {
+            return Ok(key.clone());
+        }
+        if let Some(key) = &sources.explicit_key {
+            return Ok(key.clone());
+        }
+        Err(NoUsableKey)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn cred(id: &str, secret: &str) -> BucketCredential {
+            BucketCredential::new(id, secret)
+        }
+
+        fn explicit(id: &str) -> CredentialSources {
+            CredentialSources {
+                project_key: None,
+                explicit_key: Some(cred(id, "secret")),
+                read_write_keys: vec![cred("rw-ignored", "nope")],
+            }
+        }
+
+        #[test]
+        fn project_key_beats_an_explicit_key_and_read_write_keys() {
+            let mut cache = CredentialCache::new(60);
+            let sources = CredentialSources {
+                project_key: Some(cred("PROJECT", "project-secret")),
+                explicit_key: Some(cred("EXPLICIT", "explicit-secret")),
+                read_write_keys: vec![cred("RW", "rw-secret")],
+            };
+            let got = cache.resolve("photos", 0, &sources).unwrap();
+            assert_eq!(got.access_key_id(), "PROJECT");
+            assert_eq!(got.secret_key(), "project-secret");
+        }
+
+        #[test]
+        fn missing_key_is_not_stored() {
+            let mut cache = CredentialCache::new(60);
+            let missing = CredentialSources {
+                project_key: None,
+                explicit_key: None,
+                read_write_keys: vec![cred("RW", "rw-secret")],
+            };
+            let err = cache.resolve("photos", 0, &missing).unwrap_err();
+            assert_eq!(err.status(), 412);
+            assert_eq!(err.code(), "no_usable_key");
+            assert_eq!(err.message(), "This bucket has no usable read-write key");
+            let granted = explicit("KEYB");
+            let got = cache.resolve("photos", 1, &granted).unwrap();
+            assert_eq!(got.access_key_id(), "KEYB");
+        }
+
+        #[test]
+        fn revoke_then_next_read() {
+            let mut cache = CredentialCache::new(60);
+            let mut photos = explicit("KEYA");
+            assert_eq!(
+                cache
+                    .resolve("photos", 10, &photos)
+                    .unwrap()
+                    .access_key_id(),
+                "KEYA"
+            );
+            let mut other = explicit("KEEP");
+            assert_eq!(
+                cache.resolve("other", 10, &other).unwrap().access_key_id(),
+                "KEEP"
+            );
+            cache.clear(&KeyMutation::DenyBucketKey {
+                bucket_id: "photos".into(),
+            });
+            photos.explicit_key = None;
+            photos.read_write_keys = vec![cred("KEYA", "secret"), cred("OTHER", "secret")];
+            let err = cache.resolve("photos", 11, &photos).unwrap_err();
+            assert_eq!(err.status(), 412);
+            assert_eq!(err.code(), "no_usable_key");
+            assert_eq!(err.message(), "This bucket has no usable read-write key");
+            other.explicit_key = Some(cred("CHANGED", "secret"));
+            assert_eq!(
+                cache.resolve("other", 11, &other).unwrap().access_key_id(),
+                "KEEP"
+            );
+
+            let mut docs = explicit("KEYA");
+            assert_eq!(
+                cache.resolve("docs", 12, &docs).unwrap().access_key_id(),
+                "KEYA"
+            );
+            cache.clear(&KeyMutation::DeleteKey {
+                key_id: "KEYA".into(),
+            });
+            docs.explicit_key = Some(cred("KEYB", "secret"));
+            assert_eq!(
+                cache.resolve("docs", 13, &docs).unwrap().access_key_id(),
+                "KEYB"
+            );
+            assert_eq!(
+                cache.resolve("other", 13, &other).unwrap().access_key_id(),
+                "KEEP"
+            );
+        }
+
+        #[test]
+        fn absent_then_granted() {
+            let mut cache = CredentialCache::new(60);
+            let mut sources = CredentialSources {
+                project_key: None,
+                explicit_key: None,
+                read_write_keys: vec![cred("RW", "rw-secret")],
+            };
+            let err = cache.resolve("photos", 0, &sources).unwrap_err();
+            assert_eq!(err.status(), 412);
+            assert_eq!(err.message(), "This bucket has no usable read-write key");
+            cache.clear(&KeyMutation::AllowBucketKey {
+                bucket_id: "photos".into(),
+            });
+            sources.explicit_key = Some(cred("KEYB", "secret"));
+            assert_eq!(
+                cache
+                    .resolve("photos", 1, &sources)
+                    .unwrap()
+                    .access_key_id(),
+                "KEYB"
+            );
+        }
+
+        #[test]
+        fn allow_and_update_clear_the_matching_entry() {
+            let mut cache = CredentialCache::new(60);
+            let mut photos = explicit("OLD");
+            assert_eq!(
+                cache.resolve("photos", 0, &photos).unwrap().access_key_id(),
+                "OLD"
+            );
+            let kept = explicit("KEEP");
+            assert_eq!(
+                cache.resolve("other", 0, &kept).unwrap().access_key_id(),
+                "KEEP"
+            );
+            cache.clear(&KeyMutation::AllowBucketKey {
+                bucket_id: "photos".into(),
+            });
+            photos.explicit_key = Some(cred("NEW", "secret"));
+            assert_eq!(
+                cache.resolve("photos", 1, &photos).unwrap().access_key_id(),
+                "NEW"
+            );
+            assert_eq!(
+                cache.resolve("other", 1, &kept).unwrap().access_key_id(),
+                "KEEP"
+            );
+
+            let mut project = CredentialSources {
+                project_key: Some(cred("PROJECT", "old-secret")),
+                explicit_key: None,
+                read_write_keys: vec![cred("RW", "rw-secret")],
+            };
+            assert_eq!(
+                cache.resolve("album", 2, &project).unwrap().secret_key(),
+                "old-secret"
+            );
+            cache.clear(&KeyMutation::UpdateKey {
+                key_id: "PROJECT".into(),
+            });
+            project.project_key = Some(cred("PROJECT", "new-secret"));
+            assert_eq!(
+                cache.resolve("album", 3, &project).unwrap().secret_key(),
+                "new-secret"
+            );
+            assert_eq!(
+                cache.resolve("other", 3, &kept).unwrap().access_key_id(),
+                "KEEP"
+            );
+        }
+
+        #[test]
+        fn ttl_is_at_most_60_seconds() {
+            let mut cache = CredentialCache::new(120);
+            let mut sources = explicit("KEYA");
+            assert_eq!(
+                cache
+                    .resolve("photos", 1_000, &sources)
+                    .unwrap()
+                    .access_key_id(),
+                "KEYA"
+            );
+            sources.explicit_key = Some(cred("KEYB", "secret"));
+            assert_eq!(
+                cache
+                    .resolve("photos", 1_059, &sources)
+                    .unwrap()
+                    .access_key_id(),
+                "KEYA"
+            );
+            assert_eq!(
+                cache
+                    .resolve("photos", 1_060, &sources)
+                    .unwrap()
+                    .access_key_id(),
+                "KEYB"
+            );
+        }
+
+        #[test]
+        fn forbidden_runs_the_operation_once_more() {
+            let mut cache = CredentialCache::new(60);
+            let mut loads = 0;
+            let mut seen = Vec::new();
+            let result = cache.read(
+                "photos",
+                0,
+                || {
+                    loads += 1;
+                    if loads == 1 {
+                        explicit("OLD")
+                    } else {
+                        explicit("NEW")
+                    }
+                },
+                |credential| {
+                    seen.push(credential.access_key_id().to_string());
+                    if credential.access_key_id() == "OLD" {
+                        Operation::Forbidden
+                    } else {
+                        Operation::Done(credential.access_key_id().to_string())
+                    }
+                },
+            );
+            assert_eq!(result, Ok("NEW".to_string()));
+            assert_eq!(seen, vec!["OLD".to_string(), "NEW".to_string()]);
+        }
+
+        #[test]
+        fn second_forbidden_stays_a_failure() {
+            let mut cache = CredentialCache::new(60);
+            let mut calls = 0;
+            let result: Result<&str, ReadFailure> = cache.read(
+                "photos",
+                0,
+                || explicit("KEYA"),
+                |_| {
+                    calls += 1;
+                    Operation::Forbidden
+                },
+            );
+            assert_eq!(calls, 2);
+            assert_eq!(result, Err(ReadFailure::Forbidden));
+            assert_eq!(
+                cache
+                    .resolve("photos", 1, &explicit("KEYB"))
+                    .unwrap()
+                    .access_key_id(),
+                "KEYB"
+            );
+        }
+    }
+}
