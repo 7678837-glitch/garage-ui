@@ -8,7 +8,7 @@ use aws_sdk_s3::config::retry::RetryConfig;
 use aws_sdk_s3::config::{
     Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
-use aws_sdk_s3::primitives::{ByteStream, DateTime, DateTimeFormat};
+use aws_sdk_s3::primitives::{ByteStream, DateTime, DateTimeFormat, SdkBody};
 use axum::body::HttpBody;
 use axum::http::{HeaderValue, StatusCode};
 use serde::Serialize;
@@ -179,6 +179,22 @@ pub async fn metadata(app: &App, bucket_id: &str, key: &str) -> Result<ObjectMet
         let bucket = bucket.clone();
         let key = key.clone();
         async move { head(&client, &bucket, &key).await }
+    })
+    .await
+}
+
+pub struct ObjectStream {
+    pub content_type: String,
+    pub body: SdkBody,
+}
+
+pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
+    let bucket = bucket_id.to_string();
+    let key = key.to_string();
+    drive(app, bucket.clone(), move |client| {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        async move { fetch_object(&client, &bucket, &key).await }
     })
     .await
 }
@@ -403,6 +419,28 @@ fn match_from(object: &aws_sdk_s3::types::Object) -> Option<ObjectMatch> {
             .copied()
             .map(stamp)
             .unwrap_or_default(),
+    })
+}
+
+async fn fetch_object(client: &Client, bucket: &str, key: &str) -> Result<ObjectStream, S3Failure> {
+    let output = client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+    // 不把对象读进 Vec。SdkBody 直接成为响应体，大文件按块流出。
+    Ok(ObjectStream {
+        content_type: output.content_type().unwrap_or("").to_string(),
+        body: output.body.into_inner(),
     })
 }
 

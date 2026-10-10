@@ -1598,14 +1598,94 @@ async fn search_bucket_objects(
     Ok(Json(page))
 }
 
+#[derive(Deserialize)]
+struct ObjectViewQuery {
+    preview: Option<String>,
+    download: Option<String>,
+}
+
+enum ObjectIntent {
+    Meta,
+    Transfer(Transfer),
+}
+
+#[derive(Clone, Copy)]
+enum Transfer {
+    Preview,
+    Download,
+}
+
+fn object_intent(query: &ObjectViewQuery) -> Result<ObjectIntent, ApiError> {
+    match (query.preview.as_deref(), query.download.as_deref()) {
+        (None, None) => Ok(ObjectIntent::Meta),
+        (Some("1"), None) => Ok(ObjectIntent::Transfer(Transfer::Preview)),
+        (None, Some("1")) => Ok(ObjectIntent::Transfer(Transfer::Download)),
+        _ => Err(ApiError::bad_request(
+            "invalid_view",
+            "Choose preview or download",
+        )),
+    }
+}
+
+fn object_filename(key: &str) -> &str {
+    key.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or("object")
+}
+
+fn stream_object(
+    transfer: Transfer,
+    key: &str,
+    opened: objects::ObjectStream,
+) -> Result<Response, ApiError> {
+    let filename = object_filename(key);
+    let policy = preview_policy(&opened.content_type, filename);
+    let mut response = Response::new(Body::new(opened.body));
+    let headers = response.headers_mut();
+    if let Ok(value) = HeaderValue::from_str(&policy.content_type) {
+        headers.insert("content-type", value);
+    }
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static(policy.content_security_policy),
+    );
+    headers.insert("x-frame-options", HeaderValue::from_static("SAMEORIGIN"));
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    let disposition = match transfer {
+        Transfer::Download => Some(util::content_disposition_attachment(filename)),
+        Transfer::Preview => policy.content_disposition,
+    };
+    if let Some(disposition) = disposition {
+        let value = HeaderValue::from_str(&disposition).map_err(|_| ApiError::internal())?;
+        headers.insert("content-disposition", value);
+    }
+    Ok(response)
+}
+
 async fn object_metadata(
     State(app): State<App>,
     Authed(current): Authed,
     Path((id, key)): Path<(String, String)>,
-) -> Result<Json<objects::ObjectMeta>, ApiError> {
+    Query(query): Query<ObjectViewQuery>,
+) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
-    let meta = objects::metadata(&app, &id, &key).await?;
-    Ok(Json(meta))
+    match object_intent(&query)? {
+        ObjectIntent::Meta => {
+            let meta = objects::metadata(&app, &id, &key).await?;
+            Ok(Json(meta).into_response())
+        }
+        ObjectIntent::Transfer(transfer) => {
+            let opened = objects::open(&app, &id, &key).await?;
+            stream_object(transfer, &key, opened)
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -5671,6 +5751,267 @@ mod tests {
             })
         );
         assert_eq!(mock.requests().len(), 1, "{:?}", mock.requests());
+    }
+
+    fn object_bytes(content_type: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nETag: \"abc\"\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn object_get_reply(line: &str) -> String {
+        let key = object_key_of(line);
+        if key == "missing" {
+            return head_missing();
+        }
+        if line.starts_with("HEAD ") {
+            return head_ok();
+        }
+        if key.ends_with(".html") {
+            object_bytes("text/html", "<p>hi</p>")
+        } else {
+            object_bytes("text/plain", "hello plain")
+        }
+    }
+
+    fn header_text<'a>(response: &'a Exchange, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    }
+
+    #[tokio::test]
+    async fn object_get_without_a_query_stays_metadata_json() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_ne!(response.body, "hello plain");
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({
+                "key": "note.txt",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z",
+                "contentType": "text/plain"
+            })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("HEAD "), "{}", seen[0]);
+    }
+
+    #[tokio::test]
+    async fn object_get_preview_of_html_is_an_attachment() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/page.html?preview=1",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, "<p>hi</p>");
+        assert_eq!(
+            header_text(&response, "content-type"),
+            Some("application/octet-stream")
+        );
+        assert_eq!(
+            header_text(&response, "content-disposition"),
+            Some("attachment; filename*=UTF-8''page.html")
+        );
+        assert_eq!(
+            header_text(&response, "x-content-type-options"),
+            Some("nosniff")
+        );
+        assert_eq!(
+            header_text(&response, "content-security-policy"),
+            Some("sandbox; frame-ancestors 'self'")
+        );
+        assert_eq!(
+            header_text(&response, "x-frame-options"),
+            Some("SAMEORIGIN")
+        );
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET "), "{}", seen[0]);
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(object_key_of(&seen[0]), "page.html");
+    }
+
+    #[tokio::test]
+    async fn object_get_preview_of_plain_stays_inline() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, "hello plain");
+        assert_eq!(header_text(&response, "content-type"), Some("text/plain"));
+        assert!(response.headers.get("content-disposition").is_none());
+        assert_eq!(
+            header_text(&response, "x-content-type-options"),
+            Some("nosniff")
+        );
+    }
+
+    #[tokio::test]
+    async fn object_get_download_of_plain_is_an_attachment() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photos/note.txt?download=1",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, "hello plain");
+        assert_eq!(header_text(&response, "content-type"), Some("text/plain"));
+        assert_eq!(
+            header_text(&response, "content-disposition"),
+            Some("attachment; filename*=UTF-8''note.txt")
+        );
+        assert_eq!(
+            header_text(&response, "x-content-type-options"),
+            Some("nosniff")
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET "), "{}", seen[0]);
+        assert_eq!(object_key_of(&seen[0]), "photos/note.txt");
+    }
+
+    #[tokio::test]
+    async fn object_get_missing_key_is_404() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/missing?preview=1",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::NOT_FOUND, "not_found", "Not found");
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET "), "{}", seen[0]);
+        assert_eq!(object_key_of(&seen[0]), "missing");
+    }
+
+    #[tokio::test]
+    async fn object_get_without_a_project_key_does_not_call_s3() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_get_viewer_without_download_does_not_call_s3() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_get_rejects_an_invalid_view_without_calling_s3() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        for uri in [
+            "/api/buckets/bkt-1/objects/note.txt?preview=1&download=1",
+            "/api/buckets/bkt-1/objects/note.txt?preview=2",
+            "/api/buckets/bkt-1/objects/note.txt?download=0",
+        ] {
+            let response = exchange(&app, request("GET", uri, None, Some(&session))).await;
+            assert_error(
+                &response,
+                StatusCode::BAD_REQUEST,
+                "invalid_view",
+                "Choose preview or download",
+            );
+        }
+        assert!(mock.requests().is_empty());
     }
 
     #[tokio::test]
