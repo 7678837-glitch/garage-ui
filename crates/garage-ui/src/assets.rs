@@ -1,16 +1,19 @@
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
 use rust_embed::Embed;
+
+use crate::state::App;
 
 #[derive(Embed)]
 #[folder = "$CARGO_MANIFEST_DIR/../../web/dist"]
 struct Assets;
 
-pub async fn asset(uri: Uri) -> Response {
+pub async fn asset(State(app): State<App>, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
-    if let Some(response) = file_response(path) {
+    if let Some(response) = file_response(path, &app.settings.base_tag) {
         return response;
     }
     // 带扩展名的缺失文件是构建问题，不要回退成首页。
@@ -20,7 +23,7 @@ pub async fn asset(uri: Uri) -> Response {
             .body(Body::from("not found"))
             .unwrap();
     }
-    file_response("index.html").unwrap_or_else(|| {
+    file_response("index.html", &app.settings.base_tag).unwrap_or_else(|| {
         Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("not found"))
@@ -28,8 +31,13 @@ pub async fn asset(uri: Uri) -> Response {
     })
 }
 
-fn file_response(path: &str) -> Option<Response> {
+fn file_response(path: &str, base_tag: &str) -> Option<Response> {
     let file = Assets::get(path)?;
+    let body = if path == "index.html" {
+        Body::from(inject_base(&file.data, base_tag))
+    } else {
+        Body::from(file.data.into_owned())
+    };
     let cache = if path.ends_with(".html") {
         "no-cache"
     } else {
@@ -42,9 +50,32 @@ fn file_response(path: &str) -> Option<Response> {
                 HeaderValue::from_static(content_type(path)),
             )
             .header(header::CACHE_CONTROL, HeaderValue::from_static(cache))
-            .body(Body::from(file.data.into_owned()))
+            .body(body)
             .unwrap(),
     )
+}
+
+fn inject_base(bytes: &[u8], base_tag: &str) -> Vec<u8> {
+    let Ok(html) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    const MARK: &str = "<!--garage-ui-base-->";
+    if let Some(index) = html.find(MARK) {
+        let mut out = String::with_capacity(html.len() + base_tag.len());
+        out.push_str(&html[..index]);
+        out.push_str(base_tag);
+        out.push_str(&html[index + MARK.len()..]);
+        return out.into_bytes();
+    }
+    let Some(index) = html.find("<head>") else {
+        return bytes.to_vec();
+    };
+    let at = index + "<head>".len();
+    let mut out = String::with_capacity(html.len() + base_tag.len());
+    out.push_str(&html[..at]);
+    out.push_str(base_tag);
+    out.push_str(&html[at..]);
+    out.into_bytes()
 }
 
 fn content_type(path: &str) -> &'static str {
