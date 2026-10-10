@@ -192,9 +192,14 @@ test("hides user management from a viewer", async () => {
   vi.stubGlobal("fetch", fetchMock);
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(await screen.findByText("ok · test")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
+    false,
+  );
 });
 
 test("shows a bucket id and its alias to an admin", async () => {
@@ -312,6 +317,10 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETBEa");
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
+    false,
+  );
+  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
