@@ -52,11 +52,8 @@ pub fn production_quota() -> Quota {
     Quota::per_minute(NonZeroU32::new(10).expect("10"))
 }
 
-// 代理扇出由别的分支接入。库目标在接入前会把未引用的上限报成死代码。
-#[allow(dead_code)]
 pub const DEFAULT_FANOUT_IN_FLIGHT: NonZeroUsize = NonZeroUsize::new(8).expect("8");
 
-#[allow(dead_code)]
 pub async fn fan_out<T, R, F, Fut>(limit: NonZeroUsize, items: Vec<T>, f: F) -> Vec<R>
 where
     T: Send + 'static,
@@ -114,6 +111,14 @@ mod tests {
     async fn one_thousand_calls_stay_at_or_under_eight() {
         let (high, got) = wave(DEFAULT_FANOUT_IN_FLIGHT, 1000).await;
         assert!(high <= 8, "high water {high}");
+        assert_eq!(got, (0..1000).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn limit_two_stays_at_or_under_two() {
+        let limit = NonZeroUsize::new(2).expect("2");
+        let (high, got) = wave(limit, 1000).await;
+        assert!(high <= 2, "high water {high}");
         assert_eq!(got, (0..1000).collect::<Vec<_>>());
     }
 
