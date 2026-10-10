@@ -20,6 +20,7 @@ function renderKeys(canManage = false) {
       <Keys canManage={canManage} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 type Call = {
@@ -98,6 +99,7 @@ test("shows the key id and a string name without showing a secret or a non-strin
   expect(screen.queryByText("hidden-name")).toBeNull();
   expect(screen.queryByText("9157")).toBeNull();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.queryByText("More keys are available.")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -133,6 +135,7 @@ test("loads the next page at the offset after the rows already shown", async () 
   expect(await screen.findByText("first")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
   expect(screen.queryByText("9157")).toBeNull();
+  expect(screen.getByText("More keys are available.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Load more" }));
   expect(await screen.findByText("second")).toBeTruthy();
   expect(screen.getByText("first")).toBeTruthy();
@@ -142,6 +145,67 @@ test("loads the next page at the offset after the rows already shown", async () 
     "/api/keys?offset=2&limit=100",
   ]);
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.queryByText("More keys are available.")).toBeNull();
+});
+
+test("shows Loading keys and marks the keys section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderKeys();
+  const section = screen.getByRole("region", { name: "Keys" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no keys.")).toBeNull();
+  expect(screen.queryByText("Refreshing keys")).toBeNull();
+  release(json({ items: [], hasMore: false }));
+  expect(await screen.findByText("There are no keys.")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Keys" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByText("Loading keys")).toBeNull();
+});
+
+test("keeps a visible key id while a later fetch refreshes the list", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/keys");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(json({ items: [{ id: "GK9", name: "kept" }], hasMore: false }));
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderKeys();
+  expect(await screen.findByText("GK9")).toBeTruthy();
+  expect(screen.queryByText("Refreshing keys")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["keys"] });
+  expect(await screen.findByText("Refreshing keys")).toBeTruthy();
+  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByText("Loading keys")).toBeNull();
+  expect(screen.getByRole("region", { name: "Keys" }).getAttribute("aria-busy")).toBe("false");
+  releaseNext(json({ items: [{ id: "GK9", name: "kept" }], hasMore: false }));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing keys")).toBeNull();
+  });
+  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(calls).toBe(2);
 });
 
 test("shows the error message when the key list request fails", async () => {
@@ -151,8 +215,44 @@ test("shows the error message when the key list request fails", async () => {
   );
   renderKeys();
   expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("shows the API code and requests the key list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/keys");
+      expect(url.searchParams.get("offset")).toBe("0");
+      expect(url.searchParams.get("limit")).toBe("100");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json(
+          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          502,
+        );
+      }
+      return json({ items: [{ id: "GK1", name: "photos" }], hasMore: false });
+    }),
+  );
+  renderKeys();
+  expect(await screen.findByText("Garage admin API is not reachable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no keys.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
 });
 
 test("keeps the loaded rows when the next page fails", async () => {
