@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { putObject } from "./api/client";
 
@@ -62,6 +63,7 @@ export function UploadPanel({
   bucketId: string;
   existingKeys: readonly string[];
 }) {
+  const queryClient = useQueryClient();
   const [rows, setRows] = useState<Row[]>([]);
   const rowsRef = useRef(rows);
   const abortRef = useRef(new Map<number, () => void>());
@@ -139,6 +141,9 @@ export function UploadPanel({
         item.id === id ? { ...item, phase: { kind } } : item,
       ),
     );
+    if (kind === "done") {
+      void queryClient.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+    }
     pump();
   }
 
