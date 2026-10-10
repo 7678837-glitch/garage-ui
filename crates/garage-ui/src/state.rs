@@ -17,6 +17,17 @@ pub struct Fixture {
     pub body: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GarageLink {
+    pub version: Option<String>,
+    pub writes_allowed: bool,
+}
+
+struct CachedGarageLink {
+    url: String,
+    link: GarageLink,
+}
+
 #[derive(Clone)]
 pub struct App {
     pub db: sqlx::SqlitePool,
@@ -26,12 +37,70 @@ pub struct App {
     pub http: reqwest::Client,
     pub fixtures: Arc<std::sync::Mutex<HashMap<String, Fixture>>>,
     pub write: Arc<Mutex<()>>,
+    garage_link: Arc<Mutex<Option<CachedGarageLink>>>,
     pub key_id: Arc<String>,
     #[cfg(test)]
     pub log_sink: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+impl GarageLink {
+    pub fn unknown() -> Self {
+        Self {
+            version: None,
+            writes_allowed: true,
+        }
+    }
+
+    pub fn from_reported(raw: Option<&str>) -> Self {
+        let Some(raw) = raw else {
+            return Self::unknown();
+        };
+        let Some(parsed) = parse_garage_version(raw) else {
+            return Self::unknown();
+        };
+        Self {
+            version: Some(raw.to_string()),
+            writes_allowed: parsed >= (2, 3, 0),
+        }
+    }
+}
+
+fn parse_garage_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let rest = raw.strip_prefix('v').unwrap_or(raw);
+    let mut parts = rest.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
 impl App {
+    pub async fn garage_link_for(
+        &self,
+        url: &str,
+        probe: impl std::future::Future<Output = GarageLink>,
+    ) -> GarageLink {
+        let mut slot = self.garage_link.lock().await;
+        if let Some(cached) = slot.as_ref()
+            && cached.url == url
+        {
+            return cached.link.clone();
+        }
+        let link = probe.await;
+        *slot = Some(CachedGarageLink {
+            url: url.to_string(),
+            link: link.clone(),
+        });
+        link
+    }
+
+    pub async fn clear_garage_link(&self) {
+        *self.garage_link.lock().await = None;
+    }
+
     pub fn record_access(&self, line: &str) {
         #[cfg(test)]
         self.log_sink
@@ -76,6 +145,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         http,
         fixtures: Arc::new(std::sync::Mutex::new(HashMap::new())),
         write: Arc::new(Mutex::new(())),
+        garage_link: Arc::new(Mutex::new(None)),
         key_id: Arc::new(key_id),
         #[cfg(test)]
         log_sink: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -161,4 +231,31 @@ pub async fn test_app_with(dir: &Path, extra: &[(&str, &str)], quota: governor::
 #[cfg(test)]
 pub async fn test_app(dir: &Path) -> App {
     test_app_with(dir, &[], limit::test_quota()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GarageLink;
+
+    #[test]
+    fn reported_version_blocks_only_a_parsed_release_below_2_3_0() {
+        let old = GarageLink::from_reported(Some("v2.2.0"));
+        assert_eq!(old.version.as_deref(), Some("v2.2.0"));
+        assert!(!old.writes_allowed);
+        assert!(!GarageLink::from_reported(Some("v2.2.9")).writes_allowed);
+        assert!(!GarageLink::from_reported(Some("2.2.9")).writes_allowed);
+
+        let current = GarageLink::from_reported(Some("v2.3.0"));
+        assert_eq!(current.version.as_deref(), Some("v2.3.0"));
+        assert!(current.writes_allowed);
+        assert!(GarageLink::from_reported(Some("2.3.0")).writes_allowed);
+        assert!(GarageLink::from_reported(Some("v2.10.0")).writes_allowed);
+
+        let missing = GarageLink::from_reported(None);
+        assert_eq!(missing.version, None);
+        assert!(missing.writes_allowed);
+        let unparsed = GarageLink::from_reported(Some("nightly"));
+        assert_eq!(unparsed.version, None);
+        assert!(unparsed.writes_allowed);
+    }
 }

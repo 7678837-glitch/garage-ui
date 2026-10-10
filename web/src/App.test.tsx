@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -78,4 +79,34 @@ test("shows the setup form before initialization and does not use storage", asyn
   });
   expect(setItem).not.toHaveBeenCalled();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/login"))).toBe(false);
+});
+
+test("shows a blocking notice when Garage is older than v2.3.0", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.2.0",
+            garage_write_blocked: true,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+    }),
+  );
+  renderApp();
+  const notice = await screen.findByRole("alert");
+  expect(notice.textContent).toBe("Garage v2.3.0 or newer is required");
+  expect(screen.getByText("Ada · admin")).toBeTruthy();
+  expect(await screen.findByText("ok · test")).toBeTruthy();
 });

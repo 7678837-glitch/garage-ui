@@ -407,6 +407,12 @@ async fn status(
         None
     };
     let authenticated = current.is_some();
+    let (garage_version, garage_write_blocked) = if authenticated {
+        let link = proxy::ensure_garage_link(&app).await;
+        (link.version, !link.writes_allowed)
+    } else {
+        (None, false)
+    };
     Ok(Json(json!({
         "initialized": initialized,
         "authenticated": authenticated,
@@ -414,6 +420,8 @@ async fn status(
         "role": current.as_ref().map(|item| item.user.role.clone()),
         "can_download": current.as_ref().map(|item| item.user.actor().download),
         "can_share": current.as_ref().map(|item| effective_share(&item.user)),
+        "garage_version": garage_version,
+        "garage_write_blocked": garage_write_blocked,
     })))
 }
 
@@ -1008,4 +1016,375 @@ async fn record(
     )
     .await
     .map_err(|_| ApiError::internal())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Body;
+    use axum::http::{HeaderMap, Request, StatusCode};
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tower::ServiceExt;
+
+    use crate::limit::test_quota;
+    use crate::router;
+    use crate::state::{self, App};
+
+    const PASSWORD: &str = "correct horse";
+    const TOKEN: &str = "admin-token-value1";
+
+    struct Session {
+        id: String,
+        csrf: String,
+    }
+
+    struct Exchange {
+        status: StatusCode,
+        body: String,
+    }
+
+    struct GarageMock {
+        url: String,
+        hits: Arc<AtomicUsize>,
+        requests: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for GarageMock {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl GarageMock {
+        async fn start(node_info: &str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let hits_task = Arc::clone(&hits);
+            let requests_task = Arc::clone(&requests);
+            let node_info = node_info.to_string();
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    hits_task.fetch_add(1, Ordering::SeqCst);
+                    let mut buf = Vec::new();
+                    let mut tmp = [0_u8; 1024];
+                    loop {
+                        let Ok(read) = socket.read(&mut tmp).await else {
+                            break;
+                        };
+                        if read == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&tmp[..read]);
+                        if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&buf);
+                    let line = text.lines().next().unwrap_or("").to_string();
+                    requests_task.lock().expect("requests").push(line.clone());
+                    let body = if line.contains("/v2/GetNodeInfo?") {
+                        node_info.clone()
+                    } else {
+                        r#"{"ok":true}"#.to_string()
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    if socket.write_all(response.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = socket.shutdown().await;
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                hits,
+                requests,
+                task,
+            }
+        }
+
+        fn hits(&self) -> usize {
+            self.hits.load(Ordering::SeqCst)
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().expect("requests").clone()
+        }
+    }
+
+    fn cookie_header(session: &Session) -> String {
+        format!(
+            "garage_session={}; garage_csrf={}",
+            session.id, session.csrf
+        )
+    }
+
+    fn session_from(headers: &HeaderMap) -> Session {
+        let mut id = None;
+        let mut csrf = None;
+        for value in headers.get_all("set-cookie") {
+            let text = value.to_str().expect("cookie");
+            let pair = text.split(';').next().expect("pair");
+            let (name, val) = pair.split_once('=').expect("equals");
+            if name == "garage_session" {
+                id = Some(val.to_string());
+            }
+            if name == "garage_csrf" {
+                csrf = Some(val.to_string());
+            }
+        }
+        Session {
+            id: id.expect("session cookie"),
+            csrf: csrf.expect("csrf cookie"),
+        }
+    }
+
+    fn request(
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+        session: Option<&Session>,
+    ) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(session) = session {
+            builder = builder
+                .header("cookie", cookie_header(session))
+                .header("x-csrf-token", &session.csrf);
+        }
+        if let Some(body) = body {
+            builder = builder.header("content-type", "application/json");
+            return builder.body(Body::from(body.to_string())).unwrap();
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    async fn exchange(app: &App, request: Request<Body>) -> Exchange {
+        let response = router(app.clone()).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        Exchange {
+            status,
+            body: String::from_utf8(bytes.to_vec()).unwrap(),
+        }
+    }
+
+    async fn login(app: &App) -> (Session, HeaderMap) {
+        let response = router(app.clone())
+            .oneshot(request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers().clone();
+        (session_from(&headers), headers)
+    }
+
+    async fn app_for(dir: &std::path::Path, url: &str) -> App {
+        state::test_app_with(
+            dir,
+            &[("GARAGE_ADMIN_URL", url), ("GARAGE_ADMIN_TOKEN", TOKEN)],
+            test_quota(),
+        )
+        .await
+    }
+
+    fn code_of(body: &str) -> String {
+        serde_json::from_str::<Value>(body).unwrap()["code"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    async fn authed_status(app: &App, session: &Session) -> Value {
+        let response = exchange(app, request("GET", "/api/auth/status", None, Some(session))).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(!response.body.contains(TOKEN), "{}", response.body);
+        serde_json::from_str(&response.body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn old_garage_blocks_writes_and_keeps_reads() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let anon = exchange(&app, request("GET", "/api/auth/status", None, None)).await;
+        assert_eq!(anon.status, StatusCode::OK, "{}", anon.body);
+        assert_eq!(mock.hits(), 0, "anonymous status probed Garage");
+        let (session, _) = login(&app).await;
+        assert_eq!(mock.hits(), 0, "login probed Garage");
+
+        let first = authed_status(&app, &session).await;
+        assert_eq!(first["garage_version"], "v2.2.0");
+        assert_eq!(first["garage_write_blocked"], true);
+        assert_eq!(mock.hits(), 1);
+        let second = authed_status(&app, &session).await;
+        assert_eq!(second["garage_version"], "v2.2.0");
+        assert_eq!(second["garage_write_blocked"], true);
+        assert_eq!(mock.hits(), 1, "second status opened another connection");
+
+        app.clear_garage_link().await;
+        let third = authed_status(&app, &session).await;
+        assert_eq!(third["garage_write_blocked"], true);
+        assert_eq!(mock.hits(), 2, "cleared cache did not probe again");
+
+        for (method, path) in [
+            ("POST", "/api/garage/v2/PreviewClusterLayoutChanges"),
+            ("POST", "/api/garage/v2/GetWorkerInfo"),
+            ("POST", "/api/garage/v2/ListWorkers"),
+            ("GET", "/api/garage/v2/GetClusterHealth"),
+        ] {
+            let body = if method == "POST" { Some("{}") } else { None };
+            let response = exchange(&app, request(method, path, body, Some(&session))).await;
+            assert_eq!(
+                response.status,
+                StatusCode::OK,
+                "{method} {path} {}",
+                response.body
+            );
+            assert_ne!(code_of(&response.body), "garage_too_old");
+        }
+        assert_eq!(mock.hits(), 6);
+
+        for path in [
+            "/api/garage/v2/CreateBucket",
+            "/api/garage/v2/UpdateClusterLayout",
+        ] {
+            let response = exchange(&app, request("POST", path, Some("{}"), Some(&session))).await;
+            assert_eq!(
+                response.status,
+                StatusCode::CONFLICT,
+                "{path} {}",
+                response.body
+            );
+            assert_eq!(code_of(&response.body), "garage_too_old");
+            assert!(!response.body.contains(TOKEN), "{path} {}", response.body);
+        }
+        assert_eq!(mock.hits(), 6, "a blocked write called upstream");
+        let seen = mock.requests().join("\n");
+        assert!(seen.contains("GET /v2/GetNodeInfo?node=self "));
+        assert!(seen.contains("POST /v2/PreviewClusterLayoutChanges "));
+        assert!(seen.contains("POST /v2/GetWorkerInfo "));
+        assert!(seen.contains("POST /v2/ListWorkers "));
+        assert!(seen.contains("GET /v2/GetClusterHealth "));
+        assert!(!seen.contains("CreateBucket"));
+        assert!(!seen.contains("UpdateClusterLayout"));
+    }
+
+    #[tokio::test]
+    async fn garage_2_3_0_allows_a_write() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.3.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+        let status = authed_status(&app, &session).await;
+        assert_eq!(status["garage_version"], "v2.3.0");
+        assert_eq!(status["garage_write_blocked"], false);
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/garage/v2/CreateBucket",
+                Some("{}"),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(
+            !response.body.contains("garage_too_old"),
+            "{}",
+            response.body
+        );
+        assert!(!response.body.contains(TOKEN), "{}", response.body);
+        let seen = mock.requests().join("\n");
+        assert!(seen.contains("POST /v2/CreateBucket "));
+    }
+
+    #[tokio::test]
+    async fn missing_garage_version_does_not_block_writes() {
+        let mock = GarageMock::start("{}").await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+        let status = authed_status(&app, &session).await;
+        assert_eq!(status["garage_version"], Value::Null);
+        assert_eq!(status["garage_write_blocked"], false);
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/garage/v2/CreateBucket",
+                Some("{}"),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(
+            mock.requests()
+                .join("\n")
+                .contains("POST /v2/CreateBucket ")
+        );
+    }
+
+    #[tokio::test]
+    async fn changing_the_admin_url_probes_again() {
+        let old = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let current = GarageMock::start(r#"{"garageVersion":"v2.3.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let mut app = app_for(&dir, &old.url).await;
+        let (session, _) = login(&app).await;
+        let first = authed_status(&app, &session).await;
+        assert_eq!(first["garage_write_blocked"], true);
+        let again = authed_status(&app, &session).await;
+        assert_eq!(again["garage_version"], "v2.2.0");
+        assert_eq!(old.hits(), 1);
+        assert_eq!(current.hits(), 0);
+
+        {
+            let settings = std::sync::Arc::get_mut(&mut app.settings).expect("settings owners");
+            settings.garage_admin_url = Some(current.url.clone());
+        }
+        let switched = authed_status(&app, &session).await;
+        assert_eq!(switched["garage_version"], "v2.3.0");
+        assert_eq!(switched["garage_write_blocked"], false);
+        assert_eq!(old.hits(), 1, "the old admin URL was probed again");
+        assert_eq!(current.hits(), 1);
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/garage/v2/CreateBucket",
+                Some("{}"),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(
+            current
+                .requests()
+                .join("\n")
+                .contains("POST /v2/CreateBucket ")
+        );
+        assert!(!old.requests().join("\n").contains("CreateBucket"));
+    }
 }
