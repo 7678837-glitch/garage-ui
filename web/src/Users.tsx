@@ -194,7 +194,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         <td className="py-2 pr-3">
           <select
             aria-label={`Role for ${account.username}`}
-            className="border border-neutral-300 px-2 py-1"
+            className="border border-line px-2 py-1"
             value={account.role}
             disabled={self || busy}
             onChange={(event) => {
@@ -262,7 +262,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
           >
             <input
               aria-label={`New password for ${account.username}`}
-              className="border border-neutral-300 px-2 py-1"
+              className="border border-line px-2 py-1"
               type="password"
               autoComplete="new-password"
               value={password}
@@ -270,7 +270,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               onChange={(event) => setPassword(event.target.value)}
             />
             <button
-              className="border border-neutral-900 px-3 py-1 text-left"
+              className="border border-ink px-3 py-1 text-left"
               type="submit"
               disabled={self || busy || password.length === 0}
             >
@@ -280,7 +280,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         </td>
         <td className="py-2">
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             disabled={self || busy}
             onClick={() => {
@@ -351,7 +351,7 @@ function CreateAccount() {
       <label className="block">
         <span className="text-sm">Username</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           autoComplete="off"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
@@ -360,7 +360,7 @@ function CreateAccount() {
       <label className="block">
         <span className="text-sm">Password</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           type="password"
           autoComplete="new-password"
           value={password}
@@ -370,7 +370,7 @@ function CreateAccount() {
       <label className="block">
         <span className="text-sm">Role</span>
         <select
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           value={role}
           onChange={(event) => {
             const next = asRole(event.target.value);
@@ -411,7 +411,7 @@ function CreateAccount() {
       </label>
       {error ? <p role="alert">{error}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={create.isPending || username.length === 0 || password.length === 0}
       >
@@ -444,7 +444,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             onClick={() => {
               void users.refetch();

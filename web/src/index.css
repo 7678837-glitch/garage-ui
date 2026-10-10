@@ -1,1 +1,54 @@
 @import "tailwindcss";
+
+/* neutral-300 在白底上低于 3:1，边框用 line。 */
+:root {
+  color-scheme: light;
+  --canvas: #ffffff;
+  --ink: #171717;
+  --line: #525252;
+  --danger: #b91c1c;
+}
+
+.dark {
+  color-scheme: dark;
+  --canvas: #171717;
+  --ink: #fafafa;
+  --line: #d4d4d4;
+  --danger: #fecaca;
+  /* Buckets.tsx 不在本切片，仍用这四个工具类。跟着已解析主题走，正文和边框才读得清。 */
+  --color-white: var(--canvas);
+  --color-neutral-900: var(--ink);
+  --color-neutral-300: var(--line);
+  --color-red-700: var(--danger);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-ink: var(--ink);
+  --color-line: var(--line);
+  --color-danger: var(--danger);
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--ink);
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  background-color: var(--canvas);
+  color: var(--ink);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+button[aria-pressed="true"] {
+  font-weight: 600;
+}

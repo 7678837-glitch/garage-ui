@@ -59,7 +59,7 @@ export function KeyGrant({
       <label className="block">
         <span className="text-sm">Key</span>
         <select
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           value={accessKeyId}
           onChange={(event) => setAccessKeyId(event.target.value)}
         >
@@ -98,7 +98,7 @@ export function KeyGrant({
       {error ? <p role="alert">{error}</p> : null}
       {succeeded ? <p>Key granted</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={!canSubmit}
       >

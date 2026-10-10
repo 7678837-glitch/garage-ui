@@ -9,6 +9,7 @@ import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
+import { ThemeChooser } from "./theme";
 import { Users } from "./Users";
 
 const passwordBounds = "Password must be 10 to 72 characters";
@@ -39,8 +40,11 @@ type SessionStatus = AuthStatus & {
 function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   const width = wide ? "max-w-5xl px-6 pb-10" : "max-w-sm px-6 pb-10";
   return (
-    <main className="min-h-screen bg-white text-neutral-900">
-      <h1 className="p-6 text-xl font-semibold">Garage UI</h1>
+    <main className="min-h-screen bg-canvas text-ink">
+      <header className="flex flex-wrap items-center justify-between gap-3 p-6">
+        <h1 className="text-xl font-semibold">Garage UI</h1>
+        <ThemeChooser />
+      </header>
       <div className={width}>{children}</div>
     </main>
   );
@@ -61,7 +65,7 @@ function Field({
     <label className="block">
       <span className="text-sm">{label}</span>
       <input
-        className="mt-1 w-full border border-neutral-300 px-2 py-1"
+        className="mt-1 w-full border border-line px-2 py-1"
         type={type}
         autoComplete={autoComplete}
         {...registration}
@@ -74,7 +78,7 @@ function ErrorText({ message }: { message: string | undefined }) {
   if (!message) {
     return null;
   }
-  return <p className="text-sm text-red-700">{message}</p>;
+  return <p className="text-sm text-danger">{message}</p>;
 }
 
 function SetupForm() {
@@ -108,7 +112,7 @@ function SetupForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={setup.error instanceof Error ? setup.error.message : undefined} />
-      <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+      <button className="border border-ink px-3 py-1 text-left" type="submit">
         Create administrator
       </button>
     </form>
@@ -146,7 +150,7 @@ function LoginForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={login.error instanceof Error ? login.error.message : undefined} />
-      <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+      <button className="border border-ink px-3 py-1 text-left" type="submit">
         Log in
       </button>
     </form>
@@ -197,7 +201,7 @@ function Home({ status }: { status: SessionStatus }) {
           <label className="block">
             <span className="text-sm">Current password</span>
             <input
-              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full border border-line px-2 py-1"
               type="password"
               autoComplete="current-password"
               {...form.register("current_password")}
@@ -207,7 +211,7 @@ function Home({ status }: { status: SessionStatus }) {
           <label className="block">
             <span className="text-sm">New password</span>
             <input
-              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full border border-line px-2 py-1"
               type="password"
               autoComplete="new-password"
               {...form.register("new_password")}
@@ -216,12 +220,12 @@ function Home({ status }: { status: SessionStatus }) {
           <ErrorText message={errors.new_password?.message} />
           <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
           <ErrorText message={change.error instanceof Error ? change.error.message : undefined} />
-          <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+          <button className="border border-ink px-3 py-1 text-left" type="submit">
             Change password
           </button>
         </form>
         <button
-          className="border border-neutral-900 px-3 py-1 text-left"
+          className="border border-ink px-3 py-1 text-left"
           type="button"
           onClick={() => logout.mutate()}
         >

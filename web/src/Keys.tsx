@@ -212,17 +212,17 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
       <label className="block">
         <span className="text-sm">Key name</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           value={name}
           onChange={(event) => {
             setName(event.target.value);
           }}
         />
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={create.isPending}
       >
@@ -260,17 +260,17 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
       <label className="block">
         <span className="text-sm">Name for {id}</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value);
           }}
         />
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={rename.isPending}
       >
@@ -318,7 +318,7 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
         />
         Allow create bucket for {id}
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>
   );
 }
@@ -341,7 +341,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby="key-secret-title"
-      className="border border-neutral-900 bg-white p-4 text-neutral-900"
+      className="border border-ink bg-canvas p-4 text-ink"
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -360,7 +360,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       <label className="block">
         <span className="text-sm">Secret access key</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           readOnly
           autoComplete="off"
           type={visible ? "text" : "password"}
@@ -368,7 +368,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
         />
       </label>
       <button
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="mr-2 border border-ink px-3 py-1 text-left"
         type="button"
         onClick={() => {
           setVisible(true);
@@ -378,7 +378,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       </button>
       <button
         ref={copyRef}
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="mr-2 border border-ink px-3 py-1 text-left"
         type="button"
         onClick={() => {
           void copySecret(reveal.secret).then((result) => {
@@ -395,7 +395,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       </button>
       {feedback ? <p>{feedback}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="button"
         onClick={onClose}
       >
@@ -433,7 +433,7 @@ function DeleteKeyDialog({
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby="delete-key-title"
-      className="border border-neutral-900 bg-white p-4 text-neutral-900"
+      className="border border-ink bg-canvas p-4 text-ink"
       onCancel={(event) => {
         event.preventDefault();
         onCancel();
@@ -449,17 +449,17 @@ function DeleteKeyDialog({
         Delete key {keyId}
       </h3>
       <p>This permanently deletes key {keyId}. Clients that use this key lose access.</p>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
       <button
         ref={cancelRef}
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="mr-2 border border-ink px-3 py-1 text-left"
         type="button"
         onClick={onCancel}
       >
         Cancel
       </button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="button"
         disabled={pending}
         onClick={onConfirm}
@@ -529,7 +529,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             onClick={() => {
               void list.refetch();
@@ -567,7 +567,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                   {canManage ? (
                     <td className="py-2 align-top">
                       <button
-                        className="mr-2 border border-neutral-900 px-2 py-1 text-left"
+                        className="mr-2 border border-ink px-2 py-1 text-left"
                         type="button"
                         disabled={viewSecret.isPending && viewSecret.variables === accessKey.id}
                         onClick={() => {
@@ -580,7 +580,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                           : `View secret for ${accessKey.id}`}
                       </button>
                       <button
-                        className="border border-neutral-900 px-2 py-1 text-left"
+                        className="border border-ink px-2 py-1 text-left"
                         type="button"
                         onClick={() => {
                           removeKey.reset();
@@ -590,7 +590,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                         Delete {accessKey.id}
                       </button>
                       {viewSecret.variables === accessKey.id && viewError ? (
-                        <p className="text-sm text-red-700">{viewError}</p>
+                        <p className="text-sm text-danger">{viewError}</p>
                       ) : null}
                       <RenameKey id={accessKey.id} name={accessKey.name} />
                       <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />
@@ -606,7 +606,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <>
           <p>More keys are available.</p>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             disabled={list.isFetchingNextPage}
             onClick={() => {

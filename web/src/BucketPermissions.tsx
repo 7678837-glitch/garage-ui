@@ -192,7 +192,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
       <label className="block text-sm">
         Access key
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           autoComplete="off"
           value={draft.accessKeyId}
           onChange={(event) => {
@@ -237,9 +237,9 @@ function GrantForm({ bucketId }: { bucketId: string }) {
         />
         Write
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={!ready || grant.isPending}
       >
@@ -284,7 +284,7 @@ function RevokeKeyDialog({
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby={titleId}
-      className="border border-neutral-900 bg-white p-4 text-neutral-900"
+      className="border border-ink bg-canvas p-4 text-ink"
       onCancel={(event) => {
         event.preventDefault();
         onCancel();
@@ -300,17 +300,17 @@ function RevokeKeyDialog({
         Revoke {accessKeyId}
       </h3>
       <p>This revokes the current owner, read, and write permissions for {accessKeyId}.</p>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
       <button
         ref={cancelRef}
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="mr-2 border border-ink px-3 py-1 text-left"
         type="button"
         onClick={onCancel}
       >
         Cancel
       </button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="border border-ink px-3 py-1 text-left"
         type="button"
         disabled={pending}
         onClick={onConfirm}
@@ -360,7 +360,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             onClick={() => {
               void keys.refetch();
@@ -382,7 +382,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
               <p>write {yesNo(key.write)}</p>
               {canManage && hasPermission(key) ? (
                 <button
-                  className="border border-neutral-900 px-2 py-1 text-left"
+                  className="border border-ink px-2 py-1 text-left"
                   type="button"
                   onClick={() => {
                     revoke.reset();
@@ -426,7 +426,7 @@ export function BucketPermissions({
   return (
     <>
       <button
-        className="ml-2 border border-neutral-900 px-2 py-1 text-left"
+        className="ml-2 border border-ink px-2 py-1 text-left"
         type="button"
         onClick={() => {
           setOpen(true);

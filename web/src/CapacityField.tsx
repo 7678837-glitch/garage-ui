@@ -103,7 +103,7 @@ export function CapacityField({
       <label className="block">
         <span className="text-sm">Capacity</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           inputMode="decimal"
           autoComplete="off"
           value={shown}
@@ -116,7 +116,7 @@ export function CapacityField({
       <label className="block">
         <span className="text-sm">Unit</span>
         <select
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="mt-1 w-full border border-line px-2 py-1"
           value={unit}
           onChange={(event) => {
             const next = event.target.value;
@@ -135,7 +135,7 @@ export function CapacityField({
         </select>
       </label>
       {alertText ? <p role="alert">{alertText}</p> : null}
-      <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+      <button className="border border-ink px-3 py-1 text-left" type="submit">
         Save
       </button>
     </form>

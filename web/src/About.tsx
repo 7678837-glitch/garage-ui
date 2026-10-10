@@ -120,7 +120,7 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
             {failure.code ? ` ${failure.code}` : ""}
           </p>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="border border-ink px-3 py-1 text-left"
             type="button"
             onClick={() => {
               void capabilities.refetch();

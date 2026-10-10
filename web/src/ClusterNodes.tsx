@@ -282,13 +282,13 @@ export function ClusterNodes() {
         <label className="block">
           <span className="text-sm">Node address</span>
           <input
-            className="mt-1 w-full border border-neutral-300 px-2 py-1"
+            className="mt-1 w-full border border-line px-2 py-1"
             value={address}
             onChange={(event) => setAddress(event.target.value)}
           />
         </label>
         <button
-          className="border border-neutral-900 px-3 py-1 text-left"
+          className="border border-ink px-3 py-1 text-left"
           type="submit"
           disabled={trimmed.length === 0 || connect.isPending}
         >
