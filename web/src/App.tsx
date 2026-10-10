@@ -11,14 +11,16 @@ import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
 import { Users } from "./Users";
 
+const passwordBounds = "Password must be 10 to 72 characters";
+
 const credentials = z.object({
-  username: z.string().min(1).max(64),
-  password: z.string().min(10).max(72),
+  username: z.string().min(1, "Username is required").max(64, "Username is invalid"),
+  password: z.string().min(10, passwordBounds).max(72, passwordBounds),
 });
 
 const passwordChange = z.object({
-  current_password: z.string().min(1),
-  new_password: z.string().min(10).max(72),
+  current_password: z.string().min(1, "Current password is required"),
+  new_password: z.string().min(10, passwordBounds).max(72, passwordBounds),
 });
 
 type Credentials = z.infer<typeof credentials>;
@@ -78,6 +80,7 @@ function ErrorText({ message }: { message: string | undefined }) {
 function SetupForm() {
   const client = useQueryClient();
   const form = useForm<Credentials>({ resolver: zodResolver(credentials) });
+  const { errors } = form.formState;
   const setup = useMutation({
     mutationFn: (input: Credentials) =>
       api("/api/setup", { method: "POST", body: JSON.stringify(input) }),
@@ -96,12 +99,14 @@ function SetupForm() {
         autoComplete="username"
         registration={form.register("username")}
       />
+      <ErrorText message={errors.username?.message} />
       <Field
         label="Password"
         type="password"
         autoComplete="new-password"
         registration={form.register("password")}
       />
+      <ErrorText message={errors.password?.message} />
       <ErrorText message={setup.error instanceof Error ? setup.error.message : undefined} />
       <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
         Create administrator
@@ -113,6 +118,7 @@ function SetupForm() {
 function LoginForm() {
   const client = useQueryClient();
   const form = useForm<Credentials>({ resolver: zodResolver(credentials) });
+  const { errors } = form.formState;
   const login = useMutation({
     mutationFn: (input: Credentials) =>
       api("/api/auth/login", { method: "POST", body: JSON.stringify(input) }),
@@ -131,12 +137,14 @@ function LoginForm() {
         autoComplete="username"
         registration={form.register("username")}
       />
+      <ErrorText message={errors.username?.message} />
       <Field
         label="Password"
         type="password"
         autoComplete="current-password"
         registration={form.register("password")}
       />
+      <ErrorText message={errors.password?.message} />
       <ErrorText message={login.error instanceof Error ? login.error.message : undefined} />
       <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
         Log in
@@ -152,6 +160,7 @@ function Home({ status }: { status: SessionStatus }) {
     queryFn: () => api<Health>("/healthz"),
   });
   const form = useForm<PasswordChange>({ resolver: zodResolver(passwordChange) });
+  const { errors } = form.formState;
   const change = useMutation({
     mutationFn: (input: PasswordChange) =>
       api("/api/auth/change-password", { method: "POST", body: JSON.stringify(input) }),
@@ -194,6 +203,7 @@ function Home({ status }: { status: SessionStatus }) {
               {...form.register("current_password")}
             />
           </label>
+          <ErrorText message={errors.current_password?.message} />
           <label className="block">
             <span className="text-sm">New password</span>
             <input
@@ -203,6 +213,7 @@ function Home({ status }: { status: SessionStatus }) {
               {...form.register("new_password")}
             />
           </label>
+          <ErrorText message={errors.new_password?.message} />
           <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
           <ErrorText message={change.error instanceof Error ? change.error.message : undefined} />
           <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">

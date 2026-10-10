@@ -107,6 +107,112 @@ test("shows the setup form before initialization and does not use storage", asyn
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/login"))).toBe(false);
 });
 
+test("shows why a short setup password did not submit", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
+    return new Response(
+      JSON.stringify({
+        initialized: false,
+        authenticated: false,
+        username: null,
+        role: null,
+        can_download: null,
+        can_share: null,
+      }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+  fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "Ada" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "short" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create administrator" }));
+  expect(await screen.findByText("Password must be 10 to 72 characters")).toBeTruthy();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/setup"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/login"))).toBe(
+    false,
+  );
+  expect(
+    fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/change-password")),
+  ).toBe(false);
+});
+
+test("shows why a short login password did not submit", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
+    return new Response(
+      JSON.stringify({
+        initialized: true,
+        authenticated: false,
+        username: null,
+        role: null,
+        can_download: null,
+        can_share: null,
+      }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+  fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "Ada" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "short" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+  expect(await screen.findByText("Password must be 10 to 72 characters")).toBeTruthy();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/setup"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/login"))).toBe(
+    false,
+  );
+  expect(
+    fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/change-password")),
+  ).toBe(false);
+});
+
+test("shows why a short new password did not submit", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
+    if (url.includes("/api/auth/status")) {
+      return new Response(
+        JSON.stringify({
+          initialized: true,
+          authenticated: true,
+          username: "Bea",
+          role: "viewer",
+          can_download: false,
+          can_share: false,
+          garage_version: "v2.4.1",
+          garage_write_blocked: false,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+  fireEvent.change(await screen.findByLabelText("Current password"), {
+    target: { value: "current secret" },
+  });
+  fireEvent.change(screen.getByLabelText("New password"), { target: { value: "short" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  expect(await screen.findByText("Password must be 10 to 72 characters")).toBeTruthy();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/setup"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/login"))).toBe(
+    false,
+  );
+  expect(
+    fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/change-password")),
+  ).toBe(false);
+});
+
 test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   vi.stubGlobal(
     "fetch",
