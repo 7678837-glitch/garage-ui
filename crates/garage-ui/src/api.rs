@@ -1618,7 +1618,7 @@ mod tests {
         assert!(!response.body.contains(TOKEN), "{}", response.body);
         assert_eq!(
             serde_json::from_str::<Value>(&response.body).unwrap(),
-            json!({ "items": items, "more": more })
+            json!({ "items": items, "hasMore": more })
         );
     }
 
@@ -1704,16 +1704,6 @@ mod tests {
                 "invalid_limit",
                 "Limit must be a non-negative integer",
             ),
-            (
-                "/api/keys?offset=0&limit=1001",
-                "limit_too_large",
-                "Limit cannot exceed 1000",
-            ),
-            (
-                "/api/buckets?limit=1001",
-                "limit_too_large",
-                "Limit cannot exceed 1000",
-            ),
         ] {
             let response = exchange(&app, request("GET", path, None, Some(&session))).await;
             assert_error(&response, StatusCode::BAD_REQUEST, code, message);
@@ -1723,6 +1713,44 @@ mod tests {
             "a rejected window called Garage: {:?}",
             mock.requests()
         );
+    }
+
+    #[tokio::test]
+    async fn catalog_pages_clamp_an_oversized_limit() {
+        let mock = CatalogMock::start().await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+
+        let buckets = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1001", None, Some(&session)),
+        )
+        .await;
+        assert_page(
+            &buckets,
+            json!([{ "id": "b0" }, { "id": "b1" }, { "id": "b2" }]),
+            false,
+        );
+
+        let keys = exchange(
+            &app,
+            request("GET", "/api/keys?offset=0&limit=5000", None, Some(&session)),
+        )
+        .await;
+        assert_page(
+            &keys,
+            json!([{ "id": "k0" }, { "id": "k1" }, { "id": "k2" }]),
+            false,
+        );
+
+        let lines = mock.requests();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("GET /v2/ListBucketsInfo?limit=1000 "));
+        assert!(!lines[0].contains("limit=1001"));
+        assert!(lines[1].contains("GET /v2/ListKeysInfo?limit=1000 "));
+        assert!(!lines[1].contains("offset="));
+        assert!(!lines[1].contains("limit=5000"));
     }
 
     #[tokio::test]
