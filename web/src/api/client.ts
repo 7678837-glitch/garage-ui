@@ -105,7 +105,7 @@ export function putObject(input: {
   key: string;
   body: Blob;
   contentType: string;
-  onProgress: (percent: number | null) => void;
+  onProgress: (progress: { percent: number | null; loaded: number }) => void;
 }): { promise: Promise<void>; abort: () => void } {
   const xhr = new XMLHttpRequest();
   let aborted = false;
@@ -118,10 +118,13 @@ export function putObject(input: {
   xhr.setRequestHeader("x-csrf-token", csrfToken());
   xhr.upload.onprogress = (event) => {
     if (!event.lengthComputable || event.total <= 0) {
-      input.onProgress(null);
+      input.onProgress({ percent: null, loaded: event.loaded });
       return;
     }
-    input.onProgress(Math.floor((event.loaded / event.total) * 100));
+    input.onProgress({
+      percent: Math.floor((event.loaded / event.total) * 100),
+      loaded: event.loaded,
+    });
   };
   const promise = new Promise<void>((resolve, reject) => {
     xhr.onload = () => {

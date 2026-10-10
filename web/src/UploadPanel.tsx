@@ -20,7 +20,7 @@ type Row = {
   verdict: Verdict;
   phase:
     | { kind: "queued" }
-    | { kind: "uploading"; percent: number | null }
+    | { kind: "uploading"; percent: number | null; rate: number | null; startedAt: number }
     | { kind: "done" }
     | { kind: "failed" }
     | { kind: "cancelled" };
@@ -71,6 +71,17 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function byteRate(percent: number | null, loaded: number, startedAt: number, now: number): number | null {
+  if (percent === null || loaded <= 0) {
+    return null;
+  }
+  const elapsed = now - startedAt;
+  if (elapsed <= 0) {
+    return null;
+  }
+  return Math.floor((loaded * 1000) / elapsed);
+}
+
 export function UploadPanel({
   bucketId,
   existingKeys,
@@ -114,7 +125,9 @@ export function UploadPanel({
     const ids = new Set(starting.map((row) => row.id));
     commit(
       current.map((row) =>
-        ids.has(row.id) ? { ...row, phase: { kind: "uploading", percent: 0 } } : row,
+        ids.has(row.id)
+          ? { ...row, phase: { kind: "uploading", percent: 0, rate: null, startedAt: Date.now() } }
+          : row,
       ),
     );
     for (const row of starting) {
@@ -123,13 +136,22 @@ export function UploadPanel({
         key: row.name,
         body: row.file,
         contentType: row.file.type === "" ? "application/octet-stream" : row.file.type,
-        onProgress(percent) {
+        onProgress({ percent, loaded }) {
           commit(
-            rowsRef.current.map((item) =>
-              item.id === row.id && item.phase.kind === "uploading"
-                ? { ...item, phase: { kind: "uploading", percent } }
-                : item,
-            ),
+            rowsRef.current.map((item) => {
+              if (item.id !== row.id || item.phase.kind !== "uploading") {
+                return item;
+              }
+              return {
+                ...item,
+                phase: {
+                  kind: "uploading",
+                  percent,
+                  startedAt: item.phase.startedAt,
+                  rate: byteRate(percent, loaded, item.phase.startedAt, Date.now()),
+                },
+              };
+            }),
           );
         },
       });
@@ -315,6 +337,9 @@ export function UploadPanel({
               <span>{STATUS_LABEL[row.phase.kind]}</span>
               {row.phase.kind === "uploading" && row.phase.percent !== null ? (
                 <span>{row.phase.percent}%</span>
+              ) : null}
+              {row.phase.kind === "uploading" && row.phase.rate !== null ? (
+                <span>{row.phase.rate} B/s</span>
               ) : null}
               {prompt ? (
                 <>

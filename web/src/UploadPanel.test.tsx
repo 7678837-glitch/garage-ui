@@ -212,13 +212,43 @@ test("overwrite sends one copy and overwrite all sends the rest", () => {
 });
 
 test("hides the percentage when the length is unknown", () => {
-  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
-  choose(["a.txt"]);
-  act(() => {
-    FakeRequest.sent[0]?.emitProgress(1, 0, false);
-  });
-  expect(row("a.txt").textContent).toContain("Uploading");
-  expect(row("a.txt").textContent).not.toContain("%");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(1_000));
+  try {
+    render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+    choose(["a.txt"]);
+    act(() => {
+      vi.setSystemTime(new Date(2_000));
+      FakeRequest.sent[0]?.emitProgress(1, 0, false);
+    });
+    expect(row("a.txt").textContent).toContain("Uploading");
+    expect(row("a.txt").textContent).not.toContain("%");
+    expect(row("a.txt").textContent).not.toContain("B/s");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("shows the percent and the byte rate after loaded progress", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(1_000));
+  try {
+    render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+    choose(["a.txt"]);
+    act(() => {
+      FakeRequest.sent[0]?.emitProgress(12, 100);
+    });
+    expect(row("a.txt").textContent).toContain("12%");
+    expect(row("a.txt").textContent).not.toContain("B/s");
+    act(() => {
+      vi.setSystemTime(new Date(2_000));
+      FakeRequest.sent[0]?.emitProgress(12, 100);
+    });
+    expect(row("a.txt").textContent).toContain("12%");
+    expect(row("a.txt").textContent).toContain("12 B/s");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("clear finished removes done, failed, and cancelled rows", async () => {
