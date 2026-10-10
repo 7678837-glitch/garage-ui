@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
@@ -9,6 +9,7 @@ import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
+import { Nav, sectionFromHash, type SectionId } from "./Nav";
 import { ThemeChooser } from "./theme";
 import { Users } from "./Users";
 
@@ -157,12 +158,31 @@ function LoginForm() {
   );
 }
 
+function useHashSection(role: string) {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const sync = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  const select = (id: SectionId) => {
+    const next = `#${id}`;
+    if (window.location.hash !== next) {
+      window.location.hash = next;
+    }
+    setHash(next);
+  };
+  return { section: sectionFromHash(hash, role), select };
+}
+
 function Home({ status }: { status: SessionStatus }) {
   const client = useQueryClient();
   const health = useQuery({
     queryKey: ["healthz"],
     queryFn: () => api<Health>("/healthz"),
   });
+  const { section, select } = useHashSection(status.role ?? "");
+  const [menuOpen, setMenuOpen] = useState(true);
   const form = useForm<PasswordChange>({ resolver: zodResolver(passwordChange) });
   const { errors } = form.formState;
   const change = useMutation({
@@ -184,62 +204,78 @@ function Home({ status }: { status: SessionStatus }) {
   } else if (health.isError) {
     healthText = "unavailable";
   }
+  const admin = status.role === "admin";
   return (
-    <div className="grid gap-6">
-      <div className="grid max-w-sm gap-6">
-        {status.garage_write_blocked === true ? (
-          <p role="alert">Garage v2.3.0 or newer is required</p>
+    <div className="flex flex-col gap-6 sm:flex-row">
+      <Nav
+        role={status.role ?? ""}
+        section={section}
+        open={menuOpen}
+        onToggle={() => setMenuOpen((open) => !open)}
+        onSelect={select}
+      />
+      <div className="grid min-w-0 flex-1 gap-6">
+        {section === "overview" ? (
+          <>
+            <div className="grid max-w-sm gap-6">
+              {status.garage_write_blocked === true ? (
+                <p role="alert">Garage v2.3.0 or newer is required</p>
+              ) : null}
+              <p>
+                {status.username} · {status.role}
+              </p>
+              <p>{healthText}</p>
+              <form
+                className="grid gap-3"
+                onSubmit={form.handleSubmit((input) => change.mutate(input))}
+              >
+                <label className="block">
+                  <span className="text-sm">Current password</span>
+                  <input
+                    className="mt-1 w-full border border-line px-2 py-1"
+                    type="password"
+                    autoComplete="current-password"
+                    {...form.register("current_password")}
+                  />
+                </label>
+                <ErrorText message={errors.current_password?.message} />
+                <label className="block">
+                  <span className="text-sm">New password</span>
+                  <input
+                    className="mt-1 w-full border border-line px-2 py-1"
+                    type="password"
+                    autoComplete="new-password"
+                    {...form.register("new_password")}
+                  />
+                </label>
+                <ErrorText message={errors.new_password?.message} />
+                <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
+                <ErrorText
+                  message={change.error instanceof Error ? change.error.message : undefined}
+                />
+                <button className="border border-ink px-3 py-1 text-left" type="submit">
+                  Change password
+                </button>
+              </form>
+              <button
+                className="border border-ink px-3 py-1 text-left"
+                type="button"
+                onClick={() => logout.mutate()}
+              >
+                Log out
+              </button>
+            </div>
+            <About garageVersion={status.garage_version} />
+            {admin ? <ClusterHealth /> : null}
+            {admin ? <ClusterNodes /> : null}
+          </>
         ) : null}
-        <p>
-          {status.username} · {status.role}
-        </p>
-        <p>{healthText}</p>
-        <form
-          className="grid gap-3"
-          onSubmit={form.handleSubmit((input) => change.mutate(input))}
-        >
-          <label className="block">
-            <span className="text-sm">Current password</span>
-            <input
-              className="mt-1 w-full border border-line px-2 py-1"
-              type="password"
-              autoComplete="current-password"
-              {...form.register("current_password")}
-            />
-          </label>
-          <ErrorText message={errors.current_password?.message} />
-          <label className="block">
-            <span className="text-sm">New password</span>
-            <input
-              className="mt-1 w-full border border-line px-2 py-1"
-              type="password"
-              autoComplete="new-password"
-              {...form.register("new_password")}
-            />
-          </label>
-          <ErrorText message={errors.new_password?.message} />
-          <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
-          <ErrorText message={change.error instanceof Error ? change.error.message : undefined} />
-          <button className="border border-ink px-3 py-1 text-left" type="submit">
-            Change password
-          </button>
-        </form>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          onClick={() => logout.mutate()}
-        >
-          Log out
-        </button>
+        {section === "buckets" ? <Buckets canManage={admin} /> : null}
+        {section === "keys" ? <Keys canManage={admin} /> : null}
+        {section === "users" && admin && status.username ? (
+          <Users selfUsername={status.username} />
+        ) : null}
       </div>
-      <About garageVersion={status.garage_version} />
-      {status.role === "admin" ? <ClusterHealth /> : null}
-      {status.role === "admin" ? <ClusterNodes /> : null}
-      <Buckets canManage={status.role === "admin"} />
-      <Keys canManage={status.role === "admin"} />
-      {status.role === "admin" && status.username ? (
-        <Users selfUsername={status.username} />
-      ) : null}
     </div>
   );
 }

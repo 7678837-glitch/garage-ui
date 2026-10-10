@@ -5,10 +5,15 @@ import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App"
 
 afterEach(() => {
   cleanup();
+  window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
 });
+
+async function chooseSection(name: string) {
+  fireEvent.click(await screen.findByRole("link", { name }));
+}
 
 function renderApp() {
   const client = new QueryClient({
@@ -247,8 +252,9 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(notice.textContent).toBe("Garage v2.3.0 or newer is required");
   expect(screen.getByText("Ada · admin")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
-  expect(await screen.findByText("Keys are unavailable")).toBeTruthy();
   expect(screen.queryAllByRole("alert")).toHaveLength(1);
+  await chooseSection("Keys");
+  expect(await screen.findByText("Keys are unavailable")).toBeTruthy();
 });
 
 test("shows user management for an admin and locks that signed-in row", async () => {
@@ -300,6 +306,13 @@ test("shows user management for an admin and locks that signed-in row", async ()
     }),
   );
   renderApp();
+  expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
+  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
+  expect(screen.getByText("List keys info unknown")).toBeTruthy();
+  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
+  await chooseSection("Users");
   const remove = (await screen.findByRole("button", { name: "Delete Ada" })) as HTMLButtonElement;
   expect(remove.disabled).toBe(true);
   expect((screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLSelectElement).disabled).toBe(
@@ -309,12 +322,6 @@ test("shows user management for an admin and locks that signed-in row", async ()
     (screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLInputElement).disabled,
   ).toBe(true);
   expect(document.body.textContent).not.toContain("$2b$12$from-the-api");
-  expect(await screen.findByText("ok · test")).toBeTruthy();
-  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
-  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
-  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
-  expect(screen.getByText("List keys info unknown")).toBeTruthy();
-  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
 });
 
 test("hides user management from a viewer", async () => {
@@ -416,13 +423,16 @@ test("shows a bucket id and its alias to an admin", async () => {
     }),
   );
   renderApp();
+  await chooseSection("Buckets");
   expect(await screen.findByText("bucket-ada")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  await chooseSection("Users");
   expect(screen.getByRole("heading", { name: "Users" })).toBeTruthy();
+  await chooseSection("Keys");
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(screen.getByText("ada-key")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Rename key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
@@ -477,10 +487,16 @@ test("shows a bucket id to a viewer", async () => {
   });
   vi.stubGlobal("fetch", fetchMock);
   renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  await chooseSection("Buckets");
   expect(await screen.findByText("bucket-bea")).toBeTruthy();
   expect(screen.getByText("west")).toBeTruthy();
-  expect(screen.getByText("Bea · viewer")).toBeTruthy();
-  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add alias to bucket-bea" })).toBeNull();
+  await chooseSection("Keys");
   expect(await screen.findByText("key-bea")).toBeTruthy();
   expect(screen.getByText("bea-key")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
@@ -495,9 +511,6 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
-  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Add alias to bucket-bea" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Rename key-bea" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete key-bea" })).toBeNull();
@@ -515,6 +528,131 @@ test("shows a bucket id to a viewer", async () => {
       return method !== "GET" && String(call[0]).includes("/api/buckets");
     }),
   ).toEqual([]);
+});
+
+function sessionResponse(role: "admin" | "viewer") {
+  const admin = role === "admin";
+  return new Response(
+    JSON.stringify({
+      initialized: true,
+      authenticated: true,
+      username: admin ? "Ada" : "Bea",
+      role,
+      can_download: admin,
+      can_share: admin,
+      garage_version: "v2.4.1",
+      garage_write_blocked: false,
+    }),
+    { status: 200 },
+  );
+}
+
+function stubSignedIn(role: "admin" | "viewer") {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      if (url.includes("/api/auth/status")) {
+        return sessionResponse(role);
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/buckets")) {
+        return new Response(
+          JSON.stringify({
+            items: [{ id: "bucket-ada", globalAliases: ["pictures"] }],
+            hasMore: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/keys")) {
+        return new Response(
+          JSON.stringify({
+            items: [{ id: "key-ada", name: "ada-key" }],
+            hasMore: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/users")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+}
+
+test("choosing Keys hides the buckets section and sets the hash", async () => {
+  window.location.hash = "#buckets";
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByText("bucket-ada")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Buckets" })).toBeTruthy();
+  await chooseSection("Keys");
+  expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
+  expect(screen.queryByText("bucket-ada")).toBeNull();
+  expect(await screen.findByText("key-ada")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(window.location.hash).toBe("#keys");
+});
+
+test("loading #keys shows keys", async () => {
+  window.location.hash = "#keys";
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("key-ada")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
+  expect(screen.queryByText("Bea · viewer")).toBeNull();
+});
+
+test("an admin sees Users and a viewer opening #users sees overview", async () => {
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByRole("link", { name: "Users" })).toBeTruthy();
+  cleanup();
+
+  window.location.hash = "#users";
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+});
+
+test("an unknown hash shows overview", async () => {
+  window.location.hash = "#layout";
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByText("Ada · admin")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Keys" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+});
+
+test("Menu toggles the links", async () => {
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByRole("link", { name: "Overview" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Buckets" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Keys" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+  expect(screen.queryByRole("link", { name: "Overview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Buckets" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Keys" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+  await chooseSection("Keys");
+  expect(await screen.findByText("key-ada")).toBeTruthy();
+  expect(window.location.hash).toBe("#keys");
 });
 
 function methodOf(call: readonly unknown[]): string {
