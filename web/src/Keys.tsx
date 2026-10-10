@@ -95,9 +95,62 @@ function createdKeyId(body: unknown, fallback: string): string {
   return fallback;
 }
 
+type KeyListFailure = {
+  message: string;
+  code: string | null;
+};
+
+class KeyListError extends Error {
+  readonly code: string | null;
+
+  constructor(failure: KeyListFailure) {
+    super(failure.message);
+    this.name = "KeyListError";
+    this.code = failure.code;
+  }
+}
+
+// api() 只把 message 放进 Error。密钥列表还要显示 body 里的 code，所以这里自己读响应。
+function failureFrom(text: string, status: number): KeyListFailure {
+  const fallback = `request failed (${status})`;
+  if (!text.startsWith("{")) {
+    return { message: fallback, code: null };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { message: fallback, code: null };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { message: fallback, code: null };
+  }
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
+}
+
+function keyListFailure(error: unknown): KeyListFailure {
+  if (error instanceof KeyListError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Keys are unavailable", code: null };
+}
+
 async function loadPage(offset: number): Promise<KeyPage> {
-  const body = await api<unknown>(`/api/keys?offset=${offset}&limit=${PAGE_LIMIT}`);
-  return parsePage(body);
+  const response = await fetch(`/api/keys?offset=${offset}&limit=${PAGE_LIMIT}`, {
+    credentials: "include",
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new KeyListError(failureFrom(text, response.status));
+  }
+  return parsePage(text ? (JSON.parse(text) as unknown) : undefined);
 }
 
 async function copySecret(secret: string): Promise<"copied" | "select"> {
@@ -455,18 +508,39 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     },
   });
   const rows = list.data?.pages.flatMap((page) => page.items) ?? [];
-  const message = list.error instanceof Error ? list.error.message : "Keys are unavailable";
+  const view = {
+    busy: list.isPending,
+    refreshing: rows.length > 0 && list.isFetching && !list.isPending,
+    empty: Boolean(list.data) && rows.length === 0,
+    failure: list.isError ? keyListFailure(list.error) : null,
+    partial: list.hasNextPage,
+  };
   const deleteError = removeKey.error instanceof Error ? removeKey.error.message : null;
   const viewError = viewSecret.error instanceof Error ? viewSecret.error.message : null;
 
   return (
-    <section className="grid gap-4" aria-label="Keys">
+    <section className="grid gap-4" aria-label="Keys" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Keys</h2>
       {canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
-      {list.isPending ? <p>Loading keys</p> : null}
-      {list.isError ? <p>{message}</p> : null}
+      {view.busy ? <p>Loading keys</p> : null}
+      {view.refreshing ? <p>Refreshing keys</p> : null}
+      {view.failure ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void list.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
       {notice ? <p>{notice}</p> : null}
-      {list.data && rows.length === 0 ? <p>There are no keys.</p> : null}
+      {view.empty ? <p>There are no keys.</p> : null}
       {list.data && rows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
@@ -528,17 +602,20 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           </table>
         </div>
       ) : null}
-      {list.hasNextPage ? (
-        <button
-          className="border border-neutral-900 px-3 py-1 text-left"
-          type="button"
-          disabled={list.isFetchingNextPage}
-          onClick={() => {
-            void list.fetchNextPage();
-          }}
-        >
-          Load more
-        </button>
+      {view.partial ? (
+        <>
+          <p>More keys are available.</p>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={list.isFetchingNextPage}
+            onClick={() => {
+              void list.fetchNextPage();
+            }}
+          >
+            Load more
+          </button>
+        </>
       ) : null}
       {deleteId !== null ? (
         <DeleteKeyDialog
