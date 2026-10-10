@@ -20,24 +20,35 @@ function csrfToken(): string {
   return decodeURIComponent(found.slice("garage_csrf=".length));
 }
 
-function messageFrom(text: string, status: number): string {
+export class ApiError extends Error {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+  }
+}
+
+function failureFrom(text: string, status: number): { message: string; code: string | null } {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
-    return fallback;
+    return { message: fallback, code: null };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    return fallback;
+    return { message: fallback, code: null };
   }
-  if (typeof parsed === "object" && parsed && "message" in parsed) {
-    const message = parsed.message;
-    if (typeof message === "string" && message.length > 0) {
-      return message;
-    }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { message: fallback, code: null };
   }
-  return fallback;
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -60,7 +71,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(messageFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    throw new ApiError(failure.message, failure.code);
   }
   if (!text) {
     return undefined as T;

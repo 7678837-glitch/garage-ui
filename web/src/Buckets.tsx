@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
+import { Objects } from "./Objects";
 
 type Alias =
   | { scope: "global"; name: string }
@@ -774,6 +775,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [browserId, setBrowserId] = useState<string | null>(null);
   const list = useInfiniteQuery({
     queryKey: ["buckets"],
     initialPageParam: 0,
@@ -826,8 +828,17 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
+      {browserId ? (
+        <Objects
+          key={browserId}
+          bucketId={browserId}
+          onBack={() => {
+            setBrowserId(null);
+          }}
+        />
+      ) : null}
       {view.empty ? <p>There are no buckets.</p> : null}
-      {list.data && rows.length > 0 ? (
+      {browserId === null && list.data && rows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -848,6 +859,15 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
                 <tr key={`${bucket.id}-${index}`}>
                   <td className="py-2 pr-3 align-top">
                     <span>{bucket.id}</span>
+                    <button
+                      className="ml-2 border border-neutral-900 px-2 py-1 text-left"
+                      type="button"
+                      onClick={() => {
+                        setBrowserId(bucket.id);
+                      }}
+                    >
+                      Objects for {bucket.id}
+                    </button>
                     <BucketPermissions bucketId={bucket.id} canManage={canManage} />
                     {canManage ? (
                       <button
@@ -888,7 +908,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
           </table>
         </div>
       ) : null}
-      {view.partial ? (
+      {browserId === null && view.partial ? (
         <>
           <p>More buckets are available.</p>
           <button
