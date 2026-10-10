@@ -8,7 +8,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, patch, post};
+use axum::routing::{any, delete, get, patch, post};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -62,7 +62,12 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/{id}", patch(patch_user).delete(remove_user))
         .route("/api/users/{id}/reset-password", post(reset_password))
-        .route("/api/buckets", get(list_buckets))
+        .route("/api/buckets", get(list_buckets).post(create_bucket))
+        .route("/api/buckets/{id}", delete(delete_bucket))
+        .route(
+            "/api/buckets/{id}/aliases",
+            post(add_bucket_alias).delete(remove_bucket_alias),
+        )
         .route("/api/keys", get(list_keys))
         .route("/api/keys/{id}/secret", post(key_secret))
         .route("/api/objects/preview", get(preview_object))
@@ -660,6 +665,159 @@ async fn list_buckets(
     let (offset, limit) = page_bounds(&query)?;
     let page = proxy::list_buckets(&app, offset, limit).await?;
     Ok(page_json(page))
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct CreateBucketBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    global_alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_alias: Option<CreateLocalAlias>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct CreateLocalAlias {
+    access_key_id: String,
+    alias: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow: Option<BucketPerm>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BucketPerm {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    read: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    write: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AliasBody {
+    bucket_id: Option<String>,
+    global_alias: Option<String>,
+    local_alias: Option<String>,
+    access_key_id: Option<String>,
+}
+
+async fn create_bucket(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    Json(body): Json<CreateBucketBody>,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeBuckets)?;
+    let bytes = serde_json::to_vec(&body).map_err(|_| ApiError::internal())?;
+    post_garage(&app, &current, &headers, "CreateBucket", None, &bytes).await
+}
+
+async fn delete_bucket(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeBuckets)?;
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(&app, &current, &headers, "DeleteBucket", Some(&query), &[]).await
+}
+
+async fn add_bucket_alias(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AliasBody>,
+) -> Result<Response, ApiError> {
+    change_alias(&app, &current, &headers, &id, body, "AddBucketAlias").await
+}
+
+async fn remove_bucket_alias(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AliasBody>,
+) -> Result<Response, ApiError> {
+    change_alias(&app, &current, &headers, &id, body, "RemoveBucketAlias").await
+}
+
+async fn change_alias(
+    app: &App,
+    current: &Current,
+    headers: &HeaderMap,
+    id: &str,
+    body: AliasBody,
+    endpoint: &'static str,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeBuckets)?;
+    let bytes = alias_bytes(id, body)?;
+    post_garage(app, current, headers, endpoint, None, &bytes).await
+}
+
+fn alias_bytes(path_id: &str, body: AliasBody) -> Result<Vec<u8>, ApiError> {
+    if body.bucket_id.as_deref().is_some_and(|id| id != path_id) {
+        return Err(ApiError::bad_request(
+            "bucket_id_mismatch",
+            "Bucket id does not match",
+        ));
+    }
+    let value = match (body.global_alias, body.local_alias, body.access_key_id) {
+        (Some(global_alias), None, None) => json!({
+            "bucketId": path_id,
+            "globalAlias": global_alias,
+        }),
+        (None, Some(local_alias), Some(access_key_id)) => json!({
+            "bucketId": path_id,
+            "localAlias": local_alias,
+            "accessKeyId": access_key_id,
+        }),
+        _ => {
+            return Err(ApiError::bad_request(
+                "invalid_alias",
+                "Alias must be global or local",
+            ));
+        }
+    };
+    Ok(value.to_string().into_bytes())
+}
+
+async fn post_garage(
+    app: &App,
+    current: &Current,
+    headers: &HeaderMap,
+    endpoint: &str,
+    query: Option<&str>,
+    body: &[u8],
+) -> Result<Response, ApiError> {
+    proxy::dispatch(
+        app,
+        &current.user,
+        &current.ip,
+        &Method::POST,
+        &format!("v2/{endpoint}"),
+        query,
+        body,
+        headers,
+    )
+    .await
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 async fn list_keys(
@@ -1857,5 +2015,425 @@ mod tests {
         )
         .await;
         assert_page(&viewer_keys, json!([{ "id": "k0" }]), true);
+    }
+
+    #[derive(Clone)]
+    struct UpstreamCall {
+        line: String,
+        body: String,
+    }
+
+    struct Upstream {
+        url: String,
+        hits: Arc<AtomicUsize>,
+        calls: Arc<Mutex<Vec<UpstreamCall>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for Upstream {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    #[derive(Clone)]
+    enum UpstreamReply {
+        Ok(String),
+        Fixed(&'static str, String),
+    }
+
+    impl Upstream {
+        async fn start(reply: UpstreamReply) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let hits_task = Arc::clone(&hits);
+            let calls_task = Arc::clone(&calls);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    hits_task.fetch_add(1, Ordering::SeqCst);
+                    let Ok((line, body)) = read_upstream(&mut socket).await else {
+                        break;
+                    };
+                    calls_task.lock().expect("calls").push(UpstreamCall {
+                        line: line.clone(),
+                        body,
+                    });
+                    let (status, response_body) = upstream_reply(&line, &reply);
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{response_body}",
+                        response_body.len()
+                    );
+                    if socket.write_all(response.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = socket.shutdown().await;
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                hits,
+                calls,
+                task,
+            }
+        }
+
+        fn hits(&self) -> usize {
+            self.hits.load(Ordering::SeqCst)
+        }
+
+        fn calls(&self) -> Vec<UpstreamCall> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    fn upstream_reply(line: &str, reply: &UpstreamReply) -> (String, String) {
+        if line.contains("/v2/GetNodeInfo?") {
+            return (
+                "200 OK".to_string(),
+                r#"{"garageVersion":"v2.3.0"}"#.to_string(),
+            );
+        }
+        match reply {
+            UpstreamReply::Ok(body) => ("200 OK".to_string(), body.clone()),
+            UpstreamReply::Fixed(status, body) => ((*status).to_string(), body.clone()),
+        }
+    }
+
+    async fn read_upstream(
+        socket: &mut tokio::net::TcpStream,
+    ) -> std::io::Result<(String, String)> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 2048];
+        let header_end = loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "headers",
+                ));
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let header_text = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+        let length = header_text.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().unwrap_or(0))
+        });
+        let mut body = buf[header_end..].to_vec();
+        if let Some(length) = length {
+            while body.len() < length {
+                let read = socket.read(&mut tmp).await?;
+                if read == 0 {
+                    break;
+                }
+                body.extend_from_slice(&tmp[..read]);
+            }
+            body.truncate(length);
+        }
+        let line = header_text.lines().next().unwrap_or("").to_string();
+        Ok((line, String::from_utf8_lossy(&body).into_owned()))
+    }
+
+    async fn viewer_session(app: &App, admin: &Session) -> Session {
+        let created = exchange(
+            app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Bea",
+                        "password": "viewer horse",
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        sign_in(app, "Bea", "viewer horse").await
+    }
+
+    #[tokio::test]
+    async fn admin_create_hits_create_bucket_once() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"new"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets",
+                Some(
+                    &json!({
+                        "globalAlias": "photos",
+                        "localAlias": {
+                            "accessKeyId": "GK1",
+                            "alias": "home",
+                            "allow": { "read": true }
+                        }
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, r#"{"id":"new"}"#);
+        assert!(!response.body.contains(TOKEN), "{}", response.body);
+        let creates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/CreateBucket "))
+            .collect();
+        assert_eq!(
+            creates.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&creates[0].body).unwrap(),
+            json!({
+                "globalAlias": "photos",
+                "localAlias": {
+                    "accessKeyId": "GK1",
+                    "alias": "home",
+                    "allow": { "read": true }
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_create_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"new"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets",
+                Some(r#"{"globalAlias":"photos"}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| &call.line)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_puts_encoded_id_in_the_query() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"ok":true}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("DELETE", "/api/buckets/a%20b%26c%3Dd", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, r#"{"ok":true}"#);
+        let deletes: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("DeleteBucket"))
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert!(
+            deletes[0]
+                .line
+                .contains("POST /v2/DeleteBucket?id=a%20b%26c%3Dd "),
+            "{}",
+            deletes[0].line
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_keeps_garage_400_body() {
+        let body = r#"{"message":"Bucket is not empty"}"#.to_string();
+        let mock = Upstream::start(UpstreamReply::Fixed("400 Bad Request", body.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("DELETE", "/api/buckets/full", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            response.body
+        );
+        assert_eq!(response.body, body);
+    }
+
+    #[tokio::test]
+    async fn mismatched_alias_bucket_id_stays_local() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"ok":true}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        for method in ["POST", "DELETE"] {
+            let response = exchange(
+                &app,
+                request(
+                    method,
+                    "/api/buckets/bkt-1/aliases",
+                    Some(r#"{"bucketId":"other","globalAlias":"photos"}"#),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &response,
+                StatusCode::BAD_REQUEST,
+                "bucket_id_mismatch",
+                "Bucket id does not match",
+            );
+        }
+        assert_eq!(mock.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn alias_routes_send_path_id_to_garage() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let added = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"bucketId":"bkt-1","globalAlias":"photos"}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(added.status, StatusCode::OK, "{}", added.body);
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"localAlias":"photos","accessKeyId":"GK1"}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
+        let calls = mock.calls();
+        let add = calls
+            .iter()
+            .find(|call| call.line.contains("POST /v2/AddBucketAlias "))
+            .expect("add");
+        assert_eq!(
+            serde_json::from_str::<Value>(&add.body).unwrap(),
+            json!({"bucketId":"bkt-1","globalAlias":"photos"})
+        );
+        let remove = calls
+            .iter()
+            .find(|call| call.line.contains("POST /v2/RemoveBucketAlias "))
+            .expect("remove");
+        assert_eq!(
+            serde_json::from_str::<Value>(&remove.body).unwrap(),
+            json!({"bucketId":"bkt-1","localAlias":"photos","accessKeyId":"GK1"})
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_mutations_require_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        for (method, path, body) in [
+            ("POST", "/api/buckets", Some("{}")),
+            ("DELETE", "/api/buckets/bkt-1", None),
+            (
+                "POST",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"globalAlias":"photos"}"#),
+            ),
+            (
+                "DELETE",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"globalAlias":"photos"}"#),
+            ),
+        ] {
+            let response = exchange(&app, request(method, path, body, None)).await;
+            assert_error(
+                &response,
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
+                "Login required",
+            );
+        }
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("POST", "/api/buckets", Some("{}"), Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn old_garage_blocks_bucket_create() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("POST", "/api/buckets", Some("{}"), Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::CONFLICT,
+            "garage_too_old",
+            "Garage v2.3.0 or newer is required",
+        );
+        assert!(
+            mock.requests()
+                .iter()
+                .all(|line| !line.contains("CreateBucket"))
+        );
     }
 }
