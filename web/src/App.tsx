@@ -23,6 +23,11 @@ type Health = {
   version: string;
 };
 
+type SessionStatus = AuthStatus & {
+  garage_version: string | null;
+  garage_write_blocked: boolean;
+};
+
 function Shell({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-screen bg-white text-neutral-900">
@@ -133,7 +138,7 @@ function LoginForm() {
   );
 }
 
-function Home({ status }: { status: AuthStatus }) {
+function Home({ status }: { status: SessionStatus }) {
   const client = useQueryClient();
   const health = useQuery({
     queryKey: ["healthz"],
@@ -161,6 +166,9 @@ function Home({ status }: { status: AuthStatus }) {
   }
   return (
     <div className="grid gap-6">
+      {status.garage_write_blocked === true ? (
+        <p role="alert">Garage v2.3.0 or newer is required</p>
+      ) : null}
       <p>
         {status.username} · {status.role}
       </p>
@@ -207,7 +215,7 @@ function Home({ status }: { status: AuthStatus }) {
 export function App() {
   const status = useQuery({
     queryKey: ["auth", "status"],
-    queryFn: () => api<AuthStatus>("/api/auth/status"),
+    queryFn: () => api<SessionStatus>("/api/auth/status"),
   });
   if (status.isPending) {
     return (

@@ -1,10 +1,11 @@
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Response, StatusCode};
+use serde_json::Value;
 
 use crate::access::{self, Op};
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
-use crate::state::App;
+use crate::state::{App, GarageLink};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Endpoint {
@@ -13,6 +14,7 @@ pub struct Endpoint {
     pub op: Op,
     pub confirm: bool,
     pub audit: bool,
+    pub writes: bool,
 }
 
 const fn ep(
@@ -21,6 +23,7 @@ const fn ep(
     op: Op,
     confirm: bool,
     audit: bool,
+    writes: bool,
 ) -> Endpoint {
     Endpoint {
         name,
@@ -28,6 +31,7 @@ const fn ep(
         op,
         confirm,
         audit,
+        writes,
     }
 }
 
@@ -115,6 +119,15 @@ pub async fn dispatch(
             "Confirmation required",
         ));
     }
+    if endpoint.writes {
+        let link = ensure_garage_link(app).await;
+        if !link.writes_allowed {
+            return Err(ApiError::conflict(
+                "garage_too_old",
+                "Garage v2.3.0 or newer is required",
+            ));
+        }
+    }
     let filtered = forwarded_query(name, query);
     let response = send(app, name, method, &filtered, body).await?;
     if endpoint.audit {
@@ -133,6 +146,36 @@ pub async fn dispatch(
         .await?;
     }
     Ok(response)
+}
+
+pub async fn ensure_garage_link(app: &App) -> GarageLink {
+    let Some(url) = app.settings.garage_admin_url.clone() else {
+        return GarageLink::unknown();
+    };
+    if app.settings.garage_admin_token.is_none() {
+        return GarageLink::unknown();
+    }
+    app.garage_link_for(&url, probe_node_info(app)).await
+}
+
+async fn probe_node_info(app: &App) -> GarageLink {
+    let Ok(response) = send(app, "GetNodeInfo", &Method::GET, "node=self", &[]).await else {
+        return GarageLink::unknown();
+    };
+    if !response.status().is_success() {
+        return GarageLink::unknown();
+    }
+    let Ok(bytes) = axum::body::to_bytes(response.into_body(), 1024 * 1024).await else {
+        return GarageLink::unknown();
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return GarageLink::unknown();
+    };
+    GarageLink::from_reported(
+        value
+            .get("garageVersion")
+            .and_then(|version| version.as_str()),
+    )
 }
 
 pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
@@ -250,16 +293,38 @@ pub async fn audit(
 }
 
 static ENDPOINTS: [Endpoint; 50] = [
-    ep("health", "GET", Op::ViewCluster, false, false),
-    ep("metrics", "GET", Op::ViewMetrics, false, false),
-    ep("AddBucketAlias", "POST", Op::ChangeBuckets, false, true),
-    ep("AllowBucketKey", "POST", Op::ChangeBucketKeys, false, true),
-    ep("ApplyClusterLayout", "POST", Op::ChangeLayout, false, true),
+    ep("health", "GET", Op::ViewCluster, false, false, false),
+    ep("metrics", "GET", Op::ViewMetrics, false, false, false),
+    ep(
+        "AddBucketAlias",
+        "POST",
+        Op::ChangeBuckets,
+        false,
+        true,
+        true,
+    ),
+    ep(
+        "AllowBucketKey",
+        "POST",
+        Op::ChangeBucketKeys,
+        false,
+        true,
+        true,
+    ),
+    ep(
+        "ApplyClusterLayout",
+        "POST",
+        Op::ChangeLayout,
+        false,
+        true,
+        true,
+    ),
     ep(
         "CleanupIncompleteUploads",
         "POST",
         Op::WriteObjects,
         false,
+        true,
         true,
     ),
     ep(
@@ -268,68 +333,212 @@ static ENDPOINTS: [Endpoint; 50] = [
         Op::ChangeLayout,
         true,
         true,
+        true,
     ),
-    ep("ConnectClusterNodes", "POST", Op::ChangeLayout, false, true),
-    ep("CreateAdminToken", "POST", Op::AdminTokens, true, true),
-    ep("CreateBucket", "POST", Op::ChangeBuckets, false, true),
-    ep("CreateKey", "POST", Op::ChangeKeys, false, true),
-    ep("CreateMetadataSnapshot", "POST", Op::RunOps, false, true),
-    ep("DeleteAdminToken", "POST", Op::AdminTokens, false, true),
-    ep("DeleteBucket", "POST", Op::ChangeBuckets, false, true),
-    ep("DeleteKey", "POST", Op::ChangeKeys, false, true),
-    ep("DenyBucketKey", "POST", Op::ChangeBucketKeys, false, true),
-    ep("GetAdminTokenInfo", "GET", Op::AdminTokens, false, false),
-    ep("GetBlockInfo", "POST", Op::ViewOps, false, false),
-    ep("GetBucketInfo", "GET", Op::ViewBuckets, false, false),
-    ep("GetClusterHealth", "GET", Op::ViewCluster, false, false),
-    ep("GetClusterLayout", "GET", Op::ViewCluster, false, false),
+    ep(
+        "ConnectClusterNodes",
+        "POST",
+        Op::ChangeLayout,
+        false,
+        true,
+        true,
+    ),
+    ep(
+        "CreateAdminToken",
+        "POST",
+        Op::AdminTokens,
+        true,
+        true,
+        true,
+    ),
+    ep("CreateBucket", "POST", Op::ChangeBuckets, false, true, true),
+    ep("CreateKey", "POST", Op::ChangeKeys, false, true, true),
+    ep(
+        "CreateMetadataSnapshot",
+        "POST",
+        Op::RunOps,
+        false,
+        true,
+        true,
+    ),
+    ep(
+        "DeleteAdminToken",
+        "POST",
+        Op::AdminTokens,
+        false,
+        true,
+        true,
+    ),
+    ep("DeleteBucket", "POST", Op::ChangeBuckets, false, true, true),
+    ep("DeleteKey", "POST", Op::ChangeKeys, false, true, true),
+    ep(
+        "DenyBucketKey",
+        "POST",
+        Op::ChangeBucketKeys,
+        false,
+        true,
+        true,
+    ),
+    ep(
+        "GetAdminTokenInfo",
+        "GET",
+        Op::AdminTokens,
+        false,
+        false,
+        false,
+    ),
+    ep("GetBlockInfo", "POST", Op::ViewOps, false, false, false),
+    ep("GetBucketInfo", "GET", Op::ViewBuckets, false, false, false),
+    ep(
+        "GetClusterHealth",
+        "GET",
+        Op::ViewCluster,
+        false,
+        false,
+        false,
+    ),
+    ep(
+        "GetClusterLayout",
+        "GET",
+        Op::ViewCluster,
+        false,
+        false,
+        false,
+    ),
     ep(
         "GetClusterLayoutHistory",
         "GET",
         Op::ViewCluster,
         false,
         false,
+        false,
     ),
-    ep("GetClusterStatistics", "GET", Op::ViewStats, false, false),
-    ep("GetClusterStatus", "GET", Op::ViewCluster, false, false),
+    ep(
+        "GetClusterStatistics",
+        "GET",
+        Op::ViewStats,
+        false,
+        false,
+        false,
+    ),
+    ep(
+        "GetClusterStatus",
+        "GET",
+        Op::ViewCluster,
+        false,
+        false,
+        false,
+    ),
     ep(
         "GetCurrentAdminTokenInfo",
         "GET",
         Op::AdminTokens,
         false,
         false,
+        false,
     ),
-    ep("GetKeyInfo", "GET", Op::ViewKeys, false, false),
-    ep("GetNodeInfo", "GET", Op::ViewCluster, false, false),
-    ep("GetNodeStatistics", "GET", Op::ViewStats, false, false),
-    ep("GetWorkerInfo", "POST", Op::ViewOps, false, false),
-    ep("GetWorkerVariable", "POST", Op::ViewOps, false, false),
-    ep("ImportKey", "POST", Op::ChangeKeys, false, true),
-    ep("InspectObject", "GET", Op::InspectObject, false, false),
-    ep("LaunchRepairOperation", "POST", Op::RunOps, true, true),
-    ep("ListAdminTokens", "GET", Op::AdminTokens, false, false),
-    ep("ListBlockErrors", "GET", Op::ViewOps, false, false),
-    ep("ListBuckets", "GET", Op::ViewBuckets, false, false),
-    ep("ListBucketsInfo", "GET", Op::ViewBuckets, false, false),
-    ep("ListKeys", "GET", Op::ViewKeys, false, false),
-    ep("ListKeysInfo", "GET", Op::ViewKeys, false, false),
-    ep("ListWorkers", "POST", Op::ViewOps, false, false),
+    ep("GetKeyInfo", "GET", Op::ViewKeys, false, false, false),
+    ep("GetNodeInfo", "GET", Op::ViewCluster, false, false, false),
+    ep(
+        "GetNodeStatistics",
+        "GET",
+        Op::ViewStats,
+        false,
+        false,
+        false,
+    ),
+    ep("GetWorkerInfo", "POST", Op::ViewOps, false, false, false),
+    ep(
+        "GetWorkerVariable",
+        "POST",
+        Op::ViewOps,
+        false,
+        false,
+        false,
+    ),
+    ep("ImportKey", "POST", Op::ChangeKeys, false, true, true),
+    ep(
+        "InspectObject",
+        "GET",
+        Op::InspectObject,
+        false,
+        false,
+        false,
+    ),
+    ep(
+        "LaunchRepairOperation",
+        "POST",
+        Op::RunOps,
+        true,
+        true,
+        true,
+    ),
+    ep(
+        "ListAdminTokens",
+        "GET",
+        Op::AdminTokens,
+        false,
+        false,
+        false,
+    ),
+    ep("ListBlockErrors", "GET", Op::ViewOps, false, false, false),
+    ep("ListBuckets", "GET", Op::ViewBuckets, false, false, false),
+    ep(
+        "ListBucketsInfo",
+        "GET",
+        Op::ViewBuckets,
+        false,
+        false,
+        false,
+    ),
+    ep("ListKeys", "GET", Op::ViewKeys, false, false, false),
+    ep("ListKeysInfo", "GET", Op::ViewKeys, false, false, false),
+    ep("ListWorkers", "POST", Op::ViewOps, false, false, false),
     ep(
         "PreviewClusterLayoutChanges",
         "POST",
         Op::ChangeLayout,
         false,
         false,
+        false,
     ),
-    ep("PurgeBlocks", "POST", Op::RunOps, true, true),
-    ep("RemoveBucketAlias", "POST", Op::ChangeBuckets, false, true),
-    ep("RetryBlockResync", "POST", Op::RunOps, false, true),
-    ep("RevertClusterLayout", "POST", Op::ChangeLayout, false, true),
-    ep("SetWorkerVariable", "POST", Op::RunOps, true, true),
-    ep("UpdateAdminToken", "POST", Op::AdminTokens, true, true),
-    ep("UpdateBucket", "POST", Op::ChangeBuckets, false, true),
-    ep("UpdateClusterLayout", "POST", Op::ChangeLayout, false, true),
-    ep("UpdateKey", "POST", Op::ChangeKeys, false, true),
+    ep("PurgeBlocks", "POST", Op::RunOps, true, true, true),
+    ep(
+        "RemoveBucketAlias",
+        "POST",
+        Op::ChangeBuckets,
+        false,
+        true,
+        true,
+    ),
+    ep("RetryBlockResync", "POST", Op::RunOps, false, true, true),
+    ep(
+        "RevertClusterLayout",
+        "POST",
+        Op::ChangeLayout,
+        false,
+        true,
+        true,
+    ),
+    ep("SetWorkerVariable", "POST", Op::RunOps, true, true, true),
+    ep(
+        "UpdateAdminToken",
+        "POST",
+        Op::AdminTokens,
+        true,
+        true,
+        true,
+    ),
+    ep("UpdateBucket", "POST", Op::ChangeBuckets, false, true, true),
+    ep(
+        "UpdateClusterLayout",
+        "POST",
+        Op::ChangeLayout,
+        false,
+        true,
+        true,
+    ),
+    ep("UpdateKey", "POST", Op::ChangeKeys, false, true, true),
 ];
 
 #[cfg(test)]
@@ -387,6 +596,53 @@ mod tests {
         assert_eq!(
             forwarded_query("ListKeys", Some("showSecretKey=true")),
             "showSecretKey=true"
+        );
+    }
+
+    #[test]
+    fn only_mutating_endpoints_are_garage_writes() {
+        let mut writes: Vec<_> = endpoints()
+            .iter()
+            .filter(|endpoint| endpoint.writes)
+            .map(|endpoint| endpoint.name)
+            .collect();
+        writes.sort_unstable();
+        assert_eq!(
+            writes,
+            [
+                "AddBucketAlias",
+                "AllowBucketKey",
+                "ApplyClusterLayout",
+                "CleanupIncompleteUploads",
+                "ClusterLayoutSkipDeadNodes",
+                "ConnectClusterNodes",
+                "CreateAdminToken",
+                "CreateBucket",
+                "CreateKey",
+                "CreateMetadataSnapshot",
+                "DeleteAdminToken",
+                "DeleteBucket",
+                "DeleteKey",
+                "DenyBucketKey",
+                "ImportKey",
+                "LaunchRepairOperation",
+                "PurgeBlocks",
+                "RemoveBucketAlias",
+                "RetryBlockResync",
+                "RevertClusterLayout",
+                "SetWorkerVariable",
+                "UpdateAdminToken",
+                "UpdateBucket",
+                "UpdateClusterLayout",
+                "UpdateKey",
+            ]
+        );
+        assert!(!find_endpoint("GetWorkerInfo", "POST").unwrap().writes);
+        assert!(!find_endpoint("ListWorkers", "POST").unwrap().writes);
+        assert!(
+            !find_endpoint("PreviewClusterLayoutChanges", "POST")
+                .unwrap()
+                .writes
         );
     }
 }
