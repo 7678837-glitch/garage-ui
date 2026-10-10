@@ -20,6 +20,7 @@ function renderPermissions(bucketId: string, canManage: boolean) {
       <BucketPermissions bucketId={bucketId} canManage={canManage} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 function renderBuckets(canManage: boolean) {
@@ -158,6 +159,132 @@ test("shows the API message when the key list fails", async () => {
   expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
   expect(screen.queryByText("This bucket has no keys.")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("shows Loading keys and marks the panel busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderPermissions("bkt-1", true);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  const panel = screen.getByRole("region", { name: "Permissions for bkt-1" });
+  expect(panel.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("This bucket has no keys.")).toBeNull();
+  expect(screen.queryByText("Refreshing keys")).toBeNull();
+  release(json({ keys: [] }));
+  expect(await screen.findByText("This bucket has no keys.")).toBeTruthy();
+  expect(
+    screen.getByRole("region", { name: "Permissions for bkt-1" }).getAttribute("aria-busy"),
+  ).toBe("false");
+  expect(screen.queryByText("Loading keys")).toBeNull();
+});
+
+test("keeps a visible access key while a later fetch refreshes the panel", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/buckets/bkt-1");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          json({
+            keys: [
+              {
+                accessKeyId: "GK9",
+                name: "kept",
+                permissions: { owner: false, read: true, write: false },
+              },
+            ],
+          }),
+        );
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderPermissions("bkt-1", true);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  expect(await screen.findByText("GK9")).toBeTruthy();
+  expect(screen.queryByText("Refreshing keys")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["bucket-permissions", "bkt-1"] });
+  expect(await screen.findByText("Refreshing keys")).toBeTruthy();
+  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByText("Loading keys")).toBeNull();
+  expect(
+    screen.getByRole("region", { name: "Permissions for bkt-1" }).getAttribute("aria-busy"),
+  ).toBe("false");
+  releaseNext(
+    json({
+      keys: [
+        {
+          accessKeyId: "GK9",
+          name: "kept",
+          permissions: { owner: false, read: true, write: false },
+        },
+      ],
+    }),
+  );
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing keys")).toBeNull();
+  });
+  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(calls).toBe(2);
+});
+
+test("shows the API code and requests that bucket again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/buckets/a%26b%3Dc");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json(
+          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          502,
+        );
+      }
+      return json({
+        keys: [
+          {
+            accessKeyId: "GK1",
+            name: "photos",
+            permissions: { owner: false, read: true, write: false },
+          },
+        ],
+      });
+    }),
+  );
+  renderPermissions("a&b=c", true);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
+  expect(await screen.findByText("Garage admin API is not reachable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("This bucket has no keys.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
 });
 
 test("does not grant when the access key is blank or no permission is checked", async () => {

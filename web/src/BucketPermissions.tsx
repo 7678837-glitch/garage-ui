@@ -60,6 +60,62 @@ function yesNo(flag: boolean): "yes" | "no" {
   return flag ? "yes" : "no";
 }
 
+type PermissionFailure = {
+  message: string;
+  code: string | null;
+};
+
+class PermissionListError extends Error {
+  readonly code: string | null;
+
+  constructor(failure: PermissionFailure) {
+    super(failure.message);
+    this.name = "PermissionListError";
+    this.code = failure.code;
+  }
+}
+
+// api() 只把 message 放进 Error。桶权限还要显示响应里的 code，所以这里自己读桶详情。
+function failureFrom(text: string, status: number): PermissionFailure {
+  const fallback = `request failed (${status})`;
+  if (!text.startsWith("{")) {
+    return { message: fallback, code: null };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { message: fallback, code: null };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { message: fallback, code: null };
+  }
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
+}
+
+function permissionFailure(error: unknown): PermissionFailure {
+  if (error instanceof PermissionListError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Bucket permissions are unavailable", code: null };
+}
+
+async function loadBucketKeys(bucketId: string): Promise<BucketKeyGrant[]> {
+  const response = await fetch(bucketUrl(bucketId), { credentials: "include" });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new PermissionListError(failureFrom(text, response.status));
+  }
+  return parseKeys(text ? (JSON.parse(text) as unknown) : undefined);
+}
+
 function flag(value: unknown): boolean {
   return value === true;
 }
@@ -270,7 +326,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
   const [target, setTarget] = useState<BucketKeyGrant | null>(null);
   const keys = useQuery({
     queryKey: permissionQueryKey(bucketId),
-    queryFn: async () => parseKeys(await api<unknown>(bucketUrl(bucketId))),
+    queryFn: () => loadBucketKeys(bucketId),
   });
   const revoke = useMutation({
     mutationFn: (key: BucketKeyGrant) =>
@@ -283,13 +339,38 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       await client.invalidateQueries({ queryKey: permissionQueryKey(bucketId) });
     },
   });
-  const message = keys.error instanceof Error ? keys.error.message : "Bucket permissions are unavailable";
+  const rows = keys.data ?? [];
+  const view = {
+    busy: keys.isPending,
+    refreshing: rows.length > 0 && keys.isFetching && !keys.isPending,
+    empty: keys.data !== undefined && rows.length === 0,
+    failure: keys.isError ? permissionFailure(keys.error) : null,
+  };
   const revokeError = revoke.error instanceof Error ? revoke.error.message : null;
   return (
-    <div className="mt-3 grid max-w-sm gap-2">
-      {keys.isPending ? <p>Loading keys</p> : null}
-      {keys.isError ? <p>{message}</p> : null}
-      {keys.data && keys.data.length === 0 ? <p>This bucket has no keys.</p> : null}
+    <section
+      className="mt-3 grid max-w-sm gap-2"
+      aria-label={`Permissions for ${bucketId}`}
+      aria-busy={view.busy}
+    >
+      {view.busy ? <p>Loading keys</p> : null}
+      {view.refreshing ? <p>Refreshing keys</p> : null}
+      {view.failure ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void keys.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
+      {view.empty ? <p>This bucket has no keys.</p> : null}
       {keys.data && keys.data.length > 0 ? (
         <ul className="grid gap-2">
           {keys.data.map((key, index) => (
@@ -330,7 +411,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           }}
         />
       ) : null}
-    </div>
+    </section>
   );
 }
 
