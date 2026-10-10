@@ -2020,7 +2020,7 @@ async fn record(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -4968,11 +4968,17 @@ mod tests {
         task.abort();
     }
 
+    struct PartHold {
+        released: AtomicBool,
+        notify: tokio::sync::Notify,
+    }
+
     struct S3Mock {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
         content_types: Arc<Mutex<Vec<Option<String>>>>,
         bodies: Arc<Mutex<Vec<String>>>,
+        hold: Option<Arc<PartHold>>,
         task: tokio::task::JoinHandle<()>,
     }
 
@@ -4984,6 +4990,31 @@ mod tests {
 
     impl S3Mock {
         async fn start(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Self {
+            Self::serve(reply, None).await
+        }
+
+        async fn start_holding_parts(
+            reply: impl Fn(&str) -> String + Send + Sync + 'static,
+        ) -> Self {
+            let hold = Arc::new(PartHold {
+                released: AtomicBool::new(false),
+                notify: tokio::sync::Notify::new(),
+            });
+            Self::serve(reply, Some(hold)).await
+        }
+
+        fn release_parts(&self) {
+            let Some(hold) = &self.hold else {
+                return;
+            };
+            hold.released.store(true, Ordering::SeqCst);
+            hold.notify.notify_waiters();
+        }
+
+        async fn serve(
+            reply: impl Fn(&str) -> String + Send + Sync + 'static,
+            hold: Option<Arc<PartHold>>,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let requests = Arc::new(Mutex::new(Vec::new()));
@@ -4993,6 +5024,7 @@ mod tests {
             let content_types_task = Arc::clone(&content_types);
             let bodies_task = Arc::clone(&bodies);
             let reply = Arc::new(reply);
+            let hold_task = hold.clone();
             let task = tokio::spawn(async move {
                 loop {
                     let Ok((mut socket, _)) = listener.accept().await else {
@@ -5002,6 +5034,7 @@ mod tests {
                     let content_types_task = Arc::clone(&content_types_task);
                     let bodies_task = Arc::clone(&bodies_task);
                     let reply = Arc::clone(&reply);
+                    let hold = hold_task.clone();
                     tokio::spawn(async move {
                         let mut buf = Vec::new();
                         let mut tmp = [0_u8; 4096];
@@ -5057,6 +5090,18 @@ mod tests {
                             .lock()
                             .expect("s3 bodies")
                             .push(String::from_utf8_lossy(&body).into_owned());
+                        if s3_operation(&line) == "part"
+                            && let Some(hold) = &hold
+                            && !part_reply_ready(hold).await
+                        {
+                            let _ = socket
+                                .write_all(
+                                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                )
+                                .await;
+                            let _ = socket.shutdown().await;
+                            return;
+                        }
                         let response = reply(&line);
                         let _ = socket.write_all(response.as_bytes()).await;
                         let _ = socket.shutdown().await;
@@ -5068,6 +5113,7 @@ mod tests {
                 requests,
                 content_types,
                 bodies,
+                hold,
                 task,
             }
         }
@@ -5083,6 +5129,15 @@ mod tests {
         fn bodies(&self) -> Vec<String> {
             self.bodies.lock().expect("s3 bodies").clone()
         }
+    }
+
+    async fn part_reply_ready(hold: &PartHold) -> bool {
+        let notified = hold.notify.notified();
+        hold.released.load(Ordering::SeqCst)
+            || tokio::time::timeout(Duration::from_secs(20), notified)
+                .await
+                .is_ok()
+            || hold.released.load(Ordering::SeqCst)
     }
 
     async fn object_app(dir: &std::path::Path, endpoint: &str, with_key: bool) -> App {
@@ -5842,6 +5897,85 @@ mod tests {
         assert_eq!(ops.first().copied(), Some("create"), "{ops:?}");
         assert!(ops.contains(&"abort"), "{ops:?}");
         assert!(!ops.contains(&"complete"), "{ops:?}");
+    }
+
+    fn part_request_count(mock: &S3Mock) -> usize {
+        mock.requests()
+            .iter()
+            .filter(|line| s3_operation(line) == "part")
+            .count()
+    }
+
+    #[tokio::test]
+    async fn object_put_waits_when_the_process_buffer_is_full() {
+        let mock = S3Mock::start_holding_parts(multipart_reply).await;
+        let dir = crate::util::temp_dir();
+        let mut app = object_app(&dir, &mock.url, true).await;
+        app.upload_buffer = Arc::new(tokio::sync::Semaphore::new(4));
+        let left = app.clone();
+        let right = app.clone();
+        let first = tokio::spawn(async move {
+            super::put_object(
+                &left,
+                "bkt-1",
+                "a.bin",
+                8,
+                None,
+                Body::from(b"abcdefgh".to_vec()),
+                objects::PartPlan {
+                    threshold: 3,
+                    part_bytes: 4,
+                },
+            )
+            .await
+        });
+        let second = tokio::spawn(async move {
+            super::put_object(
+                &right,
+                "bkt-1",
+                "b.bin",
+                8,
+                None,
+                Body::from(b"ijklmnop".to_vec()),
+                objects::PartPlan {
+                    threshold: 3,
+                    part_bytes: 4,
+                },
+            )
+            .await
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if part_request_count(&mock) >= 1 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no part request: {:?}",
+                mock.requests()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(part_request_count(&mock), 1, "{:?}", mock.requests());
+        mock.release_parts();
+        let (first, second) = tokio::time::timeout(Duration::from_secs(15), async {
+            tokio::join!(first, second)
+        })
+        .await
+        .expect("puts finished after release");
+        let first = first.expect("a.bin task").expect("a.bin put");
+        let second = second.expect("b.bin task").expect("b.bin put");
+        assert_eq!(first.0, StatusCode::CREATED);
+        assert_eq!(second.0, StatusCode::CREATED);
+        assert!(!first.0.is_client_error());
+        assert!(!second.0.is_client_error());
+        assert_eq!(first.1.0.key, "a.bin");
+        assert_eq!(second.1.0.key, "b.bin");
+        assert_eq!(first.1.0.size, 8);
+        assert_eq!(second.1.0.size, 8);
+        assert_eq!(first.1.0.etag, "final-etag");
+        assert_eq!(second.1.0.etag, "final-etag");
     }
 
     fn delete_ok() -> String {
