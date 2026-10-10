@@ -325,7 +325,7 @@ export function ClusterHealth() {
           ))}
         </dl>
       ) : null}
-      {statistics.isError ? <p>{statisticsMessage}</p> : null}
+      {statistics.isError ? <p>{`Statistics: ${statisticsMessage}`}</p> : null}
       {statistics.isSuccess ? (
         <>
           <dl className="grid gap-2 text-sm">

@@ -323,7 +323,7 @@ test("shows the connect API message in a paragraph and keeps the nodes", async (
     target: { value: "abcd@127.0.0.1:3901" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
-  const message = await screen.findByText("Garage admin API is not reachable");
+  const message = await screen.findByText("Connect: Garage admin API is not reachable");
   expect(message.tagName).toBe("P");
   expect(message.getAttribute("role")).toBeNull();
   expect(screen.queryByText("garage_unavailable")).toBeNull();
