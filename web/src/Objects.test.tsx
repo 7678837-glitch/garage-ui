@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
 import { Objects } from "./Objects";
@@ -59,6 +59,64 @@ function page(entries: unknown[], next: string | null = null, prefix = "") {
 function listed(key: string) {
   return page([objectRow(key, 1, "2026-10-11T00:00:00Z")]);
 }
+
+test("shows the Upload region after opening a bucket", async () => {
+  class QuietRequest {
+    upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
+    open() {}
+    setRequestHeader() {}
+    send() {}
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", QuietRequest);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/buckets") {
+        return json({ items: [{ id: "bkt-1", globalAliases: ["east"] }], hasMore: false });
+      }
+      if (url.pathname === "/api/buckets/bkt-1/objects") {
+        return json(page([{ kind: "prefix", prefix: "photos/" }, photo]));
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderBuckets();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Objects for bkt-1" }));
+  const objectButton = await screen.findByRole("button", { name: "photos/a.txt" });
+  const upload = screen.getByRole("region", { name: "Upload" });
+  const prefixButton = screen.getByRole("button", { name: "photos/" });
+  expect(upload.textContent).toContain("Drop files here.");
+  expect(upload.contains(objectButton)).toBe(false);
+  expect(upload.contains(prefixButton)).toBe(false);
+  expect(upload.compareDocumentPosition(objectButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  const input = within(upload).getByLabelText("Choose files");
+  fireEvent.change(input, {
+    target: { files: [new File(["a"], "photos/a.txt", { type: "text/plain" })] },
+  });
+  const objectFile = within(upload).getByText("photos/a.txt").closest("li");
+  if (!(objectFile instanceof HTMLElement)) {
+    throw new Error("missing upload row photos/a.txt");
+  }
+  expect(objectFile.textContent).toContain("Queued");
+  expect(within(objectFile).getByRole("button", { name: "Overwrite" }).textContent).toBe(
+    "Overwrite",
+  );
+  expect(objectFile.textContent).not.toContain("Uploading");
+  fireEvent.change(input, {
+    target: { files: [new File(["p"], "photos/", { type: "text/plain" })] },
+  });
+  const prefixFile = within(upload).getByText("photos/").closest("li");
+  if (!(prefixFile instanceof HTMLElement)) {
+    throw new Error("missing upload row photos/");
+  }
+  expect(prefixFile.textContent).toContain("Uploading");
+  expect(within(prefixFile).queryByRole("button", { name: "Overwrite" })).toBeNull();
+});
 
 test("opens a bucket, shows the chosen object's type, and returns to the table", async () => {
   vi.stubGlobal(

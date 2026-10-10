@@ -4,6 +4,7 @@ import { encodeObjectKey } from "./App";
 import { ApiError, api } from "./api/client";
 import { bucketUrl } from "./BucketPermissions";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
+import { UploadPanel } from "./UploadPanel";
 
 type ObjectEntry = {
   kind: "object";
@@ -567,6 +568,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           ) : null}
         </div>
       ) : null}
+      <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} />
       {showRows && visible.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
