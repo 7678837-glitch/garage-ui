@@ -208,7 +208,7 @@ async fn send(
     query: &str,
     body: &[u8],
 ) -> Result<Response<Body>, ApiError> {
-    let upstream = exchange(app, name, method, query, body).await?;
+    let upstream = present(exchange(app, name, method, query, body).await?);
     let mut response = Response::new(Body::from(upstream.bytes));
     *response.status_mut() = upstream.status;
     if let Some(content_type) = upstream.content_type
@@ -223,6 +223,20 @@ struct UpstreamBody {
     status: StatusCode,
     bytes: Vec<u8>,
     content_type: Option<reqwest::header::HeaderValue>,
+}
+
+fn present(upstream: UpstreamBody) -> UpstreamBody {
+    let error = upstream.status.is_client_error() || upstream.status.is_server_error();
+    if !error || serde_json::from_slice::<Value>(&upstream.bytes).is_ok() {
+        return upstream;
+    }
+    UpstreamBody {
+        status: upstream.status,
+        bytes: crate::error::upstream_error_json(upstream.status.as_u16(), &upstream.bytes),
+        content_type: Some(reqwest::header::HeaderValue::from_static(
+            "application/json",
+        )),
+    }
 }
 
 async fn exchange(
@@ -1947,5 +1961,219 @@ mod tests {
         );
         assert!(lines.iter().all(|line| !line.contains(ADMIN_TOKEN)));
         assert!(lines.iter().all(|line| !line.contains(CACHED_SECRET)));
+    }
+
+    struct Reply {
+        status: &'static str,
+        content_type: &'static str,
+        body: Vec<u8>,
+    }
+
+    struct Scripted {
+        url: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for Scripted {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl Scripted {
+        async fn start(replies: Vec<(&'static str, Reply)>) -> Self {
+            let replies = Arc::new(std::collections::HashMap::<_, _>::from_iter(replies));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let replies = Arc::clone(&replies);
+                    tokio::spawn(async move {
+                        let header = consume_request(&mut socket).await.unwrap_or_default();
+                        let name = header
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("")
+                            .split('?')
+                            .next()
+                            .unwrap_or("")
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or("");
+                        let Some(reply) = replies.get(name) else {
+                            let _ =
+                                write_raw(&mut socket, "404 Not Found", "text/plain", b"missing")
+                                    .await;
+                            return;
+                        };
+                        let _ =
+                            write_raw(&mut socket, reply.status, reply.content_type, &reply.body)
+                                .await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                task,
+            }
+        }
+    }
+
+    async fn write_raw(
+        socket: &mut tokio::net::TcpStream,
+        status: &str,
+        content_type: &str,
+        body: &[u8],
+    ) -> std::io::Result<()> {
+        let head = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        socket.write_all(head.as_bytes()).await?;
+        socket.write_all(body).await?;
+        let _ = socket.shutdown().await;
+        Ok(())
+    }
+
+    async fn taken(response: Response<Body>) -> (StatusCode, Option<String>, Vec<u8>) {
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, content_type, bytes)
+    }
+
+    #[tokio::test]
+    async fn non_json_upstream_errors_keep_status_and_json_bodies_pass_through() {
+        let mut long = vec![b'a'; 1023];
+        long.extend_from_slice(&[0xC3, 0xA9, b'Z']);
+        assert_eq!(long.len(), 1026);
+        let json_400 = br#"{"error":"Bad request","detail":1}"#.to_vec();
+        let json_200 = br#"{"id":"bkt","ok":true}"#.to_vec();
+        let upstream = Scripted::start(vec![
+            (
+                "Plain403",
+                Reply {
+                    status: "403 Forbidden",
+                    content_type: "text/plain",
+                    body: b"nope".to_vec(),
+                },
+            ),
+            (
+                "Empty403",
+                Reply {
+                    status: "403 Forbidden",
+                    content_type: "text/plain",
+                    body: Vec::new(),
+                },
+            ),
+            (
+                "Long403",
+                Reply {
+                    status: "403 Forbidden",
+                    content_type: "text/plain",
+                    body: long,
+                },
+            ),
+            (
+                "Json400",
+                Reply {
+                    status: "400 Bad Request",
+                    content_type: "application/json",
+                    body: json_400.clone(),
+                },
+            ),
+            (
+                "Json200",
+                Reply {
+                    status: "200 OK",
+                    content_type: "application/json",
+                    body: json_200.clone(),
+                },
+            ),
+            (
+                "Text200",
+                Reply {
+                    status: "200 OK",
+                    content_type: "text/plain",
+                    body: b"raw-ok".to_vec(),
+                },
+            ),
+        ])
+        .await;
+        let app = app_at(&upstream.url).await;
+
+        let (status, content_type, bytes) =
+            taken(send(&app, "Plain403", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({
+                "code": "upstream_error",
+                "message": "nope",
+                "garageStatus": 403
+            })
+        );
+
+        let (status, _, bytes) =
+            taken(send(&app, "Empty403", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({
+                "code": "upstream_error",
+                "message": "",
+                "garageStatus": 403
+            })
+        );
+
+        let (status, _, bytes) =
+            taken(send(&app, "Long403", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let message = format!("{}{}", "a".repeat(1023), "\u{FFFD}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({
+                "code": "upstream_error",
+                "message": message,
+                "garageStatus": 403
+            })
+        );
+
+        let (status, content_type, bytes) =
+            taken(send(&app, "Json400", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        assert_eq!(bytes, json_400);
+
+        let (status, content_type, bytes) =
+            taken(send(&app, "Json200", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        assert_eq!(bytes, json_200);
+
+        let (status, content_type, bytes) =
+            taken(send(&app, "Text200", &Method::GET, "", &[]).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("text/plain"));
+        assert_eq!(bytes, b"raw-ok");
+
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(ADMIN_TOKEN));
+        assert!(!sink.contains("nope"));
+        assert!(!sink.contains("raw-ok"));
     }
 }

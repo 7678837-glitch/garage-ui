@@ -85,6 +85,28 @@ struct Body<'a> {
     message: &'a str,
 }
 
+// 规格只要求截断，没有给长度。1024 是约定的字节上限，先切再按 lossy UTF-8 解释。
+const UPSTREAM_MESSAGE_BYTES: usize = 1024;
+
+#[derive(Serialize)]
+struct UpstreamError<'a> {
+    code: &'a str,
+    message: &'a str,
+    #[serde(rename = "garageStatus")]
+    garage_status: u16,
+}
+
+pub(crate) fn upstream_error_json(garage_status: u16, raw: &[u8]) -> Vec<u8> {
+    let end = raw.len().min(UPSTREAM_MESSAGE_BYTES);
+    let message = String::from_utf8_lossy(&raw[..end]);
+    serde_json::to_vec(&UpstreamError {
+        code: "upstream_error",
+        message: &message,
+        garage_status,
+    })
+    .expect("upstream error json")
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (
@@ -111,3 +133,21 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn api_error_json_is_code_and_message_only() {
+        let response = ApiError::forbidden("forbidden", "Not allowed").into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            bytes.as_ref(),
+            br#"{"code":"forbidden","message":"Not allowed"}"#
+        );
+    }
+}
