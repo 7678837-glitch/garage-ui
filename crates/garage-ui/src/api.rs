@@ -5066,6 +5066,83 @@ mod tests {
         assert!(mock.requests().is_empty());
     }
 
+    fn s3_denied() -> String {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>denied by policy</Message></Error>"#;
+        format!(
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn object_list_retries_once_when_s3_returns_403() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        let mock = S3Mock::start(move |line| {
+            assert!(request_target(line).contains("list-type=2"), "{line}");
+            let call = counted.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                s3_denied()
+            } else {
+                list_xml(false, None, &[("a.txt", 3, "abc")], &[])
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({
+                "prefix": "",
+                "entries": [
+                    {"kind": "object", "key": "a.txt", "size": 3, "etag": "abc", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "next": null
+            })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for line in &seen {
+            assert_eq!(bucket_of(line), "bkt-1");
+            assert!(request_target(line).contains("list-type=2"), "{line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn object_list_stays_403_when_s3_denies_twice() {
+        let mock = S3Mock::start(|line| {
+            assert!(request_target(line).contains("list-type=2"), "{line}");
+            s3_denied()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::FORBIDDEN, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "code": "s3_error", "message": "service error" })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for line in &seen {
+            assert_eq!(bucket_of(line), "bkt-1");
+            assert!(request_target(line).contains("list-type=2"), "{line}");
+        }
+    }
+
     #[tokio::test]
     async fn object_routes_require_a_session_and_the_download_bit() {
         let mock = S3Mock::start(|_| list_xml(false, None, &[("a.txt", 1, "abc")], &[])).await;
