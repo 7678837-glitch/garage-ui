@@ -14,6 +14,7 @@ use aws_sdk_s3::primitives::{ByteStream, DateTime, DateTimeFormat, SdkBody};
 use axum::body::HttpBody;
 use axum::http::{HeaderValue, StatusCode};
 use serde::Serialize;
+use tokio::sync::Semaphore;
 
 use crate::error::ApiError;
 use crate::state::App;
@@ -283,14 +284,17 @@ async fn put_multipart(
     let key = key.to_string();
     // Create 返回 403 时 drive 会重试，这时请求体还不能被读走。
     let source = Arc::new(Mutex::new(Some(body)));
+    let upload_buffer = Arc::clone(&app.upload_buffer);
     let etag = drive(app, bucket.clone(), {
         let bucket = bucket.clone();
         let key = key.clone();
         let source = Arc::clone(&source);
+        let upload_buffer = Arc::clone(&upload_buffer);
         move |client| {
             let bucket = bucket.clone();
             let key = key.clone();
             let source = Arc::clone(&source);
+            let upload_buffer = Arc::clone(&upload_buffer);
             let content_type = content_type.clone();
             async move {
                 send_parts(
@@ -301,6 +305,7 @@ async fn put_multipart(
                     part_size,
                     content_type,
                     &source,
+                    upload_buffer,
                 )
                 .await
             }
@@ -673,6 +678,7 @@ impl PartReader {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_parts(
     client: &Client,
     bucket: &str,
@@ -681,6 +687,7 @@ async fn send_parts(
     part_size: u64,
     content_type: Option<String>,
     source: &Mutex<Option<axum::body::Body>>,
+    upload_buffer: Arc<Semaphore>,
 ) -> Result<String, S3Failure> {
     if part_size == 0 {
         return Err(S3Failure::Local);
@@ -704,9 +711,40 @@ async fn send_parts(
             continue;
         }
         let want = usize::try_from(part_size.min(left)).unwrap_or(usize::MAX);
+        // 这一版 tokio 在申请数大于创建时的许可数时不会返回错误，只会一直等。
+        // 大于进程上限的分片永远排不上，先中止。
+        let permits = match u32::try_from(want) {
+            Ok(permits) if want <= crate::state::UPLOAD_BUFFER_BYTES => permits,
+            _ => {
+                return stop_parts(
+                    client,
+                    bucket,
+                    key,
+                    &upload_id,
+                    &mut flights,
+                    S3Failure::Local,
+                )
+                .await;
+            }
+        };
+        let permit = match Arc::clone(&upload_buffer).acquire_many_owned(permits).await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return stop_parts(
+                    client,
+                    bucket,
+                    key,
+                    &upload_id,
+                    &mut flights,
+                    S3Failure::Local,
+                )
+                .await;
+            }
+        };
         let bytes = match reader.read_exact(want).await {
             Ok(bytes) => bytes,
             Err(error) => {
+                drop(permit);
                 return stop_parts(client, bucket, key, &upload_id, &mut flights, error).await;
             }
         };
@@ -719,8 +757,10 @@ async fn send_parts(
             let key = key.to_string();
             let upload_id = upload_id.clone();
             async move {
-                let etag = upload_one(&client, &bucket, &key, &upload_id, number, bytes).await?;
-                Ok((number, etag))
+                let result = upload_one(&client, &bucket, &key, &upload_id, number, bytes).await;
+                // 许可跟着分片任务走。父任务停在 acquire 上时，占满额度的分片仍要能结束并归还。
+                drop(permit);
+                result.map(|etag| (number, etag))
             }
         });
         flights.push_back(InflightPart { task });

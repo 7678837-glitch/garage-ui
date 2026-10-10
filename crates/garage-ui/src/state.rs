@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::config::{self, KeyMaterial, Loaded, Settings};
 use crate::db;
@@ -28,6 +28,8 @@ struct CachedGarageLink {
     link: GarageLink,
 }
 
+pub(crate) const UPLOAD_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct App {
     pub db: sqlx::SqlitePool,
@@ -37,6 +39,7 @@ pub struct App {
     pub http: reqwest::Client,
     pub fixtures: Arc<std::sync::Mutex<HashMap<String, Fixture>>>,
     pub write: Arc<Mutex<()>>,
+    pub upload_buffer: Arc<Semaphore>,
     garage_link: Arc<Mutex<Option<CachedGarageLink>>>,
     credentials: Arc<Mutex<credentials::CredentialCache>>,
     pub key_id: Arc<String>,
@@ -198,6 +201,8 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         http,
         fixtures: Arc::new(std::sync::Mutex::new(HashMap::new())),
         write: Arc::new(Mutex::new(())),
+        // 超出 64 MiB 时在这个信号量上等待。不再另做一条队列。
+        upload_buffer: Arc::new(Semaphore::new(UPLOAD_BUFFER_BYTES)),
         garage_link: Arc::new(Mutex::new(None)),
         credentials: Arc::new(Mutex::new(credentials::CredentialCache::new(60))),
         key_id: Arc::new(key_id),
