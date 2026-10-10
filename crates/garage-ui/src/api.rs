@@ -686,19 +686,13 @@ fn page_bounds(query: &PageQuery) -> Result<(u64, usize), ApiError> {
             ApiError::bad_request("invalid_limit", "Limit must be a non-negative integer")
         })?,
     };
-    if limit > 1000 {
-        return Err(ApiError::bad_request(
-            "limit_too_large",
-            "Limit cannot exceed 1000",
-        ));
-    }
-    Ok((offset, limit))
+    Ok((offset, limit.min(1000)))
 }
 
 fn page_json(page: proxy::Page) -> Json<Value> {
     Json(json!({
         "items": page.items,
-        "more": page.more,
+        "hasMore": page.more,
     }))
 }
 
