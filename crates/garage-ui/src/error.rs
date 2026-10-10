@@ -1,23 +1,50 @@
 use axum::Json;
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
 #[derive(Debug)]
+enum Kind {
+    Local {
+        code: &'static str,
+        message: &'static str,
+        retry_after: Option<u64>,
+    },
+    Upstream {
+        bytes: Vec<u8>,
+        content_type: Option<HeaderValue>,
+    },
+}
+
+#[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
-    code: &'static str,
-    message: &'static str,
-    retry_after: Option<u64>,
+    kind: Kind,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: &'static str) -> Self {
         Self {
             status,
-            code,
-            message,
-            retry_after: None,
+            kind: Kind::Local {
+                code,
+                message,
+                retry_after: None,
+            },
+        }
+    }
+
+    pub(crate) fn upstream(
+        status: StatusCode,
+        bytes: Vec<u8>,
+        content_type: Option<HeaderValue>,
+    ) -> Self {
+        Self {
+            status,
+            kind: Kind::Upstream {
+                bytes,
+                content_type,
+            },
         }
     }
 
@@ -72,9 +99,11 @@ impl ApiError {
     pub fn rate_limited(retry_after_secs: u64) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
-            code: "rate_limited",
-            message: "Too many requests",
-            retry_after: Some(retry_after_secs.max(1)),
+            kind: Kind::Local {
+                code: "rate_limited",
+                message: "Too many requests",
+                retry_after: Some(retry_after_secs.max(1)),
+            },
         }
     }
 }
@@ -109,26 +138,41 @@ pub(crate) fn upstream_error_json(garage_status: u16, raw: &[u8]) -> Vec<u8> {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let mut response = (
-            self.status,
-            Json(Body {
-                code: self.code,
-                message: self.message,
-            }),
-        )
-            .into_response();
-        if let Some(secs) = self.retry_after
-            && let Ok(value) = HeaderValue::from_str(&secs.to_string())
-        {
-            response.headers_mut().insert("retry-after", value);
+        match self.kind {
+            Kind::Local {
+                code,
+                message,
+                retry_after,
+            } => {
+                let mut response = (self.status, Json(Body { code, message })).into_response();
+                if let Some(secs) = retry_after
+                    && let Ok(value) = HeaderValue::from_str(&secs.to_string())
+                {
+                    response.headers_mut().insert("retry-after", value);
+                }
+                response
+            }
+            Kind::Upstream {
+                bytes,
+                content_type,
+            } => {
+                let mut response = Response::new(axum::body::Body::from(bytes));
+                *response.status_mut() = self.status;
+                if let Some(value) = content_type {
+                    response.headers_mut().insert(header::CONTENT_TYPE, value);
+                }
+                response
+            }
         }
-        response
     }
 }
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.code)
+        match &self.kind {
+            Kind::Local { code, .. } => f.write_str(code),
+            Kind::Upstream { .. } => f.write_str("upstream_error"),
+        }
     }
 }
 

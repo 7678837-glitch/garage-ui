@@ -2436,4 +2436,250 @@ mod tests {
                 .all(|line| !line.contains("CreateBucket"))
         );
     }
+
+    struct ListStatus {
+        url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for ListStatus {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ListReply {
+        Fixed(&'static str, &'static str, &'static str),
+        InfoThenPage,
+    }
+
+    impl ListStatus {
+        async fn start(reply: ListReply) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&requests);
+            let info_calls = Arc::new(AtomicUsize::new(0));
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let recorded = Arc::clone(&recorded);
+                    let info_calls = Arc::clone(&info_calls);
+                    tokio::spawn(async move {
+                        let Ok(line) = read_request_line(&mut socket).await else {
+                            return;
+                        };
+                        recorded.lock().expect("requests").push(line.clone());
+                        let path = line.split_whitespace().nth(1).unwrap_or("");
+                        let path = path.split('?').next().unwrap_or("");
+                        let (status, content_type, body) = list_reply(path, &reply, &info_calls);
+                        let _ = write_plain(&mut socket, status, content_type, body).await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                requests,
+                task,
+            }
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().expect("requests").clone()
+        }
+    }
+
+    fn list_reply(
+        path: &str,
+        reply: &ListReply,
+        info_calls: &AtomicUsize,
+    ) -> (&'static str, &'static str, &'static str) {
+        match path {
+            "/v2/ListBucketsInfo" => match reply {
+                ListReply::InfoThenPage => {
+                    let call = info_calls.fetch_add(1, Ordering::SeqCst);
+                    if call == 0 {
+                        ("403 Forbidden", "text/plain", "denied by policy")
+                    } else {
+                        ("200 OK", "application/json", r#"[{"id":"b0"}]"#)
+                    }
+                }
+                ListReply::Fixed(status, content_type, body) => (status, content_type, body),
+            },
+            "/v2/ListBuckets" => ("500 Internal Server Error", "text/plain", "id list"),
+            _ => ("500 Internal Server Error", "text/plain", "unexpected"),
+        }
+    }
+
+    async fn read_request_line(socket: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 1024];
+        loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 65536 {
+                break;
+            }
+        }
+        let text = String::from_utf8_lossy(&buf);
+        Ok(text.lines().next().unwrap_or("").to_string())
+    }
+
+    async fn write_plain(
+        socket: &mut tokio::net::TcpStream,
+        status: &str,
+        content_type: &str,
+        body: &str,
+    ) -> std::io::Result<()> {
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await?;
+        let _ = socket.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bucket_list_keeps_upstream_status_and_404_stays_absent() {
+        let denied = ListStatus::start(ListReply::InfoThenPage).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &denied.url).await;
+        let (session, _) = login(&app).await;
+
+        let blocked = exchange(&app, request("GET", "/api/buckets", None, Some(&session))).await;
+        assert_eq!(blocked.status, StatusCode::FORBIDDEN, "{}", blocked.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&blocked.body).unwrap(),
+            json!({
+                "code": "upstream_error",
+                "message": "denied by policy",
+                "garageStatus": 403
+            })
+        );
+        assert!(
+            denied
+                .requests()
+                .iter()
+                .any(|line| line.contains("ListBucketsInfo"))
+        );
+        assert!(
+            denied
+                .requests()
+                .iter()
+                .all(|line| !line.contains("ListBuckets "))
+        );
+
+        let page = exchange(&app, request("GET", "/api/buckets", None, Some(&session))).await;
+        assert_page(&page, json!([{ "id": "b0" }]), false);
+        assert_eq!(
+            denied
+                .requests()
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            2
+        );
+        assert!(
+            denied
+                .requests()
+                .iter()
+                .all(|line| !line.contains("ListBuckets "))
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(TOKEN));
+        assert!(!sink.contains("denied by policy"));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let closed = crate::util::temp_dir();
+        let refused = app_for(&closed, &format!("http://127.0.0.1:{port}")).await;
+        let (refused_session, _) = login(&refused).await;
+        let down = exchange(
+            &refused,
+            request("GET", "/api/buckets", None, Some(&refused_session)),
+        )
+        .await;
+        assert_error(
+            &down,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not reachable",
+        );
+
+        let ids = ListStatus::start(ListReply::Fixed(
+            "404 Not Found",
+            "application/json",
+            r#"{"error":"not found"}"#,
+        ))
+        .await;
+        let fallback = crate::util::temp_dir();
+        let fallback_app = app_for(&fallback, &ids.url).await;
+        let (fallback_session, _) = login(&fallback_app).await;
+        let listed = exchange(
+            &fallback_app,
+            request("GET", "/api/buckets", None, Some(&fallback_session)),
+        )
+        .await;
+        assert_eq!(
+            listed.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{}",
+            listed.body
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!({
+                "code": "upstream_error",
+                "message": "id list",
+                "garageStatus": 500
+            })
+        );
+        assert!(
+            ids.requests()
+                .iter()
+                .any(|line| line.contains("ListBucketsInfo"))
+        );
+        assert!(
+            ids.requests()
+                .iter()
+                .any(|line| line.contains("ListBuckets "))
+        );
+        assert!(
+            ids.requests()
+                .iter()
+                .all(|line| !line.contains("GetBucketInfo"))
+        );
+
+        let json_error = ListStatus::start(ListReply::Fixed(
+            "400 Bad Request",
+            "application/json",
+            r#"{"error":"nope"}"#,
+        ))
+        .await;
+        let json_dir = crate::util::temp_dir();
+        let json_app = app_for(&json_dir, &json_error.url).await;
+        let (json_session, _) = login(&json_app).await;
+        let passed = exchange(
+            &json_app,
+            request("GET", "/api/buckets", None, Some(&json_session)),
+        )
+        .await;
+        assert_eq!(passed.status, StatusCode::BAD_REQUEST, "{}", passed.body);
+        assert_eq!(passed.body, r#"{"error":"nope"}"#);
+        assert!(
+            json_error
+                .requests()
+                .iter()
+                .all(|line| !line.contains("ListBuckets "))
+        );
+    }
 }

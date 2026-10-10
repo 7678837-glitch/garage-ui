@@ -239,6 +239,14 @@ fn present(upstream: UpstreamBody) -> UpstreamBody {
     }
 }
 
+fn upstream_failure(upstream: UpstreamBody) -> ApiError {
+    let shown = present(upstream);
+    let content_type = shown
+        .content_type
+        .and_then(|header| axum::http::HeaderValue::from_bytes(header.as_bytes()).ok());
+    ApiError::upstream(shown.status, shown.bytes, content_type)
+}
+
 async fn exchange(
     app: &App,
     name: &str,
@@ -585,6 +593,9 @@ mod lists {
         if upstream.status == StatusCode::NOT_FOUND {
             return Err(ProbeMiss::Absent);
         }
+        if upstream.status.is_client_error() || upstream.status.is_server_error() {
+            return Err(ProbeMiss::Down(upstream_failure(upstream)));
+        }
         if !upstream.status.is_success() {
             return Err(ProbeMiss::Down(garage_down()));
         }
@@ -609,6 +620,9 @@ mod lists {
         limit: usize,
     ) -> Result<Page, ApiError> {
         let upstream = exchange(app, catalog.ids, &Method::GET, "", &[]).await?;
+        if upstream.status.is_client_error() || upstream.status.is_server_error() {
+            return Err(upstream_failure(upstream));
+        }
         if !upstream.status.is_success() {
             return Err(garage_down());
         }
