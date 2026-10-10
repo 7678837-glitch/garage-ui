@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::Request;
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::get;
@@ -23,21 +24,29 @@ struct HealthBody<'a> {
 }
 
 pub fn router(app: App) -> Router {
+    crate::config::maybe_check_updates(app.settings.update_url.as_deref());
     let base = app.settings.base_path.clone();
     let logged = app.clone();
     let site = Router::<App>::new()
         .fallback(get(assets::asset))
         .merge(api::routes(app.clone()));
+    let root = Router::new().route("/healthz", get(healthz));
     let root = if base.is_empty() {
-        Router::new().route("/healthz", get(healthz)).merge(site)
+        root.merge(site)
     } else {
-        Router::new()
-            .route("/healthz", get(healthz))
-            .nest(&base, site)
+        root.route("/", get(redirect_to_base)).nest(&base, site)
     };
     root.layer(middleware::from_fn_with_state(logged, request_log))
         .layer(middleware::from_fn(security_headers))
         .with_state(app)
+}
+
+async fn redirect_to_base(axum::extract::State(app): axum::extract::State<App>) -> Response {
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header(header::LOCATION, app.settings.base_path.as_str())
+        .body(Body::empty())
+        .unwrap()
 }
 
 async fn healthz() -> axum::Json<HealthBody<'static>> {
@@ -175,6 +184,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("location").is_none());
         assert!(
             response
                 .headers()
@@ -184,6 +194,24 @@ mod tests {
                 .unwrap()
                 .starts_with("text/html")
         );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(html.contains("<base href=\"/\">"));
+        let reference = first_asset_reference(&html);
+        assert!(!reference.starts_with('/'), "{reference}");
+        let asset_path = asset_request_path("", &reference);
+        let asset = router(app_for_missing.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(&asset_path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK, "{asset_path}");
         let missing = router(app_for_missing)
             .oneshot(
                 Request::builder()
@@ -194,6 +222,99 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn base_path_serves_a_deep_route_and_redirects_the_root() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app_with(
+            &dir,
+            &[("BASE_PATH", "/admin")],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let root = router(app.clone())
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(root.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(root.headers().get("location").unwrap(), "/admin");
+        let health = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+        let deep = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/buckets/photos")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deep.status(), StatusCode::OK);
+        assert!(
+            deep.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
+        let bytes = axum::body::to_bytes(deep.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+        assert_eq!(html.matches("<base ").count(), 1);
+        assert!(html.contains("<base href=\"/admin/\">"));
+        let reference = first_asset_reference(&html);
+        assert!(
+            reference.starts_with("./") || reference.starts_with("assets/"),
+            "{reference}"
+        );
+        let asset_path = asset_request_path("/admin", &reference);
+        let asset = router(app)
+            .oneshot(
+                Request::builder()
+                    .uri(&asset_path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK, "{asset_path}");
+        let content_type = asset
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            content_type.starts_with("text/javascript") || content_type.starts_with("text/css"),
+            "{content_type}"
+        );
+    }
+
+    fn first_asset_reference(html: &str) -> String {
+        let start = html.find("assets/").expect("index references an asset");
+        let prefix = html[..start].rfind('"').expect("asset quote");
+        let value = &html[prefix + 1..];
+        let end = value.find('"').expect("asset end");
+        value[..end].to_string()
+    }
+
+    fn asset_request_path(base: &str, reference: &str) -> String {
+        let relative = reference
+            .strip_prefix("./")
+            .unwrap_or(reference)
+            .trim_start_matches('/');
+        format!("{base}/{relative}")
     }
 
     #[test]

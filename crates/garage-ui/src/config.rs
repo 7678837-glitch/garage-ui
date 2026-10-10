@@ -34,7 +34,10 @@ pub struct Settings {
     pub s3_region: String,
     pub website_root_domain: String,
     pub public_s3_url: Option<String>,
+    pub s3_endpoint_url: Option<String>,
     pub garage_admin_url: Option<String>,
+    pub update_url: Option<String>,
+    pub base_tag: String,
     pub garage_admin_token: Option<String>,
     pub metrics_token: Option<String>,
     pub trusted_proxy: bool,
@@ -83,6 +86,7 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     }
     let data_dir = PathBuf::from(env.get("DATA_DIR").map(String::as_str).unwrap_or("./data"));
     let base_path = normalize_base(env.get("BASE_PATH").map(String::as_str).unwrap_or(""))?;
+    let base_tag = base_tag(&base_path);
     let cookie_path = if base_path.is_empty() {
         "/".to_string()
     } else {
@@ -121,18 +125,18 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     {
         redact_secrets.push(text.to_string());
     }
-    let public_s3_url = env
-        .get("PUBLIC_S3_URL")
+    let public_s3_url = endpoint_from(env, "S3_PUBLIC_ENDPOINT_URL", Some("PUBLIC_S3_URL"));
+    let s3_endpoint_url = endpoint_from(env, "S3_ENDPOINT_URL", None);
+    let garage_admin_url = endpoint_from(env, "API_BASE_URL", Some("GARAGE_ADMIN_URL"));
+    let update_url = env
+        .get("UPDATE_URL")
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let garage_admin_url = env
-        .get("GARAGE_ADMIN_URL")
-        .map(|value| value.trim().trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty());
     Ok(Loaded {
         settings: Settings {
             data_dir,
             base_path,
+            base_tag,
             cookie_path,
             cookie_secure,
             session_absolute,
@@ -147,7 +151,9 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
                 .unwrap_or_else(|| "garage".to_string()),
             website_root_domain: env.get("WEBSITE_ROOT_DOMAIN").cloned().unwrap_or_default(),
             public_s3_url,
+            s3_endpoint_url,
             garage_admin_url,
+            update_url,
             garage_admin_token,
             metrics_token,
             trusted_proxy: env.get("TRUSTED_PROXY").map(String::as_str) == Some("true"),
@@ -254,6 +260,54 @@ fn duration_or_default(value: Option<&str>, default: u64) -> Duration {
         .filter(|secs| (1..=MAX_DURATION_SECS).contains(secs))
         .unwrap_or(default);
     Duration::from_secs(secs)
+}
+
+pub fn join(base: &str, path: &str) -> String {
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return String::new();
+    }
+    let path = path.trim().trim_start_matches('/');
+    if path.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}/{path}")
+    }
+}
+
+fn endpoint_from(
+    env: &HashMap<String, String>,
+    spec_key: &str,
+    alias_key: Option<&str>,
+) -> Option<String> {
+    let pick = |key: &str| {
+        let joined = join(env.get(key)?, "");
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    };
+    pick(spec_key).or_else(|| alias_key.and_then(pick))
+}
+
+fn base_tag(base_path: &str) -> String {
+    if base_path.is_empty() {
+        "<base href=\"/\">".to_string()
+    } else {
+        format!("<base href=\"{base_path}/\">")
+    }
+}
+
+// 更新检查默认关闭。没有地址时直接返回，避免构造请求。
+pub fn maybe_check_updates(update_url: Option<&str>) {
+    if update_url
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .is_none()
+    {
+        return;
+    }
 }
 
 fn normalize_base(raw: &str) -> anyhow::Result<String> {
@@ -397,6 +451,106 @@ mod tests {
         let text = format!("{err:#}");
         assert!(text.contains("/tmp/garage-ui-missing-admin-key"));
         assert!(!text.contains("planted-admin-token-9f3a"));
+    }
+
+    #[test]
+    fn trailing_slash_joins_the_same_admin_url() {
+        let plain = load_map(&map(&[("GARAGE_ADMIN_URL", "http://127.0.0.1:3900")])).unwrap();
+        let slashed = load_map(&map(&[("API_BASE_URL", "http://127.0.0.1:3900/")])).unwrap();
+        assert_eq!(
+            plain.settings.garage_admin_url.as_deref(),
+            Some("http://127.0.0.1:3900")
+        );
+        assert_eq!(
+            slashed.settings.garage_admin_url.as_deref(),
+            Some("http://127.0.0.1:3900")
+        );
+        assert_eq!(
+            join("http://127.0.0.1:3900", "v2/GetClusterStatus"),
+            "http://127.0.0.1:3900/v2/GetClusterStatus"
+        );
+        assert_eq!(
+            join("http://127.0.0.1:3900/", "v2/GetClusterStatus"),
+            "http://127.0.0.1:3900/v2/GetClusterStatus"
+        );
+    }
+
+    #[test]
+    fn slash_only_endpoint_is_unset() {
+        let loaded = load_map(&map(&[
+            ("API_BASE_URL", "///"),
+            ("GARAGE_ADMIN_URL", "/"),
+            ("S3_ENDPOINT_URL", "//"),
+            ("S3_PUBLIC_ENDPOINT_URL", " / "),
+            ("PUBLIC_S3_URL", "/"),
+        ]))
+        .unwrap();
+        assert!(loaded.settings.garage_admin_url.is_none());
+        assert!(loaded.settings.s3_endpoint_url.is_none());
+        assert!(loaded.settings.public_s3_url.is_none());
+        assert!(!loaded.settings.share_enabled());
+    }
+
+    #[test]
+    fn spec_endpoint_name_wins_when_both_are_set() {
+        let loaded = load_map(&map(&[
+            ("API_BASE_URL", "http://127.0.0.1:3900/"),
+            ("GARAGE_ADMIN_URL", "http://127.0.0.1:9/"),
+            ("S3_PUBLIC_ENDPOINT_URL", "http://127.0.0.1:3901/"),
+            ("PUBLIC_S3_URL", "http://127.0.0.1:9/"),
+            ("S3_ENDPOINT_URL", "http://127.0.0.1:3902/"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            loaded.settings.garage_admin_url.as_deref(),
+            Some("http://127.0.0.1:3900")
+        );
+        assert_eq!(
+            loaded.settings.public_s3_url.as_deref(),
+            Some("http://127.0.0.1:3901")
+        );
+        assert_eq!(
+            loaded.settings.s3_endpoint_url.as_deref(),
+            Some("http://127.0.0.1:3902")
+        );
+        let alias = load_map(&map(&[("PUBLIC_S3_URL", "http://127.0.0.1:3903/")])).unwrap();
+        assert_eq!(
+            alias.settings.public_s3_url.as_deref(),
+            Some("http://127.0.0.1:3903")
+        );
+    }
+
+    #[test]
+    fn crlf_token_file_bearer_has_no_cr_or_lf() {
+        let dir = crate::util::temp_dir();
+        let path = dir.join("admin.key");
+        std::fs::write(&path, b"file-admin-token-ok\r\n").unwrap();
+        let loaded = load_map(&map(&[
+            ("DATA_DIR", dir.to_str().unwrap()),
+            ("API_ADMIN_KEY_FILE", path.to_str().unwrap()),
+            ("GARAGE_ADMIN_TOKEN", "env-admin-token-nope"),
+        ]))
+        .unwrap();
+        let token = loaded.settings.garage_admin_token.expect("token");
+        assert_eq!(token, "file-admin-token-ok");
+        assert!(!token.as_bytes().contains(&b'\r'));
+        assert!(!token.as_bytes().contains(&b'\n'));
+    }
+
+    #[tokio::test]
+    async fn maybe_check_updates_with_no_url_performs_no_connect() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let loaded = load_map(&map(&[])).unwrap();
+        assert!(loaded.settings.update_url.is_none());
+        let probe = tokio::spawn(async move {
+            tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept()).await
+        });
+        maybe_check_updates(loaded.settings.update_url.as_deref());
+        assert!(
+            probe.await.unwrap().is_err(),
+            "maybe_check_updates contacted 127.0.0.1:{port}"
+        );
     }
 
     #[test]
