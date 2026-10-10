@@ -54,6 +54,8 @@ type BrowseState = {
   sort: SortChoice;
   search: string | null;
   selected: string | null;
+  picked: string[];
+  anchor: string | null;
 };
 
 type Failure = {
@@ -69,6 +71,8 @@ const initialBrowse: BrowseState = {
   sort: "key",
   search: null,
   selected: null,
+  picked: [],
+  anchor: null,
 };
 
 const wrap = "min-w-0 max-w-full break-all";
@@ -272,6 +276,53 @@ function matchesAsEntries(matches: SearchMatch[]): ObjectEntry[] {
   return matches.map((match) => ({ kind: "object", ...match }));
 }
 
+function objectKeys(entries: readonly Entry[]): string[] {
+  const keys: string[] = [];
+  for (const entry of entries) {
+    if (entry.kind === "object") {
+      keys.push(entry.key);
+    }
+  }
+  return keys;
+}
+
+// 批量选择只保留当前可见对象键。换页后上一页的键不再留在操作条上。
+function pickedOnPage(picked: readonly string[], visibleKeys: readonly string[]): string[] {
+  const visible = new Set(visibleKeys);
+  return picked.filter((key) => visible.has(key));
+}
+
+function toggleKey(picked: readonly string[], key: string): string[] {
+  return picked.includes(key) ? picked.filter((item) => item !== key) : [...picked, key];
+}
+
+function rangeKeys(visibleKeys: readonly string[], anchor: string | null, key: string): string[] {
+  const end = visibleKeys.indexOf(key);
+  if (end < 0) {
+    return [];
+  }
+  const start = anchor === null ? end : visibleKeys.indexOf(anchor);
+  if (start < 0) {
+    return [visibleKeys[end]];
+  }
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  return visibleKeys.slice(from, to + 1);
+}
+
+async function copyText(value: string): Promise<"copied" | "manual"> {
+  const clipboard = navigator.clipboard;
+  if (!window.isSecureContext || typeof clipboard?.writeText !== "function") {
+    return "manual";
+  }
+  try {
+    await clipboard.writeText(value);
+    return "copied";
+  } catch {
+    return "manual";
+  }
+}
+
 export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => void }) {
   const [hash, assignHash] = useLocationHash();
   const location = bucketLocationFromHash(hash);
@@ -281,16 +332,30 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const [draft, setDraft] = useState("");
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
+  const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
-  if (trackedPrefix !== prefix) {
+  let picked = browse.picked;
+  const prefixChanged = trackedPrefix !== prefix;
+  if (prefixChanged) {
     pageToken = null;
     search = null;
     selected = null;
+    picked = [];
     setTrackedPrefix(prefix);
     setDraft("");
-    setBrowse((current) => ({ ...current, next: null, search: null, selected: null }));
+    setBrowse((current) => ({
+      ...current,
+      next: null,
+      search: null,
+      selected: null,
+      picked: [],
+      anchor: null,
+    }));
+    if (copyNote !== null) {
+      setCopyNote(null);
+    }
   }
   const searching = search !== null;
   const list = useQuery({
@@ -315,6 +380,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const page = list.data ?? (kept !== null && kept.prefix === prefix ? kept.page : null);
   const entries = searching ? matchesAsEntries(found.data?.matches ?? []) : (page?.entries ?? []);
   const visible = sortLoaded(entries, browse.sort);
+  const visibleKeys = objectKeys(visible);
+  const shownPicked = pickedOnPage(picked, visibleKeys);
+  const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
@@ -329,13 +397,42 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
 
   function openPrefix(nextPrefix: string) {
     setDraft("");
+    setCopyNote(null);
     setBrowse((current) => ({
       ...current,
       next: null,
       search: null,
       selected: null,
+      picked: [],
+      anchor: null,
     }));
     assignHash(hashForObjects(bucketId, nextPrefix));
+  }
+
+  function pick(key: string, shift: boolean) {
+    setCopyNote(null);
+    setBrowse((current) => ({
+      ...current,
+      picked: shift
+        ? rangeKeys(visibleKeys, current.anchor, key)
+        : toggleKey(pickedOnPage(current.picked, visibleKeys), key),
+      anchor: key,
+    }));
+  }
+
+  function selectPage() {
+    setCopyNote(null);
+    setBrowse((current) => ({
+      ...current,
+      picked: visibleKeys,
+      anchor: visibleKeys.length > 0 ? visibleKeys[visibleKeys.length - 1] : null,
+    }));
+  }
+
+  function copyPaths() {
+    void copyText(pathText).then((result) => {
+      setCopyNote(result);
+    });
   }
 
   function retry() {
@@ -447,11 +544,43 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
       ) : null}
       {showEmpty ? <p>There are no objects.</p> : null}
       {searching && found.data?.truncated && found.data.reason ? <p>{found.data.reason}</p> : null}
+      {shownPicked.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={copyPaths}
+          >
+            Copy path
+          </button>
+          {copyNote === "copied" ? <p>Copied</p> : null}
+          {copyNote === "manual" ? (
+            <>
+              <p>Select the paths and copy them</p>
+              <textarea
+                className="min-w-0 max-w-full border border-neutral-300 px-2 py-1"
+                readOnly
+                aria-label="Selected paths"
+                value={pathText}
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {showRows && visible.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
+                <th className="py-2 pr-3 font-medium" scope="col">
+                  <button
+                    className="border border-neutral-900 px-2 py-1 text-left"
+                    type="button"
+                    onClick={selectPage}
+                  >
+                    Select page
+                  </button>
+                </th>
                 <th className="py-2 pr-3 font-medium" scope="col">
                   Key
                 </th>
@@ -467,6 +596,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
               {visible.map((entry) =>
                 entry.kind === "prefix" ? (
                   <tr key={`prefix:${entry.prefix}`}>
+                    <td />
                     <td className="min-w-0 max-w-full break-all py-2 pr-3">
                       <button
                         className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
@@ -483,6 +613,18 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
                   </tr>
                 ) : (
                   <tr key={`object:${entry.key}`}>
+                    <td className="py-2 pr-3">
+                      <input
+                        aria-label={`Select ${entry.key}`}
+                        type="checkbox"
+                        checked={shownPicked.includes(entry.key)}
+                        onChange={(event) => {
+                          const shift =
+                            event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey;
+                          pick(entry.key, shift);
+                        }}
+                      />
+                    </td>
                     <td className="min-w-0 max-w-full break-all py-2 pr-3">
                       <button
                         className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}

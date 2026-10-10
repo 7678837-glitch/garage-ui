@@ -9,6 +9,7 @@ afterEach(() => {
   window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
 });
 
 function renderObjects(bucketId = "bkt-1") {
@@ -372,6 +373,143 @@ test("encodes each key segment when loading metadata", async () => {
   expect(await screen.findByText("text/plain")).toBeTruthy();
   const meta = calls.find((call) => call.includes("a%3Fb.txt"));
   expect(meta).toBe("/api/buckets/bkt-1/objects/dir/a%3Fb.txt");
+});
+
+function box(name: string): HTMLInputElement {
+  return screen.getByRole("checkbox", { name }) as HTMLInputElement;
+}
+
+test("hides the copy bar until an object row is selected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]))),
+  );
+  renderObjects();
+  expect(await screen.findByRole("checkbox", { name: "Select a.txt" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+  expect(screen.queryByText("Copied")).toBeNull();
+});
+
+test("copies two selected object paths, one per line", async () => {
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      ),
+    ),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select b.txt").checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(await screen.findByText("Copied")).toBeTruthy();
+  expect(writeText).toHaveBeenCalledWith("a.txt\nb.txt");
+});
+
+test("shift-click selects the inclusive range of object rows", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          { kind: "prefix", prefix: "folder/" },
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+          objectRow("c.txt", 3, "2026-10-13T00:00:00Z"),
+        ]),
+      ),
+    ),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select c.txt" }), { shiftKey: true });
+  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select b.txt").checked).toBe(true);
+  expect(box("Select c.txt").checked).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Select folder/" })).toBeNull();
+});
+
+test("select page checks object rows on this page and skips the prefix", async () => {
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const next = new URL(String(input), "http://ui.local").searchParams.get("next");
+      if (next === "page-2") {
+        return json(
+          page([
+            { kind: "prefix", prefix: "folder/" },
+            objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+            objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+          ]),
+        );
+      }
+      return json(page([objectRow("other.txt", 9, "2026-10-10T00:00:00Z")], "page-2"));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select other.txt" }));
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select folder/" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Select page" }));
+  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select b.txt").checked).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Select other.txt" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(await screen.findByText("Copied")).toBeTruthy();
+  expect(writeText).toHaveBeenCalledWith("a.txt\nb.txt");
+});
+
+test("clears the selection when the prefix changes", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const prefix = new URL(String(input), "http://ui.local").searchParams.get("prefix") ?? "";
+      if (prefix === "photos/") {
+        return json(page([objectRow("photos/b.txt", 2, "2026-10-12T00:00:00Z")], null, prefix));
+      }
+      return json(page([{ kind: "prefix", prefix: "photos/" }, objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "photos/" }));
+  expect(await screen.findByRole("checkbox", { name: "Select photos/b.txt" })).toBeTruthy();
+  expect(box("Select photos/b.txt").checked).toBe(false);
+  expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+  expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
+});
+
+test("asks to select the paths when the page is not a secure context", async () => {
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]))),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(await screen.findByText("Select the paths and copy them")).toBeTruthy();
+  expect((screen.getByLabelText("Selected paths") as HTMLTextAreaElement).value).toBe("a.txt");
+  expect(writeText).not.toHaveBeenCalled();
+  expect(screen.queryByText("Copied")).toBeNull();
 });
 
 function rowOrder(): string[] {
