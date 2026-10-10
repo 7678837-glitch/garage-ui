@@ -22,6 +22,11 @@ const PLACEHOLDERS: &[&str] = &[
     "example",
 ];
 
+pub struct ProjectKey {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+}
+
 pub struct Settings {
     pub data_dir: PathBuf,
     pub base_path: String,
@@ -42,6 +47,7 @@ pub struct Settings {
     pub base_tag: String,
     pub garage_admin_token: Option<String>,
     pub metrics_token: Option<String>,
+    pub project_key: Option<ProjectKey>,
     pub trusted_proxy: bool,
     pub redact_secrets: Vec<String>,
 }
@@ -113,6 +119,7 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     .unwrap_or(DEFAULT_UPLOAD_MB);
     let garage_admin_token = optional_secret(env, "API_ADMIN_KEY_FILE", "GARAGE_ADMIN_TOKEN")?;
     let metrics_token = optional_secret(env, "METRICS_TOKEN_FILE", "GARAGE_METRICS_TOKEN")?;
+    let project_key = project_key(env)?;
     let key = session_key(env)?;
     let mut redact_secrets = Vec::new();
     if let Some(token) = garage_admin_token.clone() {
@@ -120,6 +127,14 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     }
     if let Some(token) = metrics_token.clone() {
         redact_secrets.push(token);
+    }
+    if let Some(pair) = &project_key {
+        if pair.access_key_id.len() >= 8 {
+            redact_secrets.push(pair.access_key_id.clone());
+        }
+        if pair.secret_access_key.len() >= 8 {
+            redact_secrets.push(pair.secret_access_key.clone());
+        }
     }
     if let KeyMaterial::Provided(bytes) = &key
         && let Ok(text) = std::str::from_utf8(bytes)
@@ -159,11 +174,36 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             update_url,
             garage_admin_token,
             metrics_token,
+            project_key,
             trusted_proxy: env.get("TRUSTED_PROXY").map(String::as_str) == Some("true"),
             redact_secrets,
         },
         key,
     })
+}
+
+fn project_key(env: &HashMap<String, String>) -> anyhow::Result<Option<ProjectKey>> {
+    let access_key_id = nonempty(env, "S3_ACCESS_KEY_ID");
+    let secret_access_key = nonempty(env, "S3_SECRET_ACCESS_KEY");
+    match (access_key_id, secret_access_key) {
+        (None, None) => Ok(None),
+        (Some(access_key_id), Some(secret_access_key)) => {
+            if is_placeholder(access_key_id) || is_placeholder(secret_access_key) {
+                anyhow::bail!("密钥与文档占位符相同，拒绝启动");
+            }
+            Ok(Some(ProjectKey {
+                access_key_id: access_key_id.to_string(),
+                secret_access_key: secret_access_key.to_string(),
+            }))
+        }
+        _ => anyhow::bail!("对象存储密钥需要成对配置，拒绝启动"),
+    }
+}
+
+fn nonempty<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    env.get(name)
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 fn optional_secret(
@@ -575,5 +615,96 @@ mod tests {
         assert_eq!(loaded.settings.base_path, "/console");
         assert_eq!(loaded.settings.cookie_path, "/console");
         assert!(loaded.settings.cookie_secure);
+    }
+
+    #[test]
+    fn project_key_is_absent_when_both_sides_are_unset() {
+        let missing = load_map(&map(&[])).unwrap();
+        assert!(missing.settings.project_key.is_none());
+        let empty = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", ""),
+            ("S3_SECRET_ACCESS_KEY", ""),
+        ]))
+        .unwrap();
+        assert!(empty.settings.project_key.is_none());
+    }
+
+    #[test]
+    fn project_key_stores_the_pair_without_a_length_minimum() {
+        let mixed = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", " gk1"),
+            ("S3_SECRET_ACCESS_KEY", "sec ret-value"),
+        ]))
+        .unwrap();
+        let pair = mixed.settings.project_key.expect("pair");
+        assert_eq!(pair.access_key_id, " gk1");
+        assert_eq!(pair.secret_access_key, "sec ret-value");
+        assert_eq!(
+            mixed.settings.redact_secrets,
+            vec!["sec ret-value".to_string()]
+        );
+        let both = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", "access-key-1"),
+            ("S3_SECRET_ACCESS_KEY", "secret-key-1"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            both.settings.redact_secrets,
+            vec!["access-key-1".to_string(), "secret-key-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn half_project_key_refuses_startup_without_the_value() {
+        let planted = "only-access-key-value";
+        let Err(err) = load_map(&map(&[("S3_ACCESS_KEY_ID", planted)])) else {
+            panic!("half pair must fail");
+        };
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("对象存储密钥需要成对配置，拒绝启动"),
+            "{text}"
+        );
+        assert!(!text.contains(planted), "{text}");
+        let planted_secret = "only-secret-key-value";
+        let Err(err) = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", ""),
+            ("S3_SECRET_ACCESS_KEY", planted_secret),
+        ])) else {
+            panic!("half pair must fail");
+        };
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("对象存储密钥需要成对配置，拒绝启动"),
+            "{text}"
+        );
+        assert!(!text.contains(planted_secret), "{text}");
+    }
+
+    #[test]
+    fn placeholder_project_key_refuses_startup_without_the_value() {
+        let planted = "real-secret-value-9f3a";
+        for access in ["ChangeMe", "0000", "EXAMPLE"] {
+            let Err(err) = load_map(&map(&[
+                ("S3_ACCESS_KEY_ID", access),
+                ("S3_SECRET_ACCESS_KEY", planted),
+            ])) else {
+                panic!("placeholder must fail: {access}");
+            };
+            let text = format!("{err:#}");
+            assert!(text.contains("密钥与文档占位符相同，拒绝启动"), "{text}");
+            assert!(!text.contains(planted), "{text}");
+            assert!(!text.contains(access), "{text}");
+        }
+        let Err(err) = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", planted),
+            ("S3_SECRET_ACCESS_KEY", "REPLACE-ME"),
+        ])) else {
+            panic!("placeholder secret must fail");
+        };
+        let text = format!("{err:#}");
+        assert!(text.contains("密钥与文档占位符相同，拒绝启动"), "{text}");
+        assert!(!text.contains(planted), "{text}");
+        assert!(!text.contains("REPLACE-ME"), "{text}");
     }
 }
