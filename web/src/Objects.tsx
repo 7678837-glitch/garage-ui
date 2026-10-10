@@ -65,6 +65,8 @@ type Failure = {
   code: string | null;
 };
 
+type PendingDelete = { kind: "object"; name: string } | { kind: "prefix"; name: string };
+
 const PAGE_LIMIT = "100";
 const UNAVAILABLE = "Objects are unavailable";
 
@@ -336,7 +338,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
   const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
-  const [deleteKey, setDeleteKey] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
@@ -360,8 +362,8 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
     if (copyNote !== null) {
       setCopyNote(null);
     }
-    if (deleteKey !== null) {
-      setDeleteKey(null);
+    if (pendingDelete !== null) {
+      setPendingDelete(null);
     }
   }
   const searching = search !== null;
@@ -388,9 +390,21 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
       );
     },
     onSuccess: async () => {
-      setDeleteKey(null);
+      setPendingDelete(null);
       setCopyNote(null);
       setBrowse((current) => ({ ...current, picked: [], anchor: null }));
+      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+    },
+  });
+  const removePrefix = useMutation({
+    mutationFn: async (prefix: string) => {
+      await api(
+        `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeObjectKey(prefix)}?recursive=true`,
+        { method: "DELETE" },
+      );
+    },
+    onSuccess: async () => {
+      setPendingDelete(null);
       await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
     },
   });
@@ -408,6 +422,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   // 批量删除是高风险。选择条只在恰好一个可见对象键时给出中风险删除。
   const deleteTarget = singleKey;
   const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
+  const prefixError = removePrefix.error instanceof Error ? removePrefix.error.message : null;
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
@@ -584,7 +599,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
               type="button"
               onClick={() => {
                 removeObject.reset();
-                setDeleteKey(deleteTarget);
+                setPendingDelete({ kind: "object", name: deleteTarget });
               }}
             >
               Delete
@@ -656,15 +671,27 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
                   <tr key={`prefix:${entry.prefix}`}>
                     <td />
                     <td className="min-w-0 max-w-full break-all py-2 pr-3">
-                      <button
-                        className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
-                        type="button"
-                        onClick={() => {
-                          openPrefix(entry.prefix);
-                        }}
-                      >
-                        {entry.prefix}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+                          type="button"
+                          onClick={() => {
+                            openPrefix(entry.prefix);
+                          }}
+                        >
+                          {entry.prefix}
+                        </button>
+                        <button
+                          className="border border-neutral-900 px-2 py-1 text-left"
+                          type="button"
+                          onClick={() => {
+                            removePrefix.reset();
+                            setPendingDelete({ kind: "prefix", name: entry.prefix });
+                          }}
+                        >
+                          Delete folder
+                        </button>
+                      </div>
                     </td>
                     <td />
                     <td />
@@ -715,20 +742,38 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           Next page
         </button>
       ) : null}
-      {deleteKey !== null ? (
+      {pendingDelete?.kind === "object" ? (
         <ConfirmDialog
           action="delete-object"
-          name={deleteKey}
-          consequence={`This permanently deletes ${deleteKey}.${deleteError ? ` ${deleteError}` : ""}`}
+          name={pendingDelete.name}
+          consequence={`This permanently deletes ${pendingDelete.name}.${deleteError ? ` ${deleteError}` : ""}`}
           onCancel={() => {
-            setDeleteKey(null);
+            setPendingDelete(null);
             removeObject.reset();
           }}
           onConfirm={() => {
             if (removeObject.isPending) {
               return;
             }
-            removeObject.mutate(deleteKey);
+            removeObject.mutate(pendingDelete.name);
+          }}
+        />
+      ) : null}
+      {pendingDelete?.kind === "prefix" ? (
+        <ConfirmDialog
+          action="recursive-delete"
+          name={pendingDelete.name}
+          scope="This deletes every object under this prefix."
+          consequence={`This permanently deletes every object whose key starts with ${pendingDelete.name}.${prefixError ? ` ${prefixError}` : ""}`}
+          onCancel={() => {
+            setPendingDelete(null);
+            removePrefix.reset();
+          }}
+          onConfirm={() => {
+            if (removePrefix.isPending) {
+              return;
+            }
+            removePrefix.mutate(pendingDelete.name);
           }}
         />
       ) : null}

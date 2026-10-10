@@ -708,6 +708,118 @@ test("keeps the object and shows the error when delete is forbidden", async () =
   expect(box("Select a.txt").checked).toBe(true);
 });
 
+test("shows Delete folder on a prefix row and not on an object row", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json(
+        page([
+          { kind: "prefix", prefix: "photos/" },
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+        ]),
+      ),
+    ),
+  );
+  renderObjects();
+  const prefixRow = (await screen.findByRole("button", { name: "photos/" })).closest("tr");
+  const fileRow = screen.getByRole("button", { name: "a.txt" }).closest("tr");
+  if (!(prefixRow instanceof HTMLElement) || !(fileRow instanceof HTMLElement)) {
+    throw new Error("missing object list row");
+  }
+  expect(within(prefixRow).getByRole("button", { name: "Delete folder" })).toBeTruthy();
+  expect(within(fileRow).queryByRole("button", { name: "Delete folder" })).toBeNull();
+});
+
+test("requires the typed prefix before recursive delete, then drops the row after 200", async () => {
+  const prefix = "a?b/";
+  const calls: { url: string; method: string }[] = [];
+  let deleted = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url: String(input), method });
+      if (method === "DELETE") {
+        deleted = true;
+        return json({ deleted: 2, errors: [] });
+      }
+      if (deleted) {
+        return json(page([objectRow("keep.txt", 2, "2026-10-12T00:00:00Z")]));
+      }
+      return json(page([{ kind: "prefix", prefix }, objectRow("keep.txt", 2, "2026-10-12T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  expect(window.location.hash).toBe("");
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("Confirm a?b/");
+  expect(dialog.textContent).toContain("This deletes every object under this prefix.");
+  expect(dialog.textContent).toContain(
+    "This permanently deletes every object whose key starts with a?b/.",
+  );
+  const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  expect(screen.getByRole("button", { name: prefix })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+  const again = screen.getByRole("dialog");
+  const againConfirm = within(again).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  fireEvent.change(within(again).getByRole("textbox"), { target: { value: "a?b" } });
+  expect(againConfirm.disabled).toBe(true);
+  fireEvent.click(againConfirm);
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  fireEvent.change(within(again).getByRole("textbox"), { target: { value: prefix } });
+  expect(againConfirm.disabled).toBe(false);
+  fireEvent.click(againConfirm);
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: prefix })).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "keep.txt" })).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(calls.filter((call) => call.method === "DELETE")).toEqual([
+    { url: "/api/buckets/bkt-1/objects/a%3Fb/?recursive=true", method: "DELETE" },
+  ]);
+});
+
+test("keeps the prefix row and shows the error when folder delete is forbidden", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "DELETE") {
+        expect(String(input)).toBe("/api/buckets/bkt-1/objects/photos/?recursive=true");
+        return json({ message: "Not allowed to delete this prefix" }, 403);
+      }
+      return json(
+        page([
+          { kind: "prefix", prefix: "photos/" },
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  const dialog = screen.getByRole("dialog");
+  const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "photos/" } });
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+  expect(await screen.findByText(/Not allowed to delete this prefix/)).toBeTruthy();
+  const open = screen.getByRole("dialog");
+  expect(open.textContent).toContain(
+    "This permanently deletes every object whose key starts with photos/.",
+  );
+  expect(open.textContent).toContain("Not allowed to delete this prefix");
+  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete folder" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+});
+
 function rowOrder(): string[] {
   return screen
     .getAllByRole("row")
