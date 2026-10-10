@@ -5,6 +5,7 @@ import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
 import { Buckets } from "./Buckets";
+import { Keys } from "./Keys";
 import { Users } from "./Users";
 
 const credentials = z.object({
@@ -214,6 +215,7 @@ function Home({ status }: { status: SessionStatus }) {
         </button>
       </div>
       <Buckets />
+      <Keys />
       {status.role === "admin" && status.username ? (
         <Users selfUsername={status.username} />
       ) : null}
