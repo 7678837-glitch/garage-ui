@@ -69,6 +69,10 @@ pub fn routes(app: App) -> Router<App> {
             post(add_bucket_alias).delete(remove_bucket_alias),
         )
         .route("/api/buckets/{id}/quotas", put(put_bucket_quotas))
+        .route(
+            "/api/buckets/{id}/permissions",
+            post(grant_bucket_permissions).delete(revoke_bucket_permissions),
+        )
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
@@ -748,6 +752,102 @@ async fn put_bucket_quotas(
         &bytes,
     )
     .await
+}
+
+async fn grant_bucket_permissions(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    change_bucket_permissions(&app, &current, &headers, &id, &body, "AllowBucketKey").await
+}
+
+async fn revoke_bucket_permissions(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    change_bucket_permissions(&app, &current, &headers, &id, &body, "DenyBucketKey").await
+}
+
+async fn change_bucket_permissions(
+    app: &App,
+    current: &Current,
+    headers: &HeaderMap,
+    id: &str,
+    body: &[u8],
+    endpoint: &'static str,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeBucketKeys)?;
+    let bytes = permission_bytes(id, body)?;
+    post_garage(app, current, headers, endpoint, None, &bytes).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PermissionChange {
+    #[serde(default)]
+    bucket_id: Option<String>,
+    access_key_id: String,
+    permissions: PermissionBits,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PermissionBits {
+    owner: bool,
+    read: bool,
+    write: bool,
+}
+
+fn invalid_permission() -> ApiError {
+    ApiError::bad_request(
+        "invalid_permission",
+        "accessKeyId and boolean permissions are required",
+    )
+}
+
+fn permission_bytes(path_id: &str, body: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let change: PermissionChange =
+        serde_json::from_slice(body).map_err(|_| invalid_permission())?;
+    if change.access_key_id.is_empty() {
+        return Err(invalid_permission());
+    }
+    if change
+        .bucket_id
+        .as_deref()
+        .is_some_and(|bucket_id| bucket_id != path_id)
+    {
+        return Err(ApiError::bad_request(
+            "bucket_id_mismatch",
+            "Bucket id does not match",
+        ));
+    }
+    let bits = change.permissions;
+    if !bits.owner && !bits.read && !bits.write {
+        return Err(ApiError::bad_request(
+            "invalid_permission",
+            "Select at least one permission",
+        ));
+    }
+    let bucket_id = serde_json::to_string(path_id).map_err(|_| ApiError::internal())?;
+    let access_key_id =
+        serde_json::to_string(&change.access_key_id).map_err(|_| ApiError::internal())?;
+    let owner = json_bool(bits.owner);
+    let read = json_bool(bits.read);
+    let write = json_bool(bits.write);
+    Ok(format!(
+        r#"{{"bucketId":{bucket_id},"accessKeyId":{access_key_id},"permissions":{{"owner":{owner},"read":{read},"write":{write}}}}}"#
+    )
+    .into_bytes())
+}
+
+fn json_bool(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
 }
 
 async fn add_bucket_alias(
@@ -2907,6 +3007,261 @@ mod tests {
             StatusCode::BAD_GATEWAY,
             "garage_unavailable",
             "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn grant_and_revoke_forward_every_permission_bit() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"a&b=c"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let path = "/api/buckets/a%26b%3Dc/permissions";
+        let granted = exchange(
+            &app,
+            request(
+                "POST",
+                path,
+                Some(
+                    r#"{"bucketId":"a&b=c","accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":true}}"#,
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(granted.status, StatusCode::OK, "{}", granted.body);
+        assert_eq!(granted.body, r#"{"id":"a&b=c"}"#);
+        let revoked = exchange(
+            &app,
+            request(
+                "DELETE",
+                path,
+                Some(
+                    r#"{"accessKeyId":"GK1","permissions":{"owner":false,"read":true,"write":false}}"#,
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.body);
+        let calls = mock.calls();
+        let allows: Vec<_> = calls
+            .iter()
+            .filter(|call| call.line.contains("AllowBucketKey"))
+            .collect();
+        let denies: Vec<_> = calls
+            .iter()
+            .filter(|call| call.line.contains("DenyBucketKey"))
+            .collect();
+        assert_eq!(
+            allows.len(),
+            1,
+            "{:?}",
+            calls.iter().map(|call| &call.line).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            denies.len(),
+            1,
+            "{:?}",
+            calls.iter().map(|call| &call.line).collect::<Vec<_>>()
+        );
+        assert!(
+            allows[0].line.contains("POST /v2/AllowBucketKey "),
+            "{}",
+            allows[0].line
+        );
+        assert!(
+            denies[0].line.contains("POST /v2/DenyBucketKey "),
+            "{}",
+            denies[0].line
+        );
+        assert!(!allows[0].line.contains('?'), "{}", allows[0].line);
+        assert!(!denies[0].line.contains('?'), "{}", denies[0].line);
+        assert_eq!(
+            allows[0].body,
+            r#"{"bucketId":"a&b=c","accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":true}}"#
+        );
+        assert_eq!(
+            denies[0].body,
+            r#"{"bucketId":"a&b=c","accessKeyId":"GK1","permissions":{"owner":false,"read":true,"write":false}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_permission_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let path = "/api/buckets/bkt-1/permissions";
+        for method in ["POST", "DELETE"] {
+            let none = exchange(
+                &app,
+                request(
+                    method,
+                    path,
+                    Some(
+                        r#"{"accessKeyId":"GK1","permissions":{"owner":false,"read":false,"write":false}}"#,
+                    ),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &none,
+                StatusCode::BAD_REQUEST,
+                "invalid_permission",
+                "Select at least one permission",
+            );
+            let mismatch = exchange(
+                &app,
+                request(
+                    method,
+                    path,
+                    Some(
+                        r#"{"bucketId":"other","accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":false}}"#,
+                    ),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &mismatch,
+                StatusCode::BAD_REQUEST,
+                "bucket_id_mismatch",
+                "Bucket id does not match",
+            );
+            for body in [
+                r#"{"accessKeyId":"","permissions":{"owner":true,"read":false,"write":false}}"#,
+                r#"{"permissions":{"owner":true,"read":true,"write":false}}"#,
+                r#"{"accessKeyId":"GK1","permissions":{"owner":true,"write":false}}"#,
+                r#"{"accessKeyId":"GK1","permissions":{"owner":true,"read":"yes","write":false}}"#,
+                r#"{"accessKeyId":"GK1","websiteAccess":true,"permissions":{"owner":true,"read":true,"write":false}}"#,
+                r#"{"accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":false,"websiteAccess":true}}"#,
+            ] {
+                let response =
+                    exchange(&app, request(method, path, Some(body), Some(&admin))).await;
+                assert_error(
+                    &response,
+                    StatusCode::BAD_REQUEST,
+                    "invalid_permission",
+                    "accessKeyId and boolean permissions are required",
+                );
+            }
+        }
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_permission_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"bkt-1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let body = r#"{"accessKeyId":"GK1","permissions":{"owner":true,"read":true,"write":true}}"#;
+        for method in ["POST", "DELETE"] {
+            let response = exchange(
+                &app,
+                request(
+                    method,
+                    "/api/buckets/bkt-1/permissions",
+                    Some(body),
+                    Some(&viewer),
+                ),
+            )
+            .await;
+            assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        }
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_requires_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let body =
+            r#"{"accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":false}}"#;
+        for method in ["POST", "DELETE"] {
+            let response = exchange(
+                &app,
+                request(method, "/api/buckets/bkt-1/permissions", Some(body), None),
+            )
+            .await;
+            assert_error(
+                &response,
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
+                "Login required",
+            );
+        }
+        let (admin, _) = login(&app).await;
+        for method in ["POST", "DELETE"] {
+            let response = exchange(
+                &app,
+                request(
+                    method,
+                    "/api/buckets/bkt-1/permissions",
+                    Some(body),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &response,
+                StatusCode::BAD_GATEWAY,
+                "garage_unavailable",
+                "Garage admin API is not configured",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn old_garage_blocks_bucket_permission() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/permissions",
+                Some(
+                    r#"{"accessKeyId":"GK1","permissions":{"owner":true,"read":false,"write":false}}"#,
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::CONFLICT,
+            "garage_too_old",
+            "Garage v2.3.0 or newer is required",
+        );
+        assert!(
+            mock.requests()
+                .iter()
+                .all(|line| !line.contains("AllowBucketKey")),
+            "{:?}",
+            mock.requests()
         );
     }
 
