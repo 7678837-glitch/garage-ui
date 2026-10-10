@@ -110,6 +110,8 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(notice.textContent).toBe("Garage v2.3.0 or newer is required");
   expect(screen.getByText("Ada · admin")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(await screen.findByText("Keys are unavailable")).toBeTruthy();
+  expect(screen.queryAllByRole("alert")).toHaveLength(1);
 });
 
 test("shows user management for an admin and locks that signed-in row", async () => {
@@ -230,6 +232,15 @@ test("shows a bucket id and its alias to an admin", async () => {
           { status: 200 },
         );
       }
+      if (url.includes("/api/keys")) {
+        return new Response(
+          JSON.stringify({
+            items: [{ id: "key-ada", name: "ada-key", secretAccessKey: "SECRETADA" }],
+            hasMore: false,
+          }),
+          { status: 200 },
+        );
+      }
       return new Response("no", { status: 500 });
     }),
   );
@@ -237,6 +248,10 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(await screen.findByText("bucket-ada")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Users" })).toBeTruthy();
+  expect(await screen.findByText("key-ada")).toBeTruthy();
+  expect(screen.getByText("ada-key")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(document.body.textContent).not.toContain("SECRETADA");
 });
 
 test("shows a bucket id to a viewer", async () => {
@@ -269,6 +284,15 @@ test("shows a bucket id to a viewer", async () => {
         { status: 200 },
       );
     }
+    if (url.includes("/api/keys")) {
+      return new Response(
+        JSON.stringify({
+          items: [{ id: "key-bea", name: "bea-key", secretAccessKey: "SECRETBEa" }],
+          hasMore: false,
+        }),
+        { status: 200 },
+      );
+    }
     return new Response("no", { status: 500 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -277,7 +301,12 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.getByText("west")).toBeTruthy();
   expect(screen.getByText("Bea · viewer")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(await screen.findByText("key-bea")).toBeTruthy();
+  expect(screen.getByText("bea-key")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(document.body.textContent).not.toContain("SECRETBEa");
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
 });
 
 test("encodes each object key segment and allows the spec folder names", () => {
