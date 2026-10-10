@@ -749,7 +749,22 @@ mod lists {
         if !status.is_success() {
             return Err(garage_down());
         }
-        serde_json::from_slice(&bytes).map_err(|_| garage_unreadable())
+        let value = serde_json::from_slice(&bytes).map_err(|_| garage_unreadable())?;
+        Ok(ensure_item_id(value))
+    }
+
+    // GetKeyInfo 用 accessKeyId，没有 id。列表行仍要有 id，后面的改名和删除才能指到这条密钥。
+    pub(super) fn ensure_item_id(mut value: Value) -> Value {
+        let missing = value.get("id").and_then(Value::as_str).is_none();
+        if missing
+            && let Some(access_key_id) = value
+                .get("accessKeyId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+        {
+            value["id"] = Value::String(access_key_id.to_string());
+        }
+        value
     }
 
     fn parse_array(bytes: &[u8]) -> Result<Vec<Value>, ApiError> {
@@ -1200,6 +1215,17 @@ mod tests {
             "error": {}
         }));
         assert_eq!(link.version, None);
+    }
+
+    #[test]
+    fn ensure_item_id_copies_access_key_id() {
+        let filled = lists::ensure_item_id(json!({"accessKeyId": "GK1", "name": "lab-key"}));
+        assert_eq!(filled["id"], "GK1");
+        assert_eq!(filled["name"], "lab-key");
+        let kept = lists::ensure_item_id(json!({"id": "already", "accessKeyId": "GK1"}));
+        assert_eq!(kept["id"], "already");
+        let empty = lists::ensure_item_id(json!({"accessKeyId": ""}));
+        assert!(empty.get("id").is_none());
     }
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
