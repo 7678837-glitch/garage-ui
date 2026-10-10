@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/garage-ui", "crates/garage-loadgen"]
+
+[workspace.package]
+# Cargo 只接受三段 semver。产品版本以 VERSION 为准，末尾 .0 只满足清单格式。
+version = "20261010.1.0"
+edition = "2024"
+publish = false
+license = "MIT"

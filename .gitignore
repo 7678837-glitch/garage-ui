@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+web/node_modules
+web/dist
+/checkpoint.json
+.DS_Store
+.env
+/data
