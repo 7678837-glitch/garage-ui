@@ -243,7 +243,7 @@ test("shows the statistics API message and still shows the health counts", async
     json({ code: "garage_unavailable", message: "Cluster statistics are not reachable" }, 502),
   );
   renderApp();
-  const message = await screen.findByText("Cluster statistics are not reachable");
+  const message = await screen.findByText("Statistics: Cluster statistics are not reachable");
   expect(message.tagName).toBe("P");
   expect(message.getAttribute("role")).toBeNull();
   expect(screen.queryByText("garage_unavailable")).toBeNull();

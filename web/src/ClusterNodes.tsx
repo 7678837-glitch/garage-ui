@@ -295,7 +295,7 @@ export function ClusterNodes() {
           Connect node
         </button>
       </form>
-      {connect.isError ? <p>{connectFailure}</p> : null}
+      {connect.isError ? <p>{`Connect: ${connectFailure}`}</p> : null}
       {lines !== null && lines.length > 0 ? (
         <ul>
           {lines.map((line, index) => (
