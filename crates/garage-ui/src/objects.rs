@@ -20,6 +20,7 @@ use crate::state::credentials::{self, BucketCredential, CredentialSources, Opera
 const SEARCH_MATCHES: usize = 200;
 const SEARCH_PAGES: usize = 20;
 const SEARCH_PAGE_KEYS: i32 = 1000;
+const DELETE_PAGE_KEYS: i32 = 1000;
 
 #[derive(Serialize)]
 pub struct ListPage {
@@ -94,6 +95,12 @@ pub struct DeleteMany {
 pub struct DeleteFailure {
     pub key: String,
     pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct PrefixDelete {
+    pub deleted: u64,
+    pub errors: Vec<DeleteFailure>,
 }
 
 enum S3Failure {
@@ -260,6 +267,50 @@ pub async fn delete_many(
         async move { remove_objects(&client, &bucket, &keys).await }
     })
     .await
+}
+
+pub async fn delete_prefix(
+    app: &App,
+    bucket_id: &str,
+    prefix: &str,
+) -> Result<PrefixDelete, ApiError> {
+    let mut deleted = 0u64;
+    let mut errors = Vec::new();
+    let mut token = String::new();
+    loop {
+        let bucket = bucket_id.to_string();
+        let prefix = prefix.to_string();
+        let listed = token.clone();
+        let page = drive(app, bucket.clone(), move |client| {
+            let bucket = bucket.clone();
+            let prefix = prefix.clone();
+            let listed = listed.clone();
+            async move {
+                list_v2(
+                    &client,
+                    &bucket,
+                    &prefix,
+                    DELETE_PAGE_KEYS,
+                    nonempty(&listed),
+                    None,
+                )
+                .await
+            }
+        })
+        .await?;
+        let keys: Vec<String> = page.objects.into_iter().map(|object| object.key).collect();
+        if !keys.is_empty() {
+            let batch = delete_many(app, bucket_id, keys).await?;
+            deleted += batch.deleted.len() as u64;
+            errors.extend(batch.failed);
+        }
+        // 下一页只跟 IsTruncated 给出的续页令牌走。满 1000 条但未截断时不再列一次。
+        let Some(next) = page.next else {
+            break;
+        };
+        token = next;
+    }
+    Ok(PrefixDelete { deleted, errors })
 }
 
 fn page_size(limit: Option<i64>) -> i32 {

@@ -1707,16 +1707,15 @@ async fn delete_bucket_object(
     Authed(current): Authed,
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<DeleteObjectQuery>,
-) -> Result<StatusCode, ApiError> {
+) -> Result<Response, ApiError> {
     require(&current.user, Op::WriteObjects)?;
     if query.recursive == Some(true) {
-        return Err(ApiError::not_implemented(
-            "not_implemented",
-            "Recursive delete is not available",
-        ));
+        let outcome = objects::delete_prefix(&app, &id, &key).await?;
+        Ok(Json(outcome).into_response())
+    } else {
+        objects::delete(&app, &id, &key).await?;
+        Ok(StatusCode::NO_CONTENT.into_response())
     }
-    objects::delete(&app, &id, &key).await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_bucket_objects(
@@ -5684,9 +5683,69 @@ mod tests {
         assert!(seen[1].starts_with("DELETE "), "{}", seen[1]);
     }
 
-    #[tokio::test]
-    async fn object_delete_recursive_true_does_not_call_s3() {
-        let mock = S3Mock::start(|_| delete_ok()).await;
+    fn recursive_pages(prefix: &str) -> Vec<Vec<String>> {
+        let keys: Vec<String> = (0..2500)
+            .map(|index| format!("{prefix}/k{index:04}"))
+            .collect();
+        vec![
+            keys[..1000].to_vec(),
+            keys[1000..2000].to_vec(),
+            keys[2000..].to_vec(),
+        ]
+    }
+
+    fn list_page_xml(page: &[String], next: Option<&str>) -> String {
+        let objects: Vec<(&str, i64, &str)> =
+            page.iter().map(|key| (key.as_str(), 1, "abc")).collect();
+        list_xml(next.is_some(), next, &objects, &[])
+    }
+
+    fn delete_page_xml(page: &[String], fail: Option<(&str, &str)>) -> String {
+        let deleted: Vec<&str> = page
+            .iter()
+            .map(String::as_str)
+            .filter(|key| fail.is_none_or(|(bad, _)| *key != bad))
+            .collect();
+        let failed: Vec<(&str, &str)> = fail.into_iter().collect();
+        delete_result(&deleted, &failed)
+    }
+
+    struct RecursiveRun {
+        response: Exchange,
+        requests: Vec<String>,
+        bodies: Vec<String>,
+        pages: Vec<Vec<String>>,
+    }
+
+    async fn run_recursive_delete(
+        failures: [Option<(&'static str, &'static str)>; 3],
+    ) -> RecursiveRun {
+        let prefix = "docs/2024";
+        let pages = recursive_pages(prefix);
+        let pages_for_mock = pages.clone();
+        let posts = Arc::new(AtomicUsize::new(0));
+        let mock = S3Mock::start(move |line| {
+            if line.starts_with("POST ") {
+                let index = posts.fetch_add(1, Ordering::SeqCst);
+                assert!(index < pages_for_mock.len(), "{line}");
+                return delete_page_xml(&pages_for_mock[index], failures[index]);
+            }
+            assert!(line.starts_with("GET "), "{line}");
+            let token = query_value(request_target(line), "continuation-token");
+            let index = match token {
+                None => 0,
+                Some("page-2") => 1,
+                Some("page-3") => 2,
+                other => panic!("unexpected continuation token {other:?}"),
+            };
+            let next = match index {
+                0 => Some("page-2"),
+                1 => Some("page-3"),
+                _ => None,
+            };
+            list_page_xml(&pages_for_mock[index], next)
+        })
+        .await;
         let dir = crate::util::temp_dir();
         let app = object_app(&dir, &mock.url, true).await;
         let (session, _) = login(&app).await;
@@ -5694,7 +5753,105 @@ mod tests {
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt?recursive=true",
+                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        let requests = mock.requests();
+        let bodies = mock.bodies();
+        RecursiveRun {
+            response,
+            requests,
+            bodies,
+            pages,
+        }
+    }
+
+    fn assert_recursive_traffic(run: &RecursiveRun, prefix: &str) {
+        assert_eq!(run.requests.len(), 6, "{:?}", run.requests);
+        let mut lists = Vec::new();
+        let mut deletes = Vec::new();
+        for (line, body) in run.requests.iter().zip(run.bodies.iter()) {
+            if line.starts_with("GET ") {
+                lists.push((line, body));
+            } else if line.starts_with("POST ") {
+                deletes.push((line, body));
+            } else {
+                panic!("unexpected s3 request {line}");
+            }
+        }
+        assert_eq!(lists.len(), 3, "{:?}", run.requests);
+        assert_eq!(deletes.len(), 3, "{:?}", run.requests);
+        let tokens = [None, Some("page-2"), Some("page-3")];
+        for ((line, _), token) in lists.iter().zip(tokens) {
+            let target = request_target(line);
+            assert!(target.contains("list-type=2"), "{target}");
+            let raw = query_value(target, "prefix").unwrap_or("");
+            assert_eq!(percent_decode(raw), prefix, "{target}");
+            assert_eq!(query_value(target, "max-keys"), Some("1000"), "{target}");
+            assert_eq!(query_value(target, "delimiter"), None, "{target}");
+            assert_eq!(query_value(target, "continuation-token"), token, "{target}");
+            assert_eq!(bucket_of(line), "bkt-1");
+        }
+        for ((line, body), page) in deletes.iter().zip(run.pages.iter()) {
+            assert!(request_target(line).contains("delete"), "{line}");
+            assert_eq!(bucket_of(line), "bkt-1");
+            assert!(body.contains(&format!("<Key>{}</Key>", page[0])), "{body}");
+            assert!(
+                body.contains(&format!("<Key>{}</Key>", page[page.len() - 1])),
+                "{body}"
+            );
+            assert!(!body.contains("<Quiet>true</Quiet>"), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_lists_three_pages_and_deletes_2500() {
+        let run = run_recursive_delete([None, None, None]).await;
+        assert_eq!(run.response.status, StatusCode::OK, "{}", run.response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&run.response.body).unwrap(),
+            json!({ "deleted": 2500, "errors": [] })
+        );
+        assert_recursive_traffic(&run, "docs/2024");
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_keeps_three_key_errors() {
+        let failures = [
+            Some(("docs/2024/k0000", "injected-0")),
+            Some(("docs/2024/k1000", "injected-1")),
+            Some(("docs/2024/k2499", "injected-2")),
+        ];
+        let run = run_recursive_delete(failures).await;
+        assert_eq!(run.response.status, StatusCode::OK, "{}", run.response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&run.response.body).unwrap(),
+            json!({
+                "deleted": 2497,
+                "errors": [
+                    {"key": "docs/2024/k0000", "message": "injected-0"},
+                    {"key": "docs/2024/k1000", "message": "injected-1"},
+                    {"key": "docs/2024/k2499", "message": "injected-2"}
+                ]
+            })
+        );
+        assert_recursive_traffic(&run, "docs/2024");
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_without_a_project_key_does_not_call_s3() {
+        let mock = S3Mock::start(|_| delete_ok()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
                 None,
                 Some(&session),
             ),
@@ -5702,9 +5859,9 @@ mod tests {
         .await;
         assert_error(
             &response,
-            StatusCode::NOT_IMPLEMENTED,
-            "not_implemented",
-            "Recursive delete is not available",
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
         );
         assert!(mock.requests().is_empty());
     }
@@ -5732,6 +5889,72 @@ mod tests {
             "This bucket has no usable read-write key",
         );
         assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_empty_prefix_returns_zero() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("GET "), "{line}");
+            assert_eq!(
+                percent_decode(query_value(request_target(line), "prefix").unwrap_or("")),
+                "docs/2024"
+            );
+            list_xml(false, None, &[], &[])
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "deleted": 0, "errors": [] })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(
+            mock.bodies().iter().all(|body| body.is_empty()),
+            "{:?}",
+            mock.bodies()
+        );
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_false_stays_one_object() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("DELETE "), "{line}");
+            delete_ok()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt?recursive=false",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
+        assert_eq!(response.body, "");
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("DELETE "), "{}", seen[0]);
+        assert_eq!(object_key_of(&seen[0]), "photos/a.txt");
     }
 
     fn delete_result(deleted: &[&str], failed: &[(&str, &str)]) -> String {
