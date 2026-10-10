@@ -68,7 +68,8 @@ pub fn routes(app: App) -> Router<App> {
             "/api/buckets/{id}/aliases",
             post(add_bucket_alias).delete(remove_bucket_alias),
         )
-        .route("/api/keys", get(list_keys))
+        .route("/api/keys", get(list_keys).post(create_key))
+        .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
@@ -887,6 +888,138 @@ async fn key_secret(
     Ok(response)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateKeyBody {
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PatchKeyBody {
+    name: Option<String>,
+    create_bucket: Option<bool>,
+}
+
+enum KeyPatch {
+    Rename(String),
+    CreateBucket(bool),
+}
+
+fn valid_new_key_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn key_patch(body: PatchKeyBody) -> Result<KeyPatch, ApiError> {
+    match (body.name, body.create_bucket) {
+        (Some(name), None) => Ok(KeyPatch::Rename(name)),
+        (None, Some(allowed)) => Ok(KeyPatch::CreateBucket(allowed)),
+        _ => Err(ApiError::bad_request(
+            "invalid_key_patch",
+            "Send a name or createBucket",
+        )),
+    }
+}
+
+fn key_patch_body(patch: KeyPatch) -> Value {
+    match patch {
+        KeyPatch::Rename(name) => json!({ "name": name }),
+        KeyPatch::CreateBucket(true) => json!({ "allow": { "createBucket": true } }),
+        KeyPatch::CreateBucket(false) => json!({ "deny": { "createBucket": true } }),
+    }
+}
+
+async fn create_key(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    Json(body): Json<CreateKeyBody>,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeKeys)?;
+    if !valid_new_key_name(&body.name) {
+        return Err(ApiError::bad_request(
+            "invalid_key_name",
+            "Key name is invalid",
+        ));
+    }
+    let bytes =
+        serde_json::to_vec(&json!({ "name": body.name })).map_err(|_| ApiError::internal())?;
+    let response = post_garage(&app, &current, &headers, "CreateKey", None, &bytes).await?;
+    finish_created_key(&app, &current, response).await
+}
+
+async fn patch_key(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PatchKeyBody>,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeKeys)?;
+    let bytes =
+        serde_json::to_vec(&key_patch_body(key_patch(body)?)).map_err(|_| ApiError::internal())?;
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(&app, &current, &headers, "UpdateKey", Some(&query), &bytes).await
+}
+
+async fn delete_key(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeKeys)?;
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(&app, &current, &headers, "DeleteKey", Some(&query), &[]).await
+}
+
+async fn finish_created_key(
+    app: &App,
+    current: &Current,
+    response: Response,
+) -> Result<Response, ApiError> {
+    let status = response.status();
+    let mut headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    if status.is_success()
+        && let Some(id) = created_key_id(&bytes)
+    {
+        record(
+            app,
+            &current.user.username,
+            &current.ip,
+            "success",
+            "ok",
+            "POST",
+            "/api/keys",
+            &id,
+            i64::from(status.as_u16()),
+        )
+        .await?;
+    }
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    *out.headers_mut() = headers;
+    Ok(out)
+}
+
+fn created_key_id(bytes: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    ["accessKeyId", "id"].into_iter().find_map(|field| {
+        let id = value.get(field)?.as_str()?;
+        (!id.is_empty()).then(|| id.to_string())
+    })
+}
+
 async fn preview_object(
     State(app): State<App>,
     Authed(current): Authed,
@@ -1256,6 +1389,7 @@ mod tests {
 
     struct Exchange {
         status: StatusCode,
+        headers: HeaderMap,
         body: String,
     }
 
@@ -1382,11 +1516,13 @@ mod tests {
     async fn exchange(app: &App, request: Request<Body>) -> Exchange {
         let response = router(app.clone()).oneshot(request).await.unwrap();
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .unwrap();
         Exchange {
             status,
+            headers,
             body: String::from_utf8(bytes.to_vec()).unwrap(),
         }
     }
@@ -2680,6 +2816,244 @@ mod tests {
                 .requests()
                 .iter()
                 .all(|line| !line.contains("ListBuckets "))
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_key_name_does_not_call_garage() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"accessKeyId":"GK1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        for name in ["my key", "my.key", "名字", ""] {
+            let response = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/keys",
+                    Some(&json!({ "name": name }).to_string()),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &response,
+                StatusCode::BAD_REQUEST,
+                "invalid_key_name",
+                "Key name is invalid",
+            );
+        }
+        assert_eq!(mock.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn admin_create_hits_create_key_once() {
+        let secret = "wJalrXUtnFEMI";
+        let created = json!({
+            "accessKeyId": "GK1",
+            "name": "photo_roll-1",
+            "secretAccessKey": secret,
+            "expired": false,
+            "permissions": { "createBucket": false },
+            "buckets": []
+        })
+        .to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(created.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(&json!({ "name": "photo_roll-1" }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, created);
+        assert_eq!(
+            response
+                .headers
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+        let creates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/CreateKey "))
+            .collect();
+        assert_eq!(
+            creates.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&creates[0].body).unwrap(),
+            json!({ "name": "photo_roll-1" })
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert!(rows.iter().any(|row| row.target == "GK1"));
+        assert!(
+            rows.iter()
+                .all(|row| !row.target.contains(secret) && !row.path.contains(secret))
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn viewer_create_key_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"accessKeyId":"GK1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(r#"{"name":"photos"}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(mock.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn rename_forwards_the_name_body() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"accessKeyId":"GK1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "PATCH",
+                "/api/keys/a%20b",
+                Some(r#"{"name":"已有 名称"}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let updates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/UpdateKey?"))
+            .collect();
+        assert_eq!(updates.len(), 1);
+        assert!(updates[0].line.contains("id=a%20b"), "{}", updates[0].line);
+        assert_eq!(
+            serde_json::from_str::<Value>(&updates[0].body).unwrap(),
+            json!({ "name": "已有 名称" })
+        );
+    }
+
+    #[tokio::test]
+    async fn create_bucket_switch_sends_allow_or_deny() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"accessKeyId":"GK1"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        for (body, forwarded) in [
+            (
+                r#"{"createBucket":true}"#,
+                json!({ "allow": { "createBucket": true } }),
+            ),
+            (
+                r#"{"createBucket":false}"#,
+                json!({ "deny": { "createBucket": true } }),
+            ),
+        ] {
+            let response = exchange(
+                &app,
+                request("PATCH", "/api/keys/GK1", Some(body), Some(&admin)),
+            )
+            .await;
+            assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+            let updates: Vec<_> = mock
+                .calls()
+                .into_iter()
+                .filter(|call| call.line.contains("POST /v2/UpdateKey?id=GK1 "))
+                .collect();
+            let sent =
+                serde_json::from_str::<Value>(&updates.last().expect("update").body).unwrap();
+            assert_eq!(sent, forwarded);
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_key_puts_encoded_id_in_the_query() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"ok":true}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("DELETE", "/api/keys/a%20b%26c%3Dd", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let deletes: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("DeleteKey"))
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert!(
+            deletes[0]
+                .line
+                .contains("POST /v2/DeleteKey?id=a%20b%26c%3Dd "),
+            "{}",
+            deletes[0].line
+        );
+        assert!(deletes[0].body.is_empty(), "{}", deletes[0].body);
+    }
+
+    #[tokio::test]
+    async fn key_mutations_require_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        for (method, path, body) in [
+            ("POST", "/api/keys", Some(r#"{"name":"photos"}"#)),
+            ("PATCH", "/api/keys/GK1", Some(r#"{"name":"renamed"}"#)),
+            ("DELETE", "/api/keys/GK1", None),
+        ] {
+            let response = exchange(&app, request(method, path, body, None)).await;
+            assert_error(
+                &response,
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
+                "Login required",
+            );
+        }
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(r#"{"name":"photos"}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
         );
     }
 }
