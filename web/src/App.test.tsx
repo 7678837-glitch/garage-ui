@@ -195,6 +195,91 @@ test("hides user management from a viewer", async () => {
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
 });
 
+test("shows a bucket id and its alias to an admin", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/users")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/api/buckets")) {
+        return new Response(
+          JSON.stringify({
+            items: [{ id: "bucket-ada", globalAliases: ["a&b=c"] }],
+            hasMore: false,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("bucket-ada")).toBeTruthy();
+  expect(screen.getByText("a&b=c")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Users" })).toBeTruthy();
+});
+
+test("shows a bucket id to a viewer", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/auth/status")) {
+      return new Response(
+        JSON.stringify({
+          initialized: true,
+          authenticated: true,
+          username: "Bea",
+          role: "viewer",
+          can_download: false,
+          can_share: false,
+          garage_version: "v2.4.1",
+          garage_write_blocked: false,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/healthz")) {
+      return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+    }
+    if (url.includes("/api/buckets")) {
+      return new Response(
+        JSON.stringify({
+          items: [{ id: "bucket-bea", localAliases: ["west"] }],
+          hasMore: false,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response("no", { status: 500 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+  expect(await screen.findByText("bucket-bea")).toBeTruthy();
+  expect(screen.getByText("west")).toBeTruthy();
+  expect(screen.getByText("Bea · viewer")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
+});
+
 test("encodes each object key segment and allows the spec folder names", () => {
   expect(encodeObjectKey("a?b#c%20d=e")).toBe("a%3Fb%23c%2520d%3De");
   expect(decodeObjectKey("a%3Fb%23c%2520d%3De")).toBe("a?b#c%20d=e");
