@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { encodeObjectKey } from "./App";
 import { ApiError, api } from "./api/client";
 import { bucketUrl } from "./BucketPermissions";
+import { ConfirmDialog } from "./confirm";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 import { UploadPanel } from "./UploadPanel";
 
@@ -325,6 +326,7 @@ async function copyText(value: string): Promise<"copied" | "manual"> {
 }
 
 export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => void }) {
+  const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
   const location = bucketLocationFromHash(hash);
   const prefix =
@@ -334,6 +336,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
   const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
+  const [deleteKey, setDeleteKey] = useState<string | null>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
@@ -357,6 +360,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
     if (copyNote !== null) {
       setCopyNote(null);
     }
+    if (deleteKey !== null) {
+      setDeleteKey(null);
+    }
   }
   const searching = search !== null;
   const list = useQuery({
@@ -374,6 +380,20 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
     queryFn: () => readJson(metadataPath(bucketId, selected ?? "")).then(parseMeta),
     enabled: selected !== null,
   });
+  const removeObject = useMutation({
+    mutationFn: async (key: string) => {
+      await api(
+        `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeObjectKey(key)}`,
+        { method: "DELETE" },
+      );
+    },
+    onSuccess: async () => {
+      setDeleteKey(null);
+      setCopyNote(null);
+      setBrowse((current) => ({ ...current, picked: [], anchor: null }));
+      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+    },
+  });
   if (!searching && list.data && (kept === null || kept.page !== list.data)) {
     setKept({ prefix, page: list.data });
   }
@@ -384,6 +404,9 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
   const visibleKeys = objectKeys(visible);
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
+  // 批量删除是高风险。选择条只在恰好一个可见对象键时给出中风险删除。
+  const deleteTarget = shownPicked.length === 1 ? shownPicked[0] : null;
+  const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
@@ -554,6 +577,18 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           >
             Copy path
           </button>
+          {deleteTarget !== null ? (
+            <button
+              className="border border-neutral-900 px-3 py-1 text-left"
+              type="button"
+              onClick={() => {
+                removeObject.reset();
+                setDeleteKey(deleteTarget);
+              }}
+            >
+              Delete
+            </button>
+          ) : null}
           {copyNote === "copied" ? <p>Copied</p> : null}
           {copyNote === "manual" ? (
             <>
@@ -658,6 +693,23 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
         >
           Next page
         </button>
+      ) : null}
+      {deleteKey !== null ? (
+        <ConfirmDialog
+          action="delete-object"
+          name={deleteKey}
+          consequence={`This permanently deletes ${deleteKey}.${deleteError ? ` ${deleteError}` : ""}`}
+          onCancel={() => {
+            setDeleteKey(null);
+            removeObject.reset();
+          }}
+          onConfirm={() => {
+            if (removeObject.isPending) {
+              return;
+            }
+            removeObject.mutate(deleteKey);
+          }}
+        />
       ) : null}
     </section>
   );

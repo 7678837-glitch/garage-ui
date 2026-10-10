@@ -570,6 +570,105 @@ test("asks to select the paths when the page is not a secure context", async () 
   expect(screen.queryByText("Copied")).toBeNull();
 });
 
+test("shows Delete only when exactly one object is selected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      ),
+    ),
+  );
+  renderObjects();
+  expect(await screen.findByRole("checkbox", { name: "Select a.txt" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+});
+
+test("cancels an object delete without a request, then removes the row after 204", async () => {
+  const calls: { url: string; method: string }[] = [];
+  let deleted = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url: String(input), method });
+      if (method === "DELETE") {
+        deleted = true;
+        return new Response(null, { status: 204 });
+      }
+      if (deleted) {
+        return json(page([objectRow("keep.txt", 2, "2026-10-12T00:00:00Z")]));
+      }
+      return json(
+        page([
+          objectRow("dir/a?b.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("keep.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects("b k");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select dir/a?b.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("Confirm dir/a?b.txt");
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeTruthy();
+  expect(within(dialog).queryByRole("textbox")).toBeNull();
+  expect(dialog.textContent).toContain("This permanently deletes dir/a?b.txt.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  expect(screen.getByRole("button", { name: "dir/a?b.txt" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "dir/a?b.txt" })).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "keep.txt" })).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+  expect(box("Select keep.txt").checked).toBe(false);
+  const deletes = calls.filter((call) => call.method === "DELETE");
+  expect(deletes).toEqual([
+    { url: "/api/buckets/b%20k/objects/dir/a%3Fb.txt", method: "DELETE" },
+  ]);
+});
+
+test("keeps the object and shows the error when delete is forbidden", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "DELETE") {
+        expect(String(input)).toBe("/api/buckets/bkt-1/objects/a.txt");
+        return json({ message: "Not allowed to delete this object" }, 403);
+      }
+      return json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByText(/Not allowed to delete this object/)).toBeTruthy();
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("This permanently deletes a.txt.");
+  expect(dialog.textContent).toContain("Not allowed to delete this object");
+  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(box("Select a.txt").checked).toBe(true);
+});
+
 function rowOrder(): string[] {
   return screen
     .getAllByRole("row")
