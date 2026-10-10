@@ -365,6 +365,8 @@ mod lists {
     use std::collections::HashMap;
     use std::sync::{LazyLock, Mutex};
 
+    use serde::Serialize;
+
     use super::*;
     use crate::limit;
 
@@ -400,12 +402,18 @@ mod lists {
         pub more: bool,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    enum Probe {
+    #[derive(Clone, Copy, PartialEq, Eq, Default, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Probe {
         #[default]
         Unknown,
         Present,
         Absent,
+    }
+
+    pub struct ListProbes {
+        pub buckets: Probe,
+        pub keys: Probe,
     }
 
     struct Slot {
@@ -451,7 +459,7 @@ mod lists {
         if app.settings.garage_admin_token.is_none() {
             return Err(garage_unconfigured());
         }
-        let key = format!("{base}\n{}", catalog.info);
+        let key = probe_key(&base, catalog.info);
         match probe_of(&key) {
             Probe::Absent => absent_page(app, catalog, offset, limit).await,
             Probe::Present => present_page(app, catalog, &key, offset, limit)
@@ -473,6 +481,23 @@ mod lists {
             ProbeMiss::Absent => garage_down(),
             ProbeMiss::Down(error) => error,
         }
+    }
+
+    pub fn list_probes(admin_url: Option<&str>) -> ListProbes {
+        let Some(base) = admin_url else {
+            return ListProbes {
+                buckets: Probe::Unknown,
+                keys: Probe::Unknown,
+            };
+        };
+        ListProbes {
+            buckets: probe_of(&probe_key(base, BUCKETS.info)),
+            keys: probe_of(&probe_key(base, KEYS.info)),
+        }
+    }
+
+    fn probe_key(base: &str, info: &str) -> String {
+        format!("{base}\n{info}")
     }
 
     fn probe_of(key: &str) -> Probe {
@@ -715,7 +740,7 @@ mod lists {
 }
 
 #[allow(dead_code, unused_imports)]
-pub use lists::{Page, list_buckets, list_keys};
+pub use lists::{ListProbes, Page, Probe, list_buckets, list_keys, list_probes};
 
 // 参数就是审计表的列。
 #[allow(clippy::too_many_arguments)]
