@@ -185,9 +185,7 @@ fn reported_garage_version(value: &Value) -> Option<&str> {
     if let Some(version) = value.get("garageVersion").and_then(Value::as_str) {
         return Some(version);
     }
-    let Some(nodes) = value.get("success").and_then(Value::as_object) else {
-        return None;
-    };
+    let nodes = value.get("success").and_then(Value::as_object)?;
     let mut found: Option<&str> = None;
     for node in nodes.values() {
         let Some(version) = node.get("garageVersion").and_then(Value::as_str) else {
