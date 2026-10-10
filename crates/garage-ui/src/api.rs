@@ -85,6 +85,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/cluster/health", get(cluster_health))
         .route("/api/cluster/status", get(cluster_status))
         .route("/api/cluster/statistics", get(cluster_statistics))
+        .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/garage/{*path}", any(garage))
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
         .layer(DefaultBodyLimit::max(json_limit));
@@ -1534,6 +1535,16 @@ async fn cluster_statistics(
         &headers,
     )
     .await
+}
+
+async fn connect_cluster(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeLayout)?;
+    post_garage(&app, &current, &headers, "ConnectClusterNodes", None, &body).await
 }
 
 async fn read_cluster(
@@ -4174,6 +4185,202 @@ mod tests {
             StatusCode::BAD_GATEWAY,
             "garage_unavailable",
             "Garage admin API is not configured",
+        );
+    }
+
+    #[derive(Clone)]
+    struct CapturedCall {
+        line: String,
+        body: Vec<u8>,
+    }
+
+    struct ConnectCapture {
+        url: String,
+        calls: Arc<Mutex<Vec<CapturedCall>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for ConnectCapture {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl ConnectCapture {
+        async fn start(reply: &'static [u8]) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&calls);
+            let reply = reply.to_vec();
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let recorded = Arc::clone(&recorded);
+                    let reply = reply.clone();
+                    tokio::spawn(async move {
+                        let Ok((line, body)) = read_upstream(&mut socket).await else {
+                            return;
+                        };
+                        recorded.lock().expect("calls").push(CapturedCall {
+                            line: line.clone(),
+                            body: body.into_bytes(),
+                        });
+                        let body = if line.contains("/v2/GetNodeInfo?") {
+                            br#"{"garageVersion":"v2.3.0"}"#.to_vec()
+                        } else {
+                            reply
+                        };
+                        let header = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let mut response = header.into_bytes();
+                        response.extend_from_slice(&body);
+                        let _ = socket.write_all(&response).await;
+                        let _ = socket.shutdown().await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                calls,
+                task,
+            }
+        }
+
+        fn calls(&self) -> Vec<CapturedCall> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_connect_forwards_the_node_list_unchanged() {
+        let upstream = br#"[ "joined" , "abcd@127.0.0.1:3901" ]"#;
+        let capture = ConnectCapture::start(upstream).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &capture.url).await;
+        let (admin, _) = login(&app).await;
+        let sent = r#"["abcd@127.0.0.1:3901"]"#;
+        let response = exchange(
+            &app,
+            request("POST", "/api/cluster/connect", Some(sent), Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body.as_bytes(), upstream);
+        let connects: Vec<_> = capture
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("ConnectClusterNodes"))
+            .collect();
+        assert_eq!(connects.len(), 1);
+        let target = connects[0].line.split_whitespace().nth(1).unwrap_or("");
+        assert_eq!(target, "/v2/ConnectClusterNodes", "{}", connects[0].line);
+        assert!(
+            connects[0].line.starts_with("POST "),
+            "{}",
+            connects[0].line
+        );
+        assert_eq!(connects[0].body, sent.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn viewer_connect_makes_no_connection() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"["joined"]"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/cluster/connect",
+                Some(r#"["abcd@127.0.0.1:3901"]"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            mock.hits(),
+            0,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_requires_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let anonymous = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/cluster/connect",
+                Some(r#"["abcd@127.0.0.1:3901"]"#),
+                None,
+            ),
+        )
+        .await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/cluster/connect",
+                Some(r#"["abcd@127.0.0.1:3901"]"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn old_garage_blocks_cluster_connect() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/cluster/connect",
+                Some(r#"["abcd@127.0.0.1:3901"]"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::CONFLICT,
+            "garage_too_old",
+            "Garage v2.3.0 or newer is required",
+        );
+        assert!(
+            mock.requests()
+                .iter()
+                .all(|line| !line.contains("ConnectClusterNodes"))
         );
     }
 }
