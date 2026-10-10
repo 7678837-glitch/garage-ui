@@ -177,11 +177,29 @@ async fn probe_node_info(app: &App) -> GarageLink {
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return GarageLink::unknown();
     };
-    GarageLink::from_reported(
-        value
-            .get("garageVersion")
-            .and_then(|version| version.as_str()),
-    )
+    GarageLink::from_reported(reported_garage_version(&value))
+}
+
+// v2.4.1 的 GetNodeInfo 是 MultiResponse，garageVersion 在 success 的节点对象里。
+fn reported_garage_version(value: &Value) -> Option<&str> {
+    if let Some(version) = value.get("garageVersion").and_then(Value::as_str) {
+        return Some(version);
+    }
+    let Some(nodes) = value.get("success").and_then(Value::as_object) else {
+        return None;
+    };
+    let mut found: Option<&str> = None;
+    for node in nodes.values() {
+        let Some(version) = node.get("garageVersion").and_then(Value::as_str) else {
+            continue;
+        };
+        match found {
+            None => found = Some(version),
+            Some(current) if current == version => {}
+            Some(_) => return None,
+        }
+    }
+    found
 }
 
 pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
@@ -1134,6 +1152,56 @@ mod tests {
                 .unwrap()
                 .writes
         );
+    }
+
+    fn reported_link(value: serde_json::Value) -> GarageLink {
+        GarageLink::from_reported(reported_garage_version(&value))
+    }
+
+    #[test]
+    fn reported_garage_version_keeps_flat_v2_4_1() {
+        let link = reported_link(json!({"garageVersion": "v2.4.1"}));
+        assert_eq!(link.version.as_deref(), Some("v2.4.1"));
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_reads_nested_v2_4_1() {
+        let link = reported_link(json!({
+            "success": {"node-a": {"garageVersion": "v2.4.1"}},
+            "error": {}
+        }));
+        assert_eq!(link.version.as_deref(), Some("v2.4.1"));
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_reads_nested_v2_2_9() {
+        let link = reported_link(json!({
+            "success": {"node-a": {"garageVersion": "v2.2.9", "role": "gateway"}},
+            "error": {}
+        }));
+        assert_eq!(link.version.as_deref(), Some("v2.2.9"));
+        assert!(!link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_empty_success_has_no_version() {
+        let link = reported_link(json!({"success": {}, "error": {}}));
+        assert_eq!(link.version, None);
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_conflict_has_no_version() {
+        let link = reported_link(json!({
+            "success": {
+                "node-a": {"garageVersion": "v2.4.1"},
+                "node-b": {"garageVersion": "v2.2.9"}
+            },
+            "error": {}
+        }));
+        assert_eq!(link.version, None);
     }
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
