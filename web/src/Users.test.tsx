@@ -38,6 +38,7 @@ function renderUsers() {
       <Users selfUsername="Ada" />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 function installApi(seed: Row[], rejectPatch = false) {
@@ -355,4 +356,113 @@ test("shows the error text when a request fails", async () => {
   expect(
     (await screen.findByText("The last enabled administrator cannot be removed")).textContent,
   ).toBe("The last enabled administrator cannot be removed");
+});
+
+test("shows Loading users and marks the users section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderUsers();
+  const section = screen.getByRole("region", { name: "Users" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByText("Loading users").textContent).toBe("Loading users");
+  expect(screen.getByText("Loading users").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.queryByText("Refreshing users")).toBeNull();
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  release(json([ada]));
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByText("Loading users")).toBeNull();
+});
+
+test("keeps a visible username while a later fetch refreshes the list", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/users");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(json([ada]));
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderUsers();
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByText("Refreshing users")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["users"] });
+  expect(await screen.findByText("Refreshing users")).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByText("Loading users")).toBeNull();
+  expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByRole("alert")).toBeNull();
+  releaseNext(json([ada]));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing users")).toBeNull();
+  });
+  expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(calls).toBe(2);
+});
+
+test("shows there are no users and keeps the create form", async () => {
+  installApi([]);
+  renderUsers();
+  expect((await screen.findByText("There are no users")).textContent).toBe("There are no users");
+  expect(screen.getByText("There are no users").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect(screen.queryByText("Loading users")).toBeNull();
+  expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
+});
+
+test("shows the API code and requests the user list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/users");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json(
+          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          502,
+        );
+      }
+      return json([ada]);
+    }),
+  );
+  renderUsers();
+  expect((await screen.findByText("Garage admin API is not reachable")).textContent).toBe(
+    "Garage admin API is not reachable",
+  );
+  expect(screen.getByText("garage_unavailable").textContent).toBe("garage_unavailable");
+  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
 });
