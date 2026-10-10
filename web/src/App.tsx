@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
+import { About } from "./About";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
@@ -216,6 +217,7 @@ function Home({ status }: { status: SessionStatus }) {
           Log out
         </button>
       </div>
+      <About garageVersion={status.garage_version} />
       {status.role === "admin" ? <ClusterHealth /> : null}
       {status.role === "admin" ? <ClusterNodes /> : null}
       <Buckets canManage={status.role === "admin"} />

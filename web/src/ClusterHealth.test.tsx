@@ -82,6 +82,13 @@ function stubFetch(
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return json({
+        version: "20261010.1",
+        listBucketsInfo: "unknown",
+        listKeysInfo: "unknown",
+      });
+    }
     if (url.includes("/api/auth/status")) {
       return json(session(role, writeBlocked));
     }

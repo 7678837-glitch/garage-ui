@@ -21,12 +21,26 @@ function renderApp() {
   );
 }
 
+function capabilitiesResponse() {
+  return new Response(
+    JSON.stringify({
+      version: "20261010.1",
+      listBucketsInfo: "unknown",
+      listKeysInfo: "unknown",
+    }),
+    { status: 200 },
+  );
+}
+
 test("shows health status when the session is authenticated", async () => {
   const setItem = vi.spyOn(Storage.prototype, "setItem");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
       if (url.includes("/api/auth/status")) {
         return new Response(
           JSON.stringify({
@@ -48,6 +62,11 @@ test("shows health status when the session is authenticated", async () => {
   );
   renderApp();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
+  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
+  expect(screen.getByText("List keys info unknown")).toBeTruthy();
+  expect(screen.getByText("Garage version is not set")).toBeTruthy();
   expect(setItem).not.toHaveBeenCalled();
 });
 
@@ -55,6 +74,9 @@ test("shows the setup form before initialization and does not use storage", asyn
   const setItem = vi.spyOn(Storage.prototype, "setItem");
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
     if (url.includes("/api/setup")) {
       return new Response(JSON.stringify({ username: "Ada", role: "admin" }), { status: 200 });
     }
@@ -90,6 +112,9 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
       if (url.includes("/api/auth/status")) {
         return new Response(
           JSON.stringify({
@@ -125,6 +150,9 @@ test("shows user management for an admin and locks that signed-in row", async ()
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
       if (url.includes("/api/auth/status")) {
         return new Response(
           JSON.stringify({
@@ -176,11 +204,19 @@ test("shows user management for an admin and locks that signed-in row", async ()
   ).toBe(true);
   expect(document.body.textContent).not.toContain("$2b$12$from-the-api");
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
+  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
+  expect(screen.getByText("List keys info unknown")).toBeTruthy();
+  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
 });
 
 test("hides user management from a viewer", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
     if (url.includes("/api/auth/status")) {
       return new Response(
         JSON.stringify({
@@ -202,6 +238,11 @@ test("hides user management from a viewer", async () => {
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
+  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
+  expect(screen.getByText("List keys info unknown")).toBeTruthy();
+  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
@@ -220,6 +261,9 @@ test("shows a bucket id and its alias to an admin", async () => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
       if (url.includes("/api/auth/status")) {
         return new Response(
           JSON.stringify({
@@ -284,6 +328,9 @@ test("shows a bucket id and its alias to an admin", async () => {
 test("shows a bucket id to a viewer", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
     if (url.includes("/api/auth/status")) {
       return new Response(
         JSON.stringify({
