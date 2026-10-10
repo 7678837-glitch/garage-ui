@@ -19,6 +19,7 @@ function renderBuckets(canManage = false) {
       <Buckets canManage={canManage} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 type Call = {
@@ -103,10 +104,13 @@ test("loads the next page at the offset after the rows already shown", async () 
   renderBuckets();
   expect(await screen.findByText("first")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
+  expect(screen.getByText("More buckets are available.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Load more" }));
   expect(await screen.findByText("second")).toBeTruthy();
   expect(screen.getByText("first")).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByText("More buckets are available.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   expect(calls.some((call) => call.startsWith("/api/buckets?offset=1"))).toBe(true);
   const limits = calls.map((call) => new URL(call, "http://ui.local").searchParams.get("limit"));
   expect(limits).toEqual([limits[0], limits[0]]);
@@ -119,7 +123,109 @@ test("shows the error message when the bucket list request fails", async () => {
   );
   renderBuckets();
   expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("shows Loading buckets and marks the buckets section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderBuckets();
+  const section = screen.getByRole("region", { name: "Buckets" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByText("Loading buckets").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no buckets.")).toBeNull();
+  expect(screen.queryByText("Refreshing buckets")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  release(json({ items: [], hasMore: false }));
+  expect(await screen.findByText("There are no buckets.")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByText("Loading buckets")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+});
+
+test("keeps a visible bucket id while a later fetch refreshes the list", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/buckets");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          json({ items: [{ id: "bkt-9", globalAliases: ["kept"] }], hasMore: false }),
+        );
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderBuckets();
+  expect(await screen.findByText("bkt-9")).toBeTruthy();
+  expect(screen.queryByText("Refreshing buckets")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["buckets"] });
+  expect(await screen.findByText("Refreshing buckets")).toBeTruthy();
+  expect(screen.getByText("bkt-9")).toBeTruthy();
+  expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByText("Loading buckets")).toBeNull();
+  expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("true");
+  releaseNext(json({ items: [{ id: "bkt-9", globalAliases: ["kept"] }], hasMore: false }));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing buckets")).toBeNull();
+  });
+  expect(screen.getByText("bkt-9")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("false");
+  expect(calls).toBe(2);
+});
+
+test("shows the API code and requests the bucket list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/buckets");
+      expect(url.searchParams.get("offset")).toBe("0");
+      expect(url.searchParams.get("limit")).toBe("100");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json(
+          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          502,
+        );
+      }
+      return json({ items: [{ id: "bkt-1", globalAliases: ["photos"] }], hasMore: false });
+    }),
+  );
+  renderBuckets();
+  expect(await screen.findByText("Garage admin API is not reachable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable")).toBeTruthy();
+  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no buckets.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
 });
 
 test("keeps the loaded rows when the next page fails", async () => {
