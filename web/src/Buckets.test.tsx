@@ -572,3 +572,44 @@ test("a viewer sees quota usage and does not call PUT", async () => {
   expect(calls.every((call) => call.method === "GET")).toBe(true);
   expect(calls.some((call) => call.method === "PUT")).toBe(false);
 });
+
+test("loads permissions for an encoded bucket id only after the row button is clicked", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "/api/buckets/a%26b%3Dc") {
+        return json({
+          keys: [
+            {
+              accessKeyId: "GK1",
+              name: "photos",
+              permissions: { owner: false, read: true, write: false },
+              bucketLocalAliases: ["hidden-alias"],
+            },
+          ],
+          websiteConfig: { indexDocument: "index-secret.html" },
+          corsRules: [{ AllowedOrigins: ["cors-secret.example"] }],
+          lifecycleRules: [{ id: "life-secret" }],
+        });
+      }
+      return json({ items: [{ id: "a&b=c" }], hasMore: false });
+    }),
+  );
+  renderBuckets();
+  expect(await screen.findByRole("button", { name: "Permissions for a&b=c" })).toBeTruthy();
+  expect(calls.some((call) => call.startsWith("/api/buckets/"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
+  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.getByText("read yes")).toBeTruthy();
+  expect(screen.getByText("owner no")).toBeTruthy();
+  expect(screen.getByText("write no")).toBeTruthy();
+  expect(screen.queryByText("hidden-alias")).toBeNull();
+  expect(screen.queryByText("index-secret.html")).toBeNull();
+  expect(screen.queryByText("cors-secret.example")).toBeNull();
+  expect(screen.queryByText("life-secret")).toBeNull();
+  expect(calls.filter((call) => call.startsWith("/api/buckets/"))).toEqual(["/api/buckets/a%26b%3Dc"]);
+});
