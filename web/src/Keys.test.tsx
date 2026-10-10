@@ -594,7 +594,7 @@ test("cancels a key delete without a request, then confirms the encoded delete",
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Delete a b&c=d" }));
-  fireEvent.click(screen.getByRole("button", { name: "Delete key" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByText("Key deleted")).toBeTruthy();
   expect(await screen.findByText("There are no keys.")).toBeTruthy();
   expect(screen.queryByText("a b&c=d")).toBeNull();
@@ -621,9 +621,13 @@ test("shows the API message when deleting a key fails and keeps the key listed",
   );
   renderKeys(true);
   fireEvent.click(await screen.findByRole("button", { name: "Delete GK1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Delete key" }));
-  expect(await screen.findByText("Key is still in use")).toBeTruthy();
-  expect(screen.getByRole("dialog").textContent).toContain("GK1");
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByText(/Key is still in use/)).toBeTruthy();
+  const failed = screen.getByRole("dialog");
+  expect(failed.textContent).toContain(
+    "This permanently deletes key GK1. Clients that use this key lose access.",
+  );
+  expect(failed.textContent).toContain("Key is still in use");
   expect(screen.getByText("GK1")).toBeTruthy();
   expect(screen.queryByText("Key deleted")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();

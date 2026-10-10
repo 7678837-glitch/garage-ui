@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { api } from "./api/client";
+import { ConfirmDialog } from "./confirm";
 
 type BucketKeyGrant = {
   accessKeyId: string;
@@ -249,78 +250,6 @@ function GrantForm({ bucketId }: { bucketId: string }) {
   );
 }
 
-function RevokeKeyDialog({
-  accessKeyId,
-  pending,
-  error,
-  onCancel,
-  onConfirm,
-}: {
-  accessKeyId: string;
-  pending: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    if (typeof dialog.showModal === "function") {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-    } else {
-      dialog.setAttribute("open", "");
-    }
-    cancelRef.current?.focus();
-  }, [accessKeyId]);
-  return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby={titleId}
-      className="border border-ink bg-canvas p-4 text-ink"
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
-      }}
-    >
-      <h3 id={titleId} className="font-medium">
-        Revoke {accessKeyId}
-      </h3>
-      <p>This revokes the current owner, read, and write permissions for {accessKeyId}.</p>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <button
-        ref={cancelRef}
-        className="mr-2 border border-ink px-3 py-1 text-left"
-        type="button"
-        onClick={onCancel}
-      >
-        Cancel
-      </button>
-      <button
-        className="border border-ink px-3 py-1 text-left"
-        type="button"
-        disabled={pending}
-        onClick={onConfirm}
-      >
-        {pending ? "Revoking key" : "Revoke key"}
-      </button>
-    </dialog>
-  );
-}
-
 function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage: boolean }) {
   const client = useQueryClient();
   const [target, setTarget] = useState<BucketKeyGrant | null>(null);
@@ -398,15 +327,18 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       ) : null}
       {canManage ? <GrantForm bucketId={bucketId} /> : null}
       {target !== null ? (
-        <RevokeKeyDialog
-          accessKeyId={target.accessKeyId}
-          pending={revoke.isPending}
-          error={revokeError}
+        <ConfirmDialog
+          action="revoke-permission"
+          name={target.accessKeyId}
+          consequence={`This revokes the current owner, read, and write permissions for ${target.accessKeyId}.${revokeError ? ` ${revokeError}` : ""}`}
           onCancel={() => {
             setTarget(null);
             revoke.reset();
           }}
           onConfirm={() => {
+            if (revoke.isPending) {
+              return;
+            }
             revoke.mutate(target);
           }}
         />

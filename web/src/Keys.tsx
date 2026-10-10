@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
+import { ConfirmDialog } from "./confirm";
 
 type AccessKey = {
   id: string;
@@ -405,71 +406,6 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
   );
 }
 
-function DeleteKeyDialog({
-  keyId,
-  pending,
-  error,
-  onCancel,
-  onConfirm,
-}: {
-  keyId: string;
-  pending: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    openDialog(dialog);
-    cancelRef.current?.focus();
-  }, [keyId]);
-  return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby="delete-key-title"
-      className="border border-ink bg-canvas p-4 text-ink"
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
-      }}
-    >
-      <h3 id="delete-key-title" className="font-medium">
-        Delete key {keyId}
-      </h3>
-      <p>This permanently deletes key {keyId}. Clients that use this key lose access.</p>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <button
-        ref={cancelRef}
-        className="mr-2 border border-ink px-3 py-1 text-left"
-        type="button"
-        onClick={onCancel}
-      >
-        Cancel
-      </button>
-      <button
-        className="border border-ink px-3 py-1 text-left"
-        type="button"
-        disabled={pending}
-        onClick={onConfirm}
-      >
-        {pending ? "Deleting key" : "Delete key"}
-      </button>
-    </dialog>
-  );
-}
-
 export function Keys({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -618,15 +554,18 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {deleteId !== null ? (
-        <DeleteKeyDialog
-          keyId={deleteId}
-          pending={removeKey.isPending}
-          error={deleteError}
+        <ConfirmDialog
+          action="delete-key"
+          name={deleteId}
+          consequence={`This permanently deletes key ${deleteId}. Clients that use this key lose access.${deleteError ? ` ${deleteError}` : ""}`}
           onCancel={() => {
             setDeleteId(null);
             removeKey.reset();
           }}
           onConfirm={() => {
+            if (removeKey.isPending) {
+              return;
+            }
             removeKey.mutate(deleteId);
           }}
         />

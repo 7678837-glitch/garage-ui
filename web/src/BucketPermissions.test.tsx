@@ -467,6 +467,9 @@ test("cancels a revoke without a request, then confirms with the key's current p
   fireEvent.click(await screen.findByRole("button", { name: "Revoke GK1" }));
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("GK1");
+  expect(dialog.textContent).toContain(
+    "This revokes the current owner, read, and write permissions for GK1.",
+  );
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -476,7 +479,7 @@ test("cancels a revoke without a request, then confirms with the key's current p
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Revoke GK1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Revoke key" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByText("kept")).toBeTruthy();
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Revoke GK1" })).toBeNull();
@@ -518,10 +521,14 @@ test("shows the API message when revoke fails and keeps the dialog", async () =>
   renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   fireEvent.click(await screen.findByRole("button", { name: "Revoke GK1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Revoke key" }));
-  expect(await screen.findByText("Cannot revoke")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByText(/Cannot revoke/)).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("dialog").textContent).toContain("GK1");
+  const failed = screen.getByRole("dialog");
+  expect(failed.textContent).toContain(
+    "This revokes the current owner, read, and write permissions for GK1.",
+  );
+  expect(failed.textContent).toContain("Cannot revoke");
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Revoke GK1" })).toBeTruthy();
 });
