@@ -201,6 +201,23 @@ pub async fn put(
     Ok(PutResult { key, etag, size })
 }
 
+pub async fn delete(app: &App, bucket_id: &str, key: &str) -> Result<(), ApiError> {
+    let bucket = bucket_id.to_string();
+    let key = key.to_string();
+    drive(app, bucket.clone(), move |client| {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        async move {
+            // 已不存在的 key 也算删完。drive 会把 404 转成接口 404。
+            match remove_object(&client, &bucket, &key).await {
+                Err(S3Failure::NotFound) => Ok(()),
+                other => other,
+            }
+        }
+    })
+    .await
+}
+
 fn page_size(limit: Option<i64>) -> i32 {
     match limit {
         Some(value) if (1..=1000).contains(&value) => i32::try_from(value).unwrap_or(1000),
@@ -415,6 +432,24 @@ async fn put_with(
             )
         })?;
     Ok(plain_etag(output.e_tag().unwrap_or("")))
+}
+
+async fn remove_object(client: &Client, bucket: &str, key: &str) -> Result<(), S3Failure> {
+    client
+        .delete_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })
 }
 
 struct ReplayBody {

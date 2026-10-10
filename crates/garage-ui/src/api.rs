@@ -76,7 +76,10 @@ pub fn routes(app: App) -> Router<App> {
             post(grant_bucket_permissions).delete(revoke_bucket_permissions),
         )
         .route("/api/buckets/{id}/objects", get(list_bucket_objects))
-        .route("/api/buckets/{id}/objects/{*key}", get(object_metadata))
+        .route(
+            "/api/buckets/{id}/objects/{*key}",
+            get(object_metadata).delete(delete_bucket_object),
+        )
         .route("/api/buckets/{id}/search", get(search_bucket_objects))
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
@@ -1599,6 +1602,28 @@ async fn object_metadata(
     require(&current.user, Op::ReadObjects)?;
     let meta = objects::metadata(&app, &id, &key).await?;
     Ok(Json(meta))
+}
+
+#[derive(Deserialize)]
+struct DeleteObjectQuery {
+    recursive: Option<bool>,
+}
+
+async fn delete_bucket_object(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, key)): Path<(String, String)>,
+    Query(query): Query<DeleteObjectQuery>,
+) -> Result<StatusCode, ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    if query.recursive == Some(true) {
+        return Err(ApiError::not_implemented(
+            "not_implemented",
+            "Recursive delete is not available",
+        ));
+    }
+    objects::delete(&app, &id, &key).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn cluster_health(
@@ -5383,6 +5408,111 @@ mod tests {
             assert_eq!(bucket_of(line), "bkt-1");
             assert_eq!(object_key_of(line), "photos/a.txt");
         }
+    }
+
+    fn delete_ok() -> String {
+        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+    }
+
+    #[tokio::test]
+    async fn object_delete_returns_204_for_one_key_and_a_missing_key() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("DELETE "), "{line}");
+            if object_key_of(line) == "missing" {
+                head_missing()
+            } else {
+                delete_ok()
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+        assert_eq!(removed.body, "");
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("DELETE "), "{}", seen[0]);
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(object_key_of(&seen[0]), "photos/a.txt");
+
+        let missing = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/missing",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(missing.status, StatusCode::NO_CONTENT, "{}", missing.body);
+        assert_eq!(missing.body, "");
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(bucket_of(&seen[1]), "bkt-1");
+        assert_eq!(object_key_of(&seen[1]), "missing");
+        assert!(seen[1].starts_with("DELETE "), "{}", seen[1]);
+    }
+
+    #[tokio::test]
+    async fn object_delete_recursive_true_does_not_call_s3() {
+        let mock = S3Mock::start(|_| delete_ok()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt?recursive=true",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::NOT_IMPLEMENTED,
+            "not_implemented",
+            "Recursive delete is not available",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_delete_without_a_project_key_does_not_call_s3() {
+        let mock = S3Mock::start(|_| delete_ok()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
+        );
+        assert!(mock.requests().is_empty());
     }
 
     #[tokio::test]
