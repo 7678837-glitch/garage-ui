@@ -8,7 +8,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, patch, post, put};
+use axum::routing::{any, get, patch, post, put};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -63,7 +63,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/users/{id}", patch(patch_user).delete(remove_user))
         .route("/api/users/{id}/reset-password", post(reset_password))
         .route("/api/buckets", get(list_buckets).post(create_bucket))
-        .route("/api/buckets/{id}", delete(delete_bucket))
+        .route("/api/buckets/{id}", get(get_bucket).delete(delete_bucket))
         .route(
             "/api/buckets/{id}/aliases",
             post(add_bucket_alias).delete(remove_bucket_alias),
@@ -720,6 +720,27 @@ async fn create_bucket(
     require(&current.user, Op::ChangeBuckets)?;
     let bytes = serde_json::to_vec(&body).map_err(|_| ApiError::internal())?;
     post_garage(&app, &current, &headers, "CreateBucket", None, &bytes).await
+}
+
+async fn get_bucket(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewBuckets)?;
+    let query = format!("id={}", percent_encode(&id));
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetBucketInfo",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await
 }
 
 async fn delete_bucket(
@@ -2715,6 +2736,164 @@ mod tests {
             response.body
         );
         assert_eq!(response.body, body);
+    }
+
+    const BUCKET_DIGITS: &str = r#"{"id":"bkt-1","objects":9007199254740993,"bytes":9007199254740993,"quotas":{"maxSize":9007199254740993,"maxObjects":9007199254740993}}"#;
+
+    fn bucket_info_calls(mock: &Upstream) -> Vec<UpstreamCall> {
+        mock.calls()
+            .into_iter()
+            .filter(|call| call.line.contains("GetBucketInfo"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn bucket_detail_keeps_upstream_digits() {
+        let mock = Upstream::start(UpstreamReply::Ok(BUCKET_DIGITS.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, BUCKET_DIGITS);
+        assert!(response.body.contains("9007199254740993"));
+        assert!(!response.body.contains("9007199254740992"));
+        let details = bucket_info_calls(&mock);
+        assert_eq!(
+            details.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            details[0].line.contains("GET /v2/GetBucketInfo?id=bkt-1 "),
+            "{}",
+            details[0].line
+        );
+        assert!(
+            !details[0].line.contains("globalAlias"),
+            "{}",
+            details[0].line
+        );
+        assert!(!details[0].line.contains("search"), "{}", details[0].line);
+    }
+
+    #[tokio::test]
+    async fn bucket_detail_encodes_an_id_with_ampersand_or_equals() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"kept"}"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/a%26b%3Dc", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, r#"{"id":"kept"}"#);
+        let details = bucket_info_calls(&mock);
+        assert_eq!(
+            details.len(),
+            1,
+            "{:?}",
+            details
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            details[0]
+                .line
+                .contains("GET /v2/GetBucketInfo?id=a%26b%3Dc "),
+            "{}",
+            details[0].line
+        );
+        assert!(
+            !details[0].line.contains("globalAlias"),
+            "{}",
+            details[0].line
+        );
+        assert!(!details[0].line.contains("search"), "{}", details[0].line);
+    }
+
+    #[tokio::test]
+    async fn viewer_can_read_one_bucket() {
+        let mock = Upstream::start(UpstreamReply::Ok(BUCKET_DIGITS.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1", None, Some(&viewer)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, BUCKET_DIGITS);
+        let details = bucket_info_calls(&mock);
+        assert_eq!(
+            details.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            details[0].line.contains("GET /v2/GetBucketInfo?id=bkt-1 "),
+            "{}",
+            details[0].line
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_detail_requires_a_session_and_a_garage_url() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app(&dir).await;
+        let anonymous = exchange(&app, request("GET", "/api/buckets/bkt-1", None, None)).await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1", None, Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_detail_keeps_upstream_404() {
+        let body = r#"{"message":"Bucket not found"}"#.to_string();
+        let mock = Upstream::start(UpstreamReply::Fixed("404 Not Found", body.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/missing", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert!(!response.body.contains("garage_unavailable"));
     }
 
     #[tokio::test]
