@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api/client";
 
 type Role = "admin" | "viewer";
@@ -42,6 +42,32 @@ function permissionBits(role: Role, download: boolean, share: boolean): Permissi
 
 function asRole(value: string): Role {
   return value === "admin" ? "admin" : "viewer";
+}
+
+function readUserFilter(): string {
+  return new URLSearchParams(window.location.search).get("users") ?? "";
+}
+
+function writeUserFilter(filter: string) {
+  const params = new URLSearchParams(window.location.search);
+  if (filter.length > 0) {
+    params.set("users", filter);
+  } else {
+    params.delete("users");
+  }
+  const search = params.toString();
+  const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.replaceState(window.history.state, "", next);
+  }
+}
+
+function userMatches(account: Account, filter: string): boolean {
+  if (filter.length === 0) {
+    return true;
+  }
+  return account.username.toLowerCase().includes(filter.toLowerCase());
 }
 
 function errorText(caught: unknown): string {
@@ -427,6 +453,13 @@ export function Users({ selfUsername }: { selfUsername: string }) {
     queryFn: loadUsers,
   });
   const accounts = users.data ?? [];
+  const [filter, setFilter] = useState(readUserFilter);
+  useEffect(() => {
+    const sync = () => setFilter(readUserFilter());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const shown = accounts.filter((account) => userMatches(account, filter));
   const view = {
     busy: users.isPending,
     refreshing: accounts.length > 0 && users.isFetching && !users.isPending,
@@ -437,6 +470,21 @@ export function Users({ selfUsername }: { selfUsername: string }) {
   return (
     <section className="grid gap-4" aria-label="Users" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Users</h2>
+      <div className="grid max-w-sm gap-3">
+        <label className="block text-sm">
+          Filter users
+          <input
+            className="mt-1 w-full border border-line px-2 py-1"
+            value={filter}
+            onChange={(event) => {
+              const next = event.target.value;
+              setFilter(next);
+              writeUserFilter(next);
+            }}
+          />
+        </label>
+        <p>Default order is Username.</p>
+      </div>
       {view.busy ? <p>Loading users</p> : null}
       {view.refreshing ? <p>Refreshing users</p> : null}
       {view.failure ? (
@@ -455,7 +503,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         </>
       ) : null}
       {view.empty ? <p>There are no users</p> : null}
-      {users.data && accounts.length > 0 ? (
+      {users.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -484,7 +532,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((account) => (
+              {shown.map((account) => (
                 <AccountRow
                   key={account.id}
                   account={account}

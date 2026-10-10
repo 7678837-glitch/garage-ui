@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -754,10 +755,82 @@ test("an object address hides create and the table, and back returns to #buckets
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
   expect(screen.queryByText("east")).toBeNull();
+  expect(screen.queryByLabelText("Filter buckets")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
   expect(window.location.hash).toBe("#buckets");
   expect(await screen.findByRole("button", { name: "Create bucket" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
+  expect(screen.getByLabelText("Filter buckets")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
+});
+
+function bucketRowText(): string[] {
+  return screen.getAllByRole("row").slice(1).map((row) => row.textContent ?? "");
+}
+
+test("filters loaded buckets from the query string and keeps that choice in the address", async () => {
+  window.history.replaceState(null, "", "/?buckets=EAST&keep=1#kept");
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls += 1;
+      return json({
+        items: [
+          { id: "zed", globalAliases: ["mango"] },
+          { id: "amy", globalAliases: ["east"] },
+          { id: "nope", globalAliases: ["west"] },
+        ],
+        hasMore: true,
+      });
+    }),
+  );
+  renderBuckets();
+  expect(await screen.findByText("amy")).toBeTruthy();
+  expect(screen.queryByText("zed")).toBeNull();
+  expect(screen.queryByText("nope")).toBeNull();
+  expect((screen.getByLabelText("Filter buckets") as HTMLInputElement).value).toBe("EAST");
+  expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
+  expect(screen.getByText("Only loaded rows").textContent).toBe("Only loaded rows");
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  expect(screen.queryByText("There are no buckets.")).toBeNull();
+  expect(window.location.hash).toBe("#kept");
+  expect(window.location.search).toContain("buckets=EAST");
+  expect(window.location.search).toContain("keep=1");
+  expect(calls).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Filter buckets"), { target: { value: "" } });
+  expect(screen.getByText("zed")).toBeTruthy();
+  expect(screen.getByText("amy")).toBeTruthy();
+  expect(screen.getByText("nope")).toBeTruthy();
+  expect(bucketRowText()[0]).toContain("zed");
+  expect(window.location.search).toBe("?keep=1");
+  expect(window.location.hash).toBe("#kept");
+  expect(calls).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Sort buckets"), { target: { value: "alias" } });
+  expect(bucketRowText()[0]).toContain("amy");
+  expect(bucketRowText()[1]).toContain("zed");
+  expect(bucketRowText()[2]).toContain("nope");
+  const sorted = new URLSearchParams(window.location.search);
+  expect(sorted.get("bucketsSort")).toBe("alias");
+  expect(sorted.get("buckets")).toBeNull();
+  expect(sorted.get("keep")).toBe("1");
+  expect(window.location.hash).toBe("#kept");
+  expect(calls).toBe(1);
+
+  act(() => {
+    window.history.pushState(null, "", "/?buckets=missing&keep=1#kept");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(screen.queryByText("amy")).toBeNull();
+  expect(screen.queryByText("zed")).toBeNull();
+  expect(screen.queryByText("nope")).toBeNull();
+  expect(screen.queryByText("There are no buckets.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  expect((screen.getByLabelText("Filter buckets") as HTMLInputElement).value).toBe("missing");
+  expect((screen.getByLabelText("Sort buckets") as HTMLSelectElement).value).toBe("id");
+  expect(window.location.hash).toBe("#kept");
+  expect(calls).toBe(1);
 });

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 
@@ -406,6 +406,71 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
   );
 }
 
+type KeySort = "id" | "name";
+
+type KeyQuery = {
+  filter: string;
+  sort: KeySort;
+};
+
+function keySortFrom(value: string | null): KeySort {
+  return value === "name" ? "name" : "id";
+}
+
+function readKeyQuery(): KeyQuery {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    filter: params.get("keys") ?? "",
+    sort: keySortFrom(params.get("keysSort")),
+  };
+}
+
+function replaceListQuery(params: URLSearchParams) {
+  const search = params.toString();
+  const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.replaceState(window.history.state, "", next);
+  }
+}
+
+function writeKeyQuery(query: KeyQuery) {
+  const params = new URLSearchParams(window.location.search);
+  if (query.filter.length > 0) {
+    params.set("keys", query.filter);
+  } else {
+    params.delete("keys");
+  }
+  if (query.sort === "name") {
+    params.set("keysSort", "name");
+  } else {
+    params.delete("keysSort");
+  }
+  replaceListQuery(params);
+}
+
+function keyMatches(accessKey: AccessKey, filter: string): boolean {
+  if (filter.length === 0) {
+    return true;
+  }
+  const needle = filter.toLowerCase();
+  if (accessKey.id.toLowerCase().includes(needle)) {
+    return true;
+  }
+  return accessKey.name !== null && accessKey.name.toLowerCase().includes(needle);
+}
+
+function orderedKeys(rows: AccessKey[], sort: KeySort): AccessKey[] {
+  if (sort === "id") {
+    return rows;
+  }
+  return [...rows].sort((left, right) => {
+    const a = (left.name ?? "").toLowerCase();
+    const b = (right.name ?? "").toLowerCase();
+    return a.localeCompare(b);
+  });
+}
+
 export function Keys({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -444,6 +509,16 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     },
   });
   const rows = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const [query, setQuery] = useState(readKeyQuery);
+  useEffect(() => {
+    const sync = () => setQuery(readKeyQuery());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const shown = orderedKeys(
+    rows.filter((accessKey) => keyMatches(accessKey, query.filter)),
+    query.sort,
+  );
   const view = {
     busy: list.isPending,
     refreshing: rows.length > 0 && list.isFetching && !list.isPending,
@@ -476,8 +551,42 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
+      <div className="grid max-w-sm gap-3">
+        <label className="block text-sm">
+          Filter keys
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={query.filter}
+            onChange={(event) => {
+              const next = { filter: event.target.value, sort: query.sort };
+              setQuery(next);
+              writeKeyQuery(next);
+            }}
+          />
+        </label>
+        <label className="block text-sm">
+          Sort keys
+          <select
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={query.sort}
+            onChange={(event) => {
+              const next = {
+                filter: query.filter,
+                sort: keySortFrom(event.target.value),
+              };
+              setQuery(next);
+              writeKeyQuery(next);
+            }}
+          >
+            <option value="id">Id</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <p>Default order is Id.</p>
+        <p>Only loaded rows</p>
+      </div>
       {view.empty ? <p>There are no keys.</p> : null}
-      {list.data && rows.length > 0 ? (
+      {list.data && shown.length > 0 ? (
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -496,7 +605,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((accessKey, index) => (
+              {shown.map((accessKey, index) => (
                 <tr key={`${accessKey.id}-${index}`}>
                   <td className="break-all py-2 pr-3 align-top">{accessKey.id}</td>
                   <td className="py-2 align-top">{accessKey.name}</td>

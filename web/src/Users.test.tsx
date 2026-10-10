@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Users } from "./Users";
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
@@ -465,4 +466,60 @@ test("shows the API code and requests the user list again from Retry", async () 
   expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(calls).toBe(2);
+});
+
+test("filters loaded users from the query string and keeps that choice in the address", async () => {
+  window.history.replaceState(null, "", "/?users=bea&keep=1&usersSort=keep-me#users/stay");
+  const calls = installApi([ada, bea]);
+  renderUsers();
+  expect(await screen.findByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect((screen.getByLabelText("Filter users") as HTMLInputElement).value).toBe("bea");
+  expect(screen.getByText("Default order is Username.").textContent).toBe(
+    "Default order is Username.",
+  );
+  expect(screen.queryByText("Only loaded rows")).toBeNull();
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(window.location.hash).toBe("#users/stay");
+  expect(window.location.search).toContain("users=bea");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.search).toContain("usersSort=keep-me");
+  expect(calls).toHaveLength(1);
+
+  fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "ADA" } });
+  expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "Bea" })).toBeNull();
+  expect(window.location.search).toContain("users=ADA");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.search).toContain("usersSort=keep-me");
+  expect(window.location.hash).toBe("#users/stay");
+  expect(calls).toHaveLength(1);
+
+  fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "" } });
+  expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.search).toContain("usersSort=keep-me");
+  expect(window.location.search).not.toContain("users=ADA");
+  expect(window.location.search).not.toContain("users=bea");
+  expect(window.location.hash).toBe("#users/stay");
+  expect(calls).toHaveLength(1);
+
+  fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "admin" } });
+  expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect(screen.queryByRole("cell", { name: "Bea" })).toBeNull();
+  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(calls).toHaveLength(1);
+
+  act(() => {
+    window.history.pushState(null, "", "/?users=BEA&keep=1#users/stay");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect((screen.getByLabelText("Filter users") as HTMLInputElement).value).toBe("BEA");
+  expect(window.location.hash).toBe("#users/stay");
+  expect(calls).toHaveLength(1);
 });

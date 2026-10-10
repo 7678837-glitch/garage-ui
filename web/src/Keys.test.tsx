@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Keys } from "./Keys";
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
@@ -709,4 +710,83 @@ test("wraps a 64-character key id in the key cell and the actions cell", async (
   const actions = screen.getByRole("button", { name: `Delete ${keyId}` }).closest("td");
   expect(actions?.classList.contains("break-all")).toBe(true);
   expect(screen.getByRole("cell", { name: "photos" }).classList.contains("break-all")).toBe(false);
+});
+
+function keyRowText(): string[] {
+  return screen.getAllByRole("row").slice(1).map((row) => row.textContent ?? "");
+}
+
+test("filters loaded keys from the query string and keeps that choice in the address", async () => {
+  window.history.replaceState(null, "", "/?keys=APPLE&keep=1#keys/stay");
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls += 1;
+      return json({
+        items: [
+          { id: "k-b", name: "mango" },
+          { id: "k-a", name: "apple" },
+          { id: "k-c", name: null },
+        ],
+        hasMore: true,
+      });
+    }),
+  );
+  renderKeys();
+  expect(await screen.findByText("k-a")).toBeTruthy();
+  expect(screen.getByText("apple")).toBeTruthy();
+  expect(screen.queryByText("k-b")).toBeNull();
+  expect(screen.queryByText("k-c")).toBeNull();
+  expect((screen.getByLabelText("Filter keys") as HTMLInputElement).value).toBe("APPLE");
+  expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
+  expect(screen.getByText("Only loaded rows").textContent).toBe("Only loaded rows");
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  expect(screen.queryByText("There are no keys.")).toBeNull();
+  expect(window.location.hash).toBe("#keys/stay");
+  expect(window.location.search).toContain("keys=APPLE");
+  expect(window.location.search).toContain("keep=1");
+  expect(calls).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Filter keys"), { target: { value: "" } });
+  expect(screen.getByText("k-b")).toBeTruthy();
+  expect(screen.getByText("k-a")).toBeTruthy();
+  expect(screen.getByText("k-c")).toBeTruthy();
+  expect(keyRowText()[0]).toContain("k-b");
+  expect(window.location.search).toBe("?keep=1");
+  expect(window.location.hash).toBe("#keys/stay");
+  expect(calls).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Sort keys"), { target: { value: "name" } });
+  expect(keyRowText()[0]).toContain("k-c");
+  expect(keyRowText()[1]).toContain("k-a");
+  expect(keyRowText()[2]).toContain("k-b");
+  expect(window.location.search).toContain("keysSort=name");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#keys/stay");
+  expect(calls).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Filter keys"), { target: { value: "K-C" } });
+  expect(screen.getByText("k-c")).toBeTruthy();
+  expect(screen.queryByText("k-a")).toBeNull();
+  expect(screen.queryByText("k-b")).toBeNull();
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  expect(window.location.search).toContain("keys=K-C");
+  expect(window.location.search).toContain("keysSort=name");
+  expect(window.location.hash).toBe("#keys/stay");
+  expect(calls).toBe(1);
+
+  act(() => {
+    window.history.pushState(null, "", "/?keys=missing&keep=1#keys/stay");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(screen.queryByText("k-a")).toBeNull();
+  expect(screen.queryByText("k-b")).toBeNull();
+  expect(screen.queryByText("k-c")).toBeNull();
+  expect(screen.queryByText("There are no keys.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  expect((screen.getByLabelText("Filter keys") as HTMLInputElement).value).toBe("missing");
+  expect((screen.getByLabelText("Sort keys") as HTMLSelectElement).value).toBe("id");
+  expect(window.location.hash).toBe("#keys/stay");
+  expect(calls).toBe(1);
 });

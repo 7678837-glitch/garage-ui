@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
@@ -772,6 +772,71 @@ function DeleteBucketDialog({
   );
 }
 
+type BucketSort = "id" | "alias";
+
+type BucketQuery = {
+  filter: string;
+  sort: BucketSort;
+};
+
+function bucketSortFrom(value: string | null): BucketSort {
+  return value === "alias" ? "alias" : "id";
+}
+
+function readBucketQuery(): BucketQuery {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    filter: params.get("buckets") ?? "",
+    sort: bucketSortFrom(params.get("bucketsSort")),
+  };
+}
+
+function replaceListQuery(params: URLSearchParams) {
+  const search = params.toString();
+  const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.replaceState(window.history.state, "", next);
+  }
+}
+
+function writeBucketQuery(query: BucketQuery) {
+  const params = new URLSearchParams(window.location.search);
+  if (query.filter.length > 0) {
+    params.set("buckets", query.filter);
+  } else {
+    params.delete("buckets");
+  }
+  if (query.sort === "alias") {
+    params.set("bucketsSort", "alias");
+  } else {
+    params.delete("bucketsSort");
+  }
+  replaceListQuery(params);
+}
+
+function bucketMatches(bucket: Bucket, filter: string): boolean {
+  if (filter.length === 0) {
+    return true;
+  }
+  const needle = filter.toLowerCase();
+  if (bucket.id.toLowerCase().includes(needle)) {
+    return true;
+  }
+  return bucket.aliases.some((alias) => alias.name.toLowerCase().includes(needle));
+}
+
+function orderedBuckets(rows: Bucket[], sort: BucketSort): Bucket[] {
+  if (sort === "id") {
+    return rows;
+  }
+  return [...rows].sort((left, right) => {
+    const a = left.aliases.map((alias) => alias.name).join(", ").toLowerCase();
+    const b = right.aliases.map((alias) => alias.name).join(", ").toLowerCase();
+    return a.localeCompare(b);
+  });
+}
+
 export function Buckets({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -797,6 +862,16 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
     },
   });
   const rows = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const [query, setQuery] = useState(readBucketQuery);
+  useEffect(() => {
+    const sync = () => setQuery(readBucketQuery());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const shown = orderedBuckets(
+    rows.filter((bucket) => bucketMatches(bucket, query.filter)),
+    query.sort,
+  );
   const loading = list.isPending;
   const refreshing = rows.length > 0 && list.isFetching && !list.isPending;
   const view = {
@@ -831,6 +906,42 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
+      {!browsing ? (
+        <div className="grid max-w-sm gap-3">
+          <label className="block text-sm">
+            Filter buckets
+            <input
+              className="mt-1 w-full border border-neutral-900 px-2 py-1"
+              value={query.filter}
+              onChange={(event) => {
+                const next = { filter: event.target.value, sort: query.sort };
+                setQuery(next);
+                writeBucketQuery(next);
+              }}
+            />
+          </label>
+          <label className="block text-sm">
+            Sort buckets
+            <select
+              className="mt-1 w-full border border-neutral-900 px-2 py-1"
+              value={query.sort}
+              onChange={(event) => {
+                const next = {
+                  filter: query.filter,
+                  sort: bucketSortFrom(event.target.value),
+                };
+                setQuery(next);
+                writeBucketQuery(next);
+              }}
+            >
+              <option value="id">Id</option>
+              <option value="alias">Alias</option>
+            </select>
+          </label>
+          <p>Default order is Id.</p>
+          <p>Only loaded rows</p>
+        </div>
+      ) : null}
       {browsing ? (
         <Objects
           key={location.bucketId}
@@ -841,7 +952,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
         />
       ) : null}
       {view.empty ? <p>There are no buckets.</p> : null}
-      {!browsing && list.data && rows.length > 0 ? (
+      {!browsing && list.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -858,7 +969,7 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((bucket, index) => (
+              {shown.map((bucket, index) => (
                 <tr key={`${bucket.id}-${index}`}>
                   <td className="py-2 pr-3 align-top">
                     <span>{bucket.id}</span>
