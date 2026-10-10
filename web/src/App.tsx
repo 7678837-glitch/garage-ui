@@ -215,7 +215,7 @@ function Home({ status }: { status: SessionStatus }) {
         </button>
       </div>
       <Buckets canManage={status.role === "admin"} />
-      <Keys />
+      <Keys canManage={status.role === "admin"} />
       {status.role === "admin" && status.username ? (
         <Users selfUsername={status.username} />
       ) : null}

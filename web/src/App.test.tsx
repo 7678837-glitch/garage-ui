@@ -252,6 +252,11 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(screen.getByText("ada-key")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Rename key-ada" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "View secret for key-ada" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Allow create bucket for key-ada" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETADA");
 });
 
@@ -311,6 +316,17 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Add alias to bucket-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Rename key-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete key-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "View secret for key-bea" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Allow create bucket for key-bea" })).toBeNull();
+  expect(
+    fetchMock.mock.calls.filter((call) => {
+      const method = methodOf(call).toUpperCase();
+      return method !== "GET" && String(call[0]).includes("/api/keys");
+    }),
+  ).toEqual([]);
   expect(
     fetchMock.mock.calls.filter((call) => {
       const method = methodOf(call).toUpperCase();
