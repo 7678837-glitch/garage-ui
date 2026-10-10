@@ -412,3 +412,163 @@ test("adds and removes a local alias with its access key and keeps the draft whe
   });
   expect(calls.find((call) => call.method === "DELETE")?.url).toBe("/api/buckets/bkt-1/aliases");
 });
+
+test("shows object and byte usage, and says when a quota is not set", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 4,
+            bytes: 1000,
+            quotas: { maxSize: 5000, maxObjects: 12 },
+          },
+          {
+            id: "bkt-2",
+            objects: 2,
+            bytes: 3,
+            quotas: { maxSize: null, maxObjects: null },
+          },
+        ],
+        hasMore: false,
+      }),
+    ),
+  );
+  renderBuckets();
+  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
+  expect(screen.getByText("1000 of 5000 bytes (1.00 KB of 5.00 KB)")).toBeTruthy();
+  expect(screen.getByText("2 objects. Object quota is not set")).toBeTruthy();
+  expect(screen.getByText("3 bytes. Size quota is not set")).toBeTruthy();
+});
+
+test("sends an unchanged maxSize as the digit text from the list response", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  const bodies: string[] = [];
+  const page =
+    '{"items":[{"id":"bkt-1","objects":4,"bytes":1000,"quotas":{"maxSize":9007199254740993,"maxObjects":12}}],"hasMore":false}';
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PUT") {
+        bodies.push(String(init?.body));
+        return new Response(null, { status: 204 });
+      }
+      expect(String(input)).toContain("/api/buckets?");
+      expect(init?.credentials).toBe("include");
+      return new Response(page, { status: 200 });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
+  expect(
+    screen.getByText("1000 of 9007199254740993 bytes (1.00 KB of 9.007199254740993 PB)"),
+  ).toBeTruthy();
+  const size = screen.getByLabelText("Max size for bkt-1") as HTMLInputElement;
+  const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
+  expect(size.value).toBe("9007199254740993");
+  expect(objects.value).toBe("12");
+  fireEvent.change(objects, { target: { value: "13" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save quotas for bkt-1" }));
+  await waitFor(() => {
+    expect(bodies).toEqual(['{"maxSize":9007199254740993,"maxObjects":13}']);
+  });
+  expect(bodies[0]).not.toContain("websiteAccess");
+  expect(bodies[0]).not.toContain("corsRules");
+  expect(bodies[0]).not.toContain("lifecycleRules");
+  expect(size.value).toBe("9007199254740993");
+});
+
+test("clears both quotas with null and keeps the entered values when save fails", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  const bodies: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PUT") {
+        bodies.push(String(init?.body));
+        return json({ message: "Quota rejected" }, 409);
+      }
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 1,
+            bytes: 2,
+            quotas: { maxSize: 10, maxObjects: 20 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
+  const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
+  expect(size.value).toBe("10");
+  fireEvent.change(size, { target: { value: "" } });
+  fireEvent.change(objects, { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save quotas for bkt-1" }));
+  expect(await screen.findByText("Quota rejected")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(size.value).toBe("");
+  expect(objects.value).toBe("");
+  expect(bodies).toEqual(['{"maxSize":null,"maxObjects":null}']);
+  expect(screen.getByText("1 of 20 objects")).toBeTruthy();
+});
+
+test("hides the quota editor when the row has no quotas object", async () => {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(recordedCall(input, init));
+      return json({
+        items: [{ id: "bkt-1", objects: 4, bytes: 9, globalAliases: ["east"] }],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByText("4 objects")).toBeTruthy();
+  expect(screen.getByText("9 bytes")).toBeTruthy();
+  expect(screen.queryByText("Object quota is not set")).toBeNull();
+  expect(screen.queryByText("Size quota is not set")).toBeNull();
+  expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete bkt-1" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(calls.some((call) => call.method === "PUT")).toBe(false);
+});
+
+test("a viewer sees quota usage and does not call PUT", async () => {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(recordedCall(input, init));
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 4,
+            bytes: 1000,
+            quotas: { maxSize: 5000, maxObjects: 12 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(false);
+  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
+  expect(screen.getByText("1000 of 5000 bytes (1.00 KB of 5.00 KB)")).toBeTruthy();
+  expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
+  expect(calls.every((call) => call.method === "GET")).toBe(true);
+  expect(calls.some((call) => call.method === "PUT")).toBe(false);
+});
