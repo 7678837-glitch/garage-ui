@@ -276,7 +276,7 @@ export function ClusterNodes() {
   const message = nodes.error instanceof Error ? nodes.error.message : UNAVAILABLE;
   const connectFailure = connect.error instanceof Error ? connect.error.message : CONNECT_FAILED;
   return (
-    <section className="grid gap-4" aria-label="Cluster nodes">
+    <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
       <h2 className="text-lg font-semibold">Nodes</h2>
       <form className="grid gap-3" onSubmit={submit}>
         <label className="block">
@@ -297,9 +297,11 @@ export function ClusterNodes() {
       </form>
       {connect.isError ? <p>{`Connect: ${connectFailure}`}</p> : null}
       {lines !== null && lines.length > 0 ? (
-        <ul>
+        <ul className="min-w-0">
           {lines.map((line, index) => (
-            <li key={index}>{line}</li>
+            <li key={index} className="break-all">
+              {line}
+            </li>
           ))}
         </ul>
       ) : null}
@@ -307,12 +309,12 @@ export function ClusterNodes() {
       {nodes.isError ? <p>{message}</p> : null}
       {nodes.isSuccess && nodes.data.length === 0 ? <p>There are no nodes.</p> : null}
       {nodes.isSuccess && nodes.data.length > 0 ? (
-        <ul className="grid gap-3 text-sm">
+        <ul className="grid min-w-0 gap-3 text-sm">
           {nodes.data.map((node) => (
-            <li key={node.id}>
-              <p>{node.id}</p>
-              {node.hostname !== null ? <p>{node.hostname}</p> : null}
-              {node.addr !== null ? <p>{node.addr}</p> : null}
+            <li key={node.id} className="min-w-0">
+              <p className="break-all">{node.id}</p>
+              {node.hostname !== null ? <p className="break-all">{node.hostname}</p> : null}
+              {node.addr !== null ? <p className="break-all">{node.addr}</p> : null}
               {node.garageVersion !== null ? <p>{node.garageVersion}</p> : null}
               <p>{node.isUp ? "Up" : "Down"}</p>
               {node.draining ? <p>Draining</p> : null}

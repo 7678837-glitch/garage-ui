@@ -333,3 +333,43 @@ test("shows the connect API message in a paragraph and keeps the nodes", async (
   expect(screen.queryAllByRole("alert")).toHaveLength(0);
   expect(statusCalls()).toBe(before);
 });
+
+test("wraps a 64-character node id, hostname, address, and connect result", async () => {
+  const nodeId = "n".repeat(64);
+  const hostname = "h".repeat(64);
+  const address = "a".repeat(64);
+  const connectResult = "r".repeat(64);
+  installFetch(
+    "admin",
+    () =>
+      json({
+        nodes: [
+          {
+            id: nodeId,
+            hostname,
+            addr: address,
+            garageVersion: "v2.4.1",
+            isUp: true,
+            draining: false,
+          },
+        ],
+      }),
+    () => json([{ success: false, error: connectResult }]),
+  );
+  renderApp();
+  const id = await screen.findByText(nodeId);
+  expect(id.classList.contains("break-all")).toBe(true);
+  expect(id.closest("li")?.classList.contains("min-w-0")).toBe(true);
+  expect(screen.getByText(hostname).classList.contains("break-all")).toBe(true);
+  expect(screen.getByText(address).classList.contains("break-all")).toBe(true);
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "abcd@127.0.0.1:3901" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  const line = await screen.findByText(connectResult);
+  expect(line.classList.contains("break-all")).toBe(true);
+  expect(line.closest("ul")?.classList.contains("min-w-0")).toBe(true);
+  const items = screen.getAllByRole("listitem").map((item) => item.textContent);
+  expect(items).toContain(connectResult);
+  expect(items).toContain(`${nodeId}${hostname}${address}v2.4.1Up`);
+});

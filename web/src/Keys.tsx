@@ -455,7 +455,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const viewError = viewSecret.error instanceof Error ? viewSecret.error.message : null;
 
   return (
-    <section className="grid gap-4" aria-label="Keys" aria-busy={view.busy}>
+    <section className="grid min-w-0 gap-4" aria-label="Keys" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Keys</h2>
       {canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
       {view.busy ? <p>Loading keys</p> : null}
@@ -478,7 +478,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       {notice ? <p>{notice}</p> : null}
       {view.empty ? <p>There are no keys.</p> : null}
       {list.data && rows.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
@@ -498,10 +498,10 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <tbody>
               {rows.map((accessKey, index) => (
                 <tr key={`${accessKey.id}-${index}`}>
-                  <td className="py-2 pr-3 align-top">{accessKey.id}</td>
+                  <td className="break-all py-2 pr-3 align-top">{accessKey.id}</td>
                   <td className="py-2 align-top">{accessKey.name}</td>
                   {canManage ? (
-                    <td className="py-2 align-top">
+                    <td className="break-all py-2 align-top">
                       <button
                         className="mr-2 border border-ink px-2 py-1 text-left"
                         type="button"

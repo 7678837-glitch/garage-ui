@@ -695,3 +695,18 @@ test("shows the API message when a secret view fails and does not open the dialo
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("wraps a 64-character key id in the key cell and the actions cell", async () => {
+  const keyId = "k".repeat(64);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({ items: [{ id: keyId, name: "photos" }], hasMore: false })),
+  );
+  renderKeys(true);
+  const cell = await screen.findByRole("cell", { name: keyId });
+  expect(cell.classList.contains("break-all")).toBe(true);
+  expect(cell.closest("div")?.classList.contains("min-w-0")).toBe(true);
+  const actions = screen.getByRole("button", { name: `Delete ${keyId}` }).closest("td");
+  expect(actions?.classList.contains("break-all")).toBe(true);
+  expect(screen.getByRole("cell", { name: "photos" }).classList.contains("break-all")).toBe(false);
+});
