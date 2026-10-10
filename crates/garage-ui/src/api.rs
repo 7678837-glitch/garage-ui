@@ -77,6 +77,10 @@ pub fn routes(app: App) -> Router<App> {
         )
         .route("/api/buckets/{id}/objects", get(list_bucket_objects))
         .route(
+            "/api/buckets/{id}/objects:delete",
+            post(delete_bucket_objects),
+        )
+        .route(
             "/api/buckets/{id}/objects/{*key}",
             get(object_metadata).delete(delete_bucket_object),
         )
@@ -1624,6 +1628,49 @@ async fn delete_bucket_object(
     }
     objects::delete(&app, &id, &key).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_bucket_objects(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<objects::DeleteMany>, ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    let keys = delete_keys(&body)?;
+    let result = objects::delete_many(&app, &id, keys).await?;
+    Ok(Json(result))
+}
+
+fn invalid_keys() -> ApiError {
+    ApiError::bad_request("invalid_keys", "keys must be an array of strings")
+}
+
+fn delete_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_keys())?;
+    let Some(keys) = value.get("keys").and_then(Value::as_array) else {
+        return Err(invalid_keys());
+    };
+    if keys.is_empty() {
+        return Err(ApiError::bad_request(
+            "keys_required",
+            "At least one key is required",
+        ));
+    }
+    if keys.len() > 1000 {
+        return Err(ApiError::bad_request(
+            "too_many_keys",
+            "At most 1000 keys can be deleted at once",
+        ));
+    }
+    let mut out = Vec::with_capacity(keys.len());
+    for key in keys {
+        let Some(key) = key.as_str() else {
+            return Err(invalid_keys());
+        };
+        out.push(key.to_string());
+    }
+    Ok(out)
 }
 
 async fn cluster_health(
@@ -4809,6 +4856,7 @@ mod tests {
     struct S3Mock {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
+        bodies: Arc<Mutex<Vec<String>>>,
         task: tokio::task::JoinHandle<()>,
     }
 
@@ -4823,7 +4871,9 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let requests = Arc::new(Mutex::new(Vec::new()));
+            let bodies = Arc::new(Mutex::new(Vec::new()));
             let requests_task = Arc::clone(&requests);
+            let bodies_task = Arc::clone(&bodies);
             let reply = Arc::new(reply);
             let task = tokio::spawn(async move {
                 loop {
@@ -4831,6 +4881,7 @@ mod tests {
                         break;
                     };
                     let requests_task = Arc::clone(&requests_task);
+                    let bodies_task = Arc::clone(&bodies_task);
                     let reply = Arc::clone(&reply);
                     tokio::spawn(async move {
                         let mut buf = Vec::new();
@@ -4857,30 +4908,31 @@ mod tests {
                         };
                         let text = String::from_utf8_lossy(&buf[..header_end]);
                         let line = text.lines().next().unwrap_or("").to_string();
+                        let length = header_value(&text, "content-length")
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .unwrap_or(0);
+                        let mut body = buf[header_end + 4..].to_vec();
+                        while body.len() < length {
+                            let Ok(Ok(read)) =
+                                tokio::time::timeout(Duration::from_secs(2), socket.read(&mut tmp))
+                                    .await
+                            else {
+                                return;
+                            };
+                            if read == 0 {
+                                break;
+                            }
+                            body.extend_from_slice(&tmp[..read]);
+                        }
+                        body.truncate(length);
                         requests_task
                             .lock()
                             .expect("s3 requests")
                             .push(line.clone());
-                        if line.starts_with("PUT ") {
-                            let length = header_value(&text, "content-length")
-                                .and_then(|value| value.parse::<usize>().ok())
-                                .unwrap_or(0);
-                            let mut have = buf.len().saturating_sub(header_end.saturating_add(4));
-                            while have < length {
-                                let Ok(Ok(read)) = tokio::time::timeout(
-                                    Duration::from_secs(2),
-                                    socket.read(&mut tmp),
-                                )
-                                .await
-                                else {
-                                    return;
-                                };
-                                if read == 0 {
-                                    break;
-                                }
-                                have = have.saturating_add(read);
-                            }
-                        }
+                        bodies_task
+                            .lock()
+                            .expect("s3 bodies")
+                            .push(String::from_utf8_lossy(&body).into_owned());
                         let response = reply(&line);
                         let _ = socket.write_all(response.as_bytes()).await;
                         let _ = socket.shutdown().await;
@@ -4890,12 +4942,17 @@ mod tests {
             Self {
                 url: format!("http://127.0.0.1:{port}"),
                 requests,
+                bodies,
                 task,
             }
         }
 
         fn requests(&self) -> Vec<String> {
             self.requests.lock().expect("s3 requests").clone()
+        }
+
+        fn bodies(&self) -> Vec<String> {
+            self.bodies.lock().expect("s3 bodies").clone()
         }
     }
 
@@ -5513,6 +5570,107 @@ mod tests {
             "This bucket has no usable read-write key",
         );
         assert!(mock.requests().is_empty());
+    }
+
+    fn delete_result(deleted: &[&str], failed: &[(&str, &str)]) -> String {
+        let mut xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8"?><DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
+        );
+        for key in deleted {
+            xml.push_str(&format!("<Deleted><Key>{key}</Key></Deleted>"));
+        }
+        for (key, message) in failed {
+            xml.push_str(&format!(
+                "<Error><Key>{key}</Key><Code>AccessDenied</Code><Message>{message}</Message></Error>"
+            ));
+        }
+        xml.push_str("</DeleteResult>");
+        http_xml(&xml)
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_rejects_1001_keys_without_an_s3_call() {
+        let mock = S3Mock::start(|_| delete_result(&["a"], &[])).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let keys: Vec<_> = (0..1001).map(|index| format!("k{index}")).collect();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": keys }).to_string()),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "too_many_keys",
+            "At most 1000 keys can be deleted at once",
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_deletes_two_keys_in_one_call() {
+        let mock = S3Mock::start(|_| delete_result(&["a", "b"], &[])).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": ["a", "b"] }).to_string()),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({ "deleted": ["a", "b"], "failed": [] })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("POST "), "{}", seen[0]);
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert!(request_target(&seen[0]).contains("delete"), "{}", seen[0]);
+        let bodies = mock.bodies();
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
+        assert!(bodies[0].contains("<Key>a</Key>"), "{}", bodies[0]);
+        assert!(bodies[0].contains("<Key>b</Key>"), "{}", bodies[0]);
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_keeps_a_partial_error_in_failed() {
+        let mock = S3Mock::start(|_| delete_result(&["a"], &[("b", "denied by policy")])).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": ["a", "b"] }).to_string()),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({
+                "deleted": ["a"],
+                "failed": [{ "key": "b", "message": "denied by policy" }]
+            })
+        );
+        assert_eq!(mock.requests().len(), 1, "{:?}", mock.requests());
     }
 
     #[tokio::test]

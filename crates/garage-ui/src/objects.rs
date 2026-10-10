@@ -84,6 +84,18 @@ pub struct PutResult {
     pub size: u64,
 }
 
+#[derive(Serialize)]
+pub struct DeleteMany {
+    pub deleted: Vec<String>,
+    pub failed: Vec<DeleteFailure>,
+}
+
+#[derive(Serialize)]
+pub struct DeleteFailure {
+    pub key: String,
+    pub message: String,
+}
+
 enum S3Failure {
     Forbidden(String),
     NotFound,
@@ -214,6 +226,20 @@ pub async fn delete(app: &App, bucket_id: &str, key: &str) -> Result<(), ApiErro
                 other => other,
             }
         }
+    })
+    .await
+}
+
+pub async fn delete_many(
+    app: &App,
+    bucket_id: &str,
+    keys: Vec<String>,
+) -> Result<DeleteMany, ApiError> {
+    let bucket = bucket_id.to_string();
+    drive(app, bucket.clone(), move |client| {
+        let bucket = bucket.clone();
+        let keys = keys.clone();
+        async move { remove_objects(&client, &bucket, &keys).await }
     })
     .await
 }
@@ -450,6 +476,53 @@ async fn remove_object(client: &Client, bucket: &str, key: &str) -> Result<(), S
                 error.to_string(),
             )
         })
+}
+
+async fn remove_objects(
+    client: &Client,
+    bucket: &str,
+    keys: &[String],
+) -> Result<DeleteMany, S3Failure> {
+    let mut delete = aws_sdk_s3::types::Delete::builder();
+    for key in keys {
+        let id = aws_sdk_s3::types::ObjectIdentifier::builder()
+            .key(key.as_str())
+            .build()
+            .map_err(|_| S3Failure::Local)?;
+        delete = delete.objects(id);
+    }
+    let delete = delete.build().map_err(|_| S3Failure::Local)?;
+    let output = client
+        .delete_objects()
+        .bucket(bucket)
+        .delete(delete)
+        .send()
+        .await
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+    Ok(DeleteMany {
+        deleted: output
+            .deleted()
+            .iter()
+            .filter_map(|item| item.key().map(str::to_string))
+            .collect(),
+        failed: output
+            .errors()
+            .iter()
+            .filter_map(|item| {
+                item.key().map(|key| DeleteFailure {
+                    key: key.to_string(),
+                    message: item.message().unwrap_or("").to_string(),
+                })
+            })
+            .collect(),
+    })
 }
 
 struct ReplayBody {
