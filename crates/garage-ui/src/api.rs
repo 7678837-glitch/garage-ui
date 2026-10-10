@@ -59,6 +59,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/change-password", post(change_password))
         .route("/api/config", get(public_config))
+        .route("/api/capabilities", get(capabilities))
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/{id}", patch(patch_user).delete(remove_user))
         .route("/api/users/{id}/reset-password", post(reset_password))
@@ -453,6 +454,23 @@ async fn public_config(State(app): State<App>, Authed(_current): Authed) -> Json
         website_root_domain: app.settings.website_root_domain.clone(),
         share_enabled: app.settings.share_enabled(),
         version: version().to_string(),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Capabilities {
+    version: &'static str,
+    list_buckets_info: proxy::Probe,
+    list_keys_info: proxy::Probe,
+}
+
+async fn capabilities(State(app): State<App>, Authed(_current): Authed) -> Json<Capabilities> {
+    let probes = proxy::list_probes(app.settings.garage_admin_url.as_deref());
+    Json(Capabilities {
+        version: version(),
+        list_buckets_info: probes.buckets,
+        list_keys_info: probes.keys,
     })
 }
 
@@ -4382,5 +4400,302 @@ mod tests {
                 .iter()
                 .all(|line| !line.contains("ConnectClusterNodes"))
         );
+    }
+
+    struct InfoSocket {
+        url: String,
+        hits: Arc<AtomicUsize>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for InfoSocket {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl InfoSocket {
+        async fn start(info_status: u16) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let hits_task = Arc::clone(&hits);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    hits_task.fetch_add(1, Ordering::SeqCst);
+                    let _ = answer_info(socket, info_status).await;
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                hits,
+                task,
+            }
+        }
+
+        fn hits(&self) -> usize {
+            self.hits.load(Ordering::SeqCst)
+        }
+    }
+
+    async fn answer_info(
+        mut socket: tokio::net::TcpStream,
+        info_status: u16,
+    ) -> std::io::Result<()> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 1024];
+        loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 65536 {
+                break;
+            }
+        }
+        let text = String::from_utf8_lossy(&buf);
+        let line = text.lines().next().unwrap_or("");
+        let target = line.split_whitespace().nth(1).unwrap_or("");
+        let path = target.split('?').next().unwrap_or("");
+        let (status, body) = info_reply(path, info_status);
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await?;
+        let _ = socket.shutdown().await;
+        Ok(())
+    }
+
+    fn info_reply(path: &str, info_status: u16) -> (&'static str, String) {
+        if path.ends_with("ListBucketsInfo") || path.ends_with("ListKeysInfo") {
+            if info_status == 404 {
+                return ("404 Not Found", r#"{"error":"missing"}"#.to_string());
+            }
+            return ("200 OK", r#"[{"id":"item-1"}]"#.to_string());
+        }
+        if path.ends_with("ListBuckets") || path.ends_with("ListKeys") {
+            return ("200 OK", r#"[{"id":"item-1"}]"#.to_string());
+        }
+        if path.ends_with("GetBucketInfo") || path.ends_with("GetKeyInfo") {
+            return ("200 OK", r#"{"id":"item-1"}"#.to_string());
+        }
+        ("404 Not Found", r#"{"error":"missing"}"#.to_string())
+    }
+
+    fn capability_body(version: &Value, buckets: &str, keys: &str) -> Value {
+        json!({
+            "version": version,
+            "listBucketsInfo": buckets,
+            "listKeysInfo": keys,
+        })
+    }
+
+    #[tokio::test]
+    async fn capabilities_are_unknown_before_any_list_and_a_viewer_can_read_them() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_task = Arc::clone(&hits);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_task.fetch_add(1, Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &format!("http://127.0.0.1:{port}")).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let missing = exchange(&app, request("GET", "/api/capabilities", None, None)).await;
+        assert_error(
+            &missing,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        let health = exchange(&app, request("GET", "/healthz", None, None)).await;
+        assert_eq!(health.status, StatusCode::OK, "{}", health.body);
+        let health_body: Value = serde_json::from_str(&health.body).unwrap();
+        let response = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&viewer)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            capability_body(&health_body["version"], "unknown", "unknown")
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        let bare = crate::util::temp_dir();
+        let plain = state::test_app(&bare).await;
+        let (plain_admin, _) = login(&plain).await;
+        let plain_caps = exchange(
+            &plain,
+            request("GET", "/api/capabilities", None, Some(&plain_admin)),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&plain_caps.body).unwrap(),
+            capability_body(&health_body["version"], "unknown", "unknown")
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn capabilities_follow_info_404_and_info_200() {
+        let absent = InfoSocket::start(404).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &absent.url).await;
+        let (admin, _) = login(&app).await;
+        let health = exchange(&app, request("GET", "/healthz", None, None)).await;
+        let health_body: Value = serde_json::from_str(&health.body).unwrap();
+        let before = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&before.body).unwrap(),
+            capability_body(&health_body["version"], "unknown", "unknown")
+        );
+        assert_eq!(absent.hits(), 0);
+        let buckets = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(buckets.status, StatusCode::OK, "{}", buckets.body);
+        let after_buckets = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&admin)),
+        )
+        .await;
+        let after_buckets_hits = absent.hits();
+        assert_eq!(
+            serde_json::from_str::<Value>(&after_buckets.body).unwrap(),
+            capability_body(&health_body["version"], "absent", "unknown")
+        );
+        let again = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(again.body, after_buckets.body);
+        assert_eq!(absent.hits(), after_buckets_hits);
+        let keys = exchange(
+            &app,
+            request("GET", "/api/keys?limit=1", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(keys.status, StatusCode::OK, "{}", keys.body);
+        let after_keys = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&after_keys.body).unwrap(),
+            capability_body(&health_body["version"], "absent", "absent")
+        );
+
+        let present = InfoSocket::start(200).await;
+        let other = crate::util::temp_dir();
+        let app2 = app_for(&other, &present.url).await;
+        let (admin2, _) = login(&app2).await;
+        let listed = exchange(
+            &app2,
+            request("GET", "/api/buckets?limit=1", None, Some(&admin2)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let shown = exchange(
+            &app2,
+            request("GET", "/api/capabilities", None, Some(&admin2)),
+        )
+        .await;
+        let shown_hits = present.hits();
+        assert_eq!(
+            serde_json::from_str::<Value>(&shown.body).unwrap(),
+            capability_body(&health_body["version"], "present", "unknown")
+        );
+        let shown_again = exchange(
+            &app2,
+            request("GET", "/api/capabilities", None, Some(&admin2)),
+        )
+        .await;
+        assert_eq!(shown_again.body, shown.body);
+        assert_eq!(present.hits(), shown_hits);
+        let listed_keys = exchange(
+            &app2,
+            request("GET", "/api/keys?limit=1", None, Some(&admin2)),
+        )
+        .await;
+        assert_eq!(listed_keys.status, StatusCode::OK, "{}", listed_keys.body);
+        let both = exchange(
+            &app2,
+            request("GET", "/api/capabilities", None, Some(&admin2)),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&both.body).unwrap(),
+            capability_body(&health_body["version"], "present", "present")
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_failure_leaves_capabilities_unknown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_task = Arc::clone(&hits);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_task.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0_u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &format!("http://127.0.0.1:{port}")).await;
+        let (admin, _) = login(&app).await;
+        let failed = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1", None, Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &failed,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage admin API is not reachable",
+        );
+        let tried = hits.load(Ordering::SeqCst);
+        assert!(tried > 0, "the list did not reach the upstream");
+        let health = exchange(&app, request("GET", "/healthz", None, None)).await;
+        let health_body: Value = serde_json::from_str(&health.body).unwrap();
+        let response = exchange(
+            &app,
+            request("GET", "/api/capabilities", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            capability_body(&health_body["version"], "unknown", "unknown")
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), tried);
+        task.abort();
     }
 }
