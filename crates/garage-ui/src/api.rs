@@ -1077,10 +1077,7 @@ mod tests {
                     hits_task.fetch_add(1, Ordering::SeqCst);
                     let mut buf = Vec::new();
                     let mut tmp = [0_u8; 1024];
-                    loop {
-                        let Ok(read) = socket.read(&mut tmp).await else {
-                            break;
-                        };
+                    while let Ok(read) = socket.read(&mut tmp).await {
                         if read == 0 {
                             break;
                         }
