@@ -1,4 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render as renderTree, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { UploadPanel } from "./UploadPanel";
 
@@ -82,6 +84,14 @@ function row(name: string): HTMLElement {
     throw new Error(`missing row ${name}`);
   }
   return item;
+}
+
+function render(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  renderTree(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return client;
 }
 
 test("keeps a fourth file queued until an upload slot frees", async () => {
@@ -235,6 +245,29 @@ test("clear finished removes done, failed, and cancelled rows", async () => {
   expect(screen.queryByText("stop.txt")).toBeNull();
   expect(row("wait.txt").textContent).toContain("Uploading");
   expect(row("wait.txt").textContent).not.toContain("Cancelled");
+});
+
+test("refetches bucket objects after a successful upload", async () => {
+  const client = render(<UploadPanel bucketId="bkt-9" existingKeys={[]} />);
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  choose(["done.txt"]);
+  await act(async () => {
+    FakeRequest.sent[0]?.succeed();
+  });
+  expect(row("done.txt").textContent).toContain("Done");
+  expect(invalidate).toHaveBeenCalledTimes(1);
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["bucket-objects", "bkt-9"] });
+});
+
+test("does not refetch bucket objects after a failed upload", async () => {
+  const client = render(<UploadPanel bucketId="bkt-9" existingKeys={[]} />);
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  choose(["bad.txt"]);
+  await act(async () => {
+    FakeRequest.sent[0]?.fail();
+  });
+  expect(row("bad.txt").textContent).toContain("Failed");
+  expect(invalidate).not.toHaveBeenCalled();
 });
 
 test("accepts a dropped file", () => {
