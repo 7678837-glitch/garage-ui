@@ -204,6 +204,7 @@ pub async fn put(
     bucket_id: &str,
     key: &str,
     size: u64,
+    content_type: Option<String>,
     body: axum::body::Body,
 ) -> Result<PutResult, ApiError> {
     let bucket = bucket_id.to_string();
@@ -219,9 +220,10 @@ pub async fn put(
             let bucket = bucket.clone();
             let key = key.clone();
             let replay = Arc::clone(&replay);
+            let content_type = content_type.clone();
             async move {
                 let stream = replay.byte_stream().await?;
-                put_with(&client, &bucket, &key, length, stream).await
+                put_with(&client, &bucket, &key, length, content_type, stream).await
             }
         }
     })
@@ -477,24 +479,32 @@ async fn put_with(
     bucket: &str,
     key: &str,
     length: i64,
+    content_type: Option<String>,
     body: ByteStream,
 ) -> Result<String, S3Failure> {
-    let output = client
+    let omit_default_type = content_type.is_none();
+    let mut operation = client
         .put_object()
         .bucket(bucket)
         .key(key)
         .content_length(length)
+        .set_content_type(content_type)
         .body(body)
-        .send()
-        .await
-        .map_err(|error| {
-            classify(
-                error
-                    .raw_response()
-                    .map(|response| response.status().as_u16()),
-                error.to_string(),
-            )
-        })?;
+        .customize();
+    // SDK 在没收到类型时会补 application/octet-stream。调用方没给类型时，签名前去掉这个默认头。
+    if omit_default_type {
+        operation = operation.mutate_request(|request| {
+            request.headers_mut().remove("content-type");
+        });
+    }
+    let output = operation.send().await.map_err(|error| {
+        classify(
+            error
+                .raw_response()
+                .map(|response| response.status().as_u16()),
+            error.to_string(),
+        )
+    })?;
     Ok(plain_etag(output.e_tag().unwrap_or("")))
 }
 

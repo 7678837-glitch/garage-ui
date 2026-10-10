@@ -1503,6 +1503,14 @@ async fn share(
     Err(ApiError::forbidden("forbidden", "Not allowed"))
 }
 
+fn upload_content_type(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+}
+
 fn upload_length(headers: &HeaderMap, limit: u64) -> Result<u64, ApiError> {
     let Some(length) = headers
         .get("content-length")
@@ -1546,7 +1554,8 @@ async fn put_bucket_object(
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
     require(&current.user, Op::WriteObjects)?;
     let size = upload_length(&headers, app.settings.max_upload_bytes)?;
-    let stored = objects::put(&app, &id, &key, size, body).await?;
+    let content_type = upload_content_type(&headers);
+    let stored = objects::put(&app, &id, &key, size, content_type, body).await?;
     Ok((StatusCode::CREATED, Json(stored)))
 }
 
@@ -1993,7 +2002,7 @@ mod tests {
     use std::time::Duration;
 
     use axum::body::Body;
-    use axum::http::{HeaderMap, Request, StatusCode};
+    use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -4936,6 +4945,7 @@ mod tests {
     struct S3Mock {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
+        content_types: Arc<Mutex<Vec<Option<String>>>>,
         bodies: Arc<Mutex<Vec<String>>>,
         task: tokio::task::JoinHandle<()>,
     }
@@ -4951,8 +4961,10 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let requests = Arc::new(Mutex::new(Vec::new()));
+            let content_types = Arc::new(Mutex::new(Vec::new()));
             let bodies = Arc::new(Mutex::new(Vec::new()));
             let requests_task = Arc::clone(&requests);
+            let content_types_task = Arc::clone(&content_types);
             let bodies_task = Arc::clone(&bodies);
             let reply = Arc::new(reply);
             let task = tokio::spawn(async move {
@@ -4961,6 +4973,7 @@ mod tests {
                         break;
                     };
                     let requests_task = Arc::clone(&requests_task);
+                    let content_types_task = Arc::clone(&content_types_task);
                     let bodies_task = Arc::clone(&bodies_task);
                     let reply = Arc::clone(&reply);
                     tokio::spawn(async move {
@@ -4988,6 +5001,7 @@ mod tests {
                         };
                         let text = String::from_utf8_lossy(&buf[..header_end]);
                         let line = text.lines().next().unwrap_or("").to_string();
+                        let content_type = header_value(&text, "content-type").map(str::to_string);
                         let length = header_value(&text, "content-length")
                             .and_then(|value| value.parse::<usize>().ok())
                             .unwrap_or(0);
@@ -5009,6 +5023,10 @@ mod tests {
                             .lock()
                             .expect("s3 requests")
                             .push(line.clone());
+                        content_types_task
+                            .lock()
+                            .expect("s3 content types")
+                            .push(content_type);
                         bodies_task
                             .lock()
                             .expect("s3 bodies")
@@ -5022,6 +5040,7 @@ mod tests {
             Self {
                 url: format!("http://127.0.0.1:{port}"),
                 requests,
+                content_types,
                 bodies,
                 task,
             }
@@ -5029,6 +5048,10 @@ mod tests {
 
         fn requests(&self) -> Vec<String> {
             self.requests.lock().expect("s3 requests").clone()
+        }
+
+        fn content_types(&self) -> Vec<Option<String>> {
+            self.content_types.lock().expect("s3 content types").clone()
         }
 
         fn bodies(&self) -> Vec<String> {
@@ -5414,6 +5437,65 @@ mod tests {
         assert!(seen[0].starts_with("PUT "), "{}", seen[0]);
         assert_eq!(bucket_of(&seen[0]), "bkt-1");
         assert_eq!(object_key_of(&seen[0]), "photos/a.txt");
+        assert_eq!(mock.content_types(), vec![None]);
+    }
+
+    #[tokio::test]
+    async fn object_put_forwards_text_plain_and_omits_an_empty_type() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            put_ok("abc123")
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let uri = "/api/buckets/bkt-1/objects/photos/a.txt";
+        let mut typed = put_bytes(uri, b"hello", Some("5"), &session);
+        typed
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("text/plain"));
+        let typed_response = exchange(&app, typed).await;
+        assert_eq!(
+            typed_response.status,
+            StatusCode::CREATED,
+            "{}",
+            typed_response.body
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&typed_response.body).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "abc123", "size": 5 })
+        );
+        let mut empty = put_bytes(uri, b"hello", Some("5"), &session);
+        empty
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static(""));
+        let empty_response = exchange(&app, empty).await;
+        assert_eq!(
+            empty_response.status,
+            StatusCode::CREATED,
+            "{}",
+            empty_response.body
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&empty_response.body).unwrap(),
+            json!({ "key": "photos/a.txt", "etag": "abc123", "size": 5 })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for line in &seen {
+            assert!(line.starts_with("PUT "), "{line}");
+            assert_eq!(bucket_of(line), "bkt-1");
+            assert_eq!(object_key_of(line), "photos/a.txt");
+        }
+        assert_eq!(
+            mock.bodies(),
+            vec!["hello".to_string(), "hello".to_string()]
+        );
+        assert_eq!(
+            mock.content_types(),
+            vec![Some("text/plain".to_string()), None]
+        );
     }
 
     #[tokio::test]
