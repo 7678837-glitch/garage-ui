@@ -40,6 +40,9 @@ test("shows health status when the session is authenticated", async () => {
           { status: 200 },
         );
       }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+      }
       return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
     }),
   );
@@ -102,6 +105,9 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
           { status: 200 },
         );
       }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+      }
       return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
     }),
   );
@@ -153,6 +159,9 @@ test("shows user management for an admin and locks that signed-in row", async ()
           { status: 200 },
         );
       }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+      }
       return new Response("no", { status: 500 });
     }),
   );
@@ -195,9 +204,13 @@ test("hides user management from a viewer", async () => {
   expect(await screen.findByText("ok · test")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
+    false,
+  );
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
     false,
   );
 });
@@ -245,6 +258,9 @@ test("shows a bucket id and its alias to an admin", async () => {
           }),
           { status: 200 },
         );
+      }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
       }
       return new Response("no", { status: 500 });
     }),
@@ -320,7 +336,11 @@ test("shows a bucket id to a viewer", async () => {
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
     false,
   );
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
+    false,
+  );
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();

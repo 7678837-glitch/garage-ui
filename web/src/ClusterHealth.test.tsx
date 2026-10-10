@@ -91,6 +91,9 @@ function stubFetch(
     if (url === "/api/cluster/statistics") {
       return statisticsResponse;
     }
+    if (url === "/api/cluster/status") {
+      return json({ nodes: [] });
+    }
     if (url.includes("/healthz")) {
       return json({ status: "ok", version: "test" });
     }
@@ -178,6 +181,10 @@ test("does not show cluster health to a viewer or request it", async () => {
   expect(
     fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/statistics")),
   ).toBe(false);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
+    false,
+  );
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
 });
 
 test("shows a byte count past 2^53 from the response text and says a null field is not set", async () => {
