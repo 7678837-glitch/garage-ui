@@ -177,11 +177,29 @@ async fn probe_node_info(app: &App) -> GarageLink {
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return GarageLink::unknown();
     };
-    GarageLink::from_reported(
-        value
-            .get("garageVersion")
-            .and_then(|version| version.as_str()),
-    )
+    GarageLink::from_reported(reported_garage_version(&value))
+}
+
+// v2.4.1 的 GetNodeInfo 是 MultiResponse，garageVersion 在 success 的节点对象里。
+fn reported_garage_version(value: &Value) -> Option<&str> {
+    if let Some(version) = value.get("garageVersion").and_then(Value::as_str) {
+        return Some(version);
+    }
+    let Some(nodes) = value.get("success").and_then(Value::as_object) else {
+        return None;
+    };
+    let mut found: Option<&str> = None;
+    for node in nodes.values() {
+        let Some(version) = node.get("garageVersion").and_then(Value::as_str) else {
+            continue;
+        };
+        match found {
+            None => found = Some(version),
+            Some(current) if current == version => {}
+            Some(_) => return None,
+        }
+    }
+    found
 }
 
 pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
@@ -616,6 +634,16 @@ mod lists {
             .await
             .map_err(ProbeMiss::Down)?;
         if upstream.status == StatusCode::NOT_FOUND {
+            return Err(ProbeMiss::Absent);
+        }
+        // v2.4.1 对未发布的列表接口回 400，正文含这句，和 404 一样表示接口不存在。
+        const UNKNOWN_ENDPOINT: &[u8] = b"Unknown API endpoint";
+        if upstream.status == StatusCode::BAD_REQUEST
+            && upstream
+                .bytes
+                .windows(UNKNOWN_ENDPOINT.len())
+                .any(|window| window == UNKNOWN_ENDPOINT)
+        {
             return Err(ProbeMiss::Absent);
         }
         if upstream.status.is_client_error() || upstream.status.is_server_error() {
@@ -1126,6 +1154,56 @@ mod tests {
         );
     }
 
+    fn reported_link(value: serde_json::Value) -> GarageLink {
+        GarageLink::from_reported(reported_garage_version(&value))
+    }
+
+    #[test]
+    fn reported_garage_version_keeps_flat_v2_4_1() {
+        let link = reported_link(json!({"garageVersion": "v2.4.1"}));
+        assert_eq!(link.version.as_deref(), Some("v2.4.1"));
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_reads_nested_v2_4_1() {
+        let link = reported_link(json!({
+            "success": {"node-a": {"garageVersion": "v2.4.1"}},
+            "error": {}
+        }));
+        assert_eq!(link.version.as_deref(), Some("v2.4.1"));
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_reads_nested_v2_2_9() {
+        let link = reported_link(json!({
+            "success": {"node-a": {"garageVersion": "v2.2.9", "role": "gateway"}},
+            "error": {}
+        }));
+        assert_eq!(link.version.as_deref(), Some("v2.2.9"));
+        assert!(!link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_empty_success_has_no_version() {
+        let link = reported_link(json!({"success": {}, "error": {}}));
+        assert_eq!(link.version, None);
+        assert!(link.writes_allowed);
+    }
+
+    #[test]
+    fn reported_garage_version_conflict_has_no_version() {
+        let link = reported_link(json!({
+            "success": {
+                "node-a": {"garageVersion": "v2.4.1"},
+                "node-b": {"garageVersion": "v2.2.9"}
+            },
+            "error": {}
+        }));
+        assert_eq!(link.version, None);
+    }
+
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -1284,6 +1362,19 @@ mod tests {
     fn info_page(status: u16, count: usize, target: &str) -> (&'static str, String) {
         if status == 404 {
             return ("404 Not Found", r#"{"error":"not found"}"#.to_string());
+        }
+        if status == 400 {
+            return (
+                "400 Bad Request",
+                r#"{"message":"Unknown API endpoint"}"#.to_string(),
+            );
+        }
+        // 422 只给测试用：线上仍是 400，但 message 不含未知端点，不能当成接口不存在。
+        if status == 422 {
+            return (
+                "400 Bad Request",
+                r#"{"message":"limit is not valid"}"#.to_string(),
+            );
         }
         let limit = query(target, "limit")
             .and_then(|value| value.parse::<usize>().ok())
@@ -1674,6 +1765,98 @@ mod tests {
                 .iter()
                 .all(|line| !line.contains("ListBuckets "))
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_endpoint_list_falls_back_to_id_lists() {
+        let mock = Mock::start(MockOpts {
+            buckets: 2,
+            keys: 3,
+            bucket_info: 400,
+            key_info: 400,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        let buckets = list_buckets(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&buckets), ["00000", "00001"]);
+        assert!(!buckets.more);
+        assert_eq!(buckets.items[0]["via"], "detail");
+        let keys = list_keys(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&keys), ["00000", "00001", "00002"]);
+        assert!(!keys.more);
+        assert_eq!(keys.items[0]["via"], "detail");
+        let probes = list_probes(app.settings.garage_admin_url.as_deref());
+        assert!(probes.buckets == Probe::Absent);
+        assert!(probes.keys == Probe::Absent);
+        let lines = mock.lines();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListKeysInfo"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBuckets "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListKeys "))
+                .count(),
+            1
+        );
+        let again = list_buckets(&app, 0, 10).await.unwrap();
+        assert_eq!(ids_of(&again), ["00000", "00001"]);
+        assert_eq!(again.items[0]["via"], "detail");
+        assert_eq!(
+            mock.lines()
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_endpoint_list_falls_back_leaves_other_400_down() {
+        let mock = Mock::start(MockOpts {
+            buckets: 2,
+            keys: 0,
+            bucket_info: 422,
+            key_info: 404,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        assert!(list_buckets(&app, 0, 10).await.is_err());
+        let lines = mock.lines();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("ListBucketsInfo"))
+                .count(),
+            1
+        );
+        assert!(lines.iter().all(|line| !line.contains("ListBuckets ")));
+        assert!(lines.iter().all(|line| !line.contains("GetBucketInfo")));
+        let probes = list_probes(app.settings.garage_admin_url.as_deref());
+        assert!(probes.buckets != Probe::Absent);
+        assert!(probes.keys != Probe::Absent);
     }
 
     #[tokio::test]
