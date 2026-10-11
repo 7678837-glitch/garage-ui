@@ -567,7 +567,21 @@ async fn create_user(
     Authed(current): Authed,
     Json(body): Json<NewUser>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ManageUsers)?;
+    if let Err(error) = require(&current.user, Op::ManageUsers) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/users",
+            &body.username,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     if let Err(error) = validate_username(&body.username) {
         record(
             &app,
@@ -684,7 +698,22 @@ async fn patch_user(
     Path(id): Path<i64>,
     Json(body): Json<UserPatch>,
 ) -> Result<Json<Value>, ApiError> {
-    require(&current.user, Op::ManageUsers)?;
+    if let Err(error) = require(&current.user, Op::ManageUsers) {
+        let target = id.to_string();
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "PATCH",
+            "/api/users",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let _guard = app.write.lock().await;
     let target = match load_user(&app, id).await {
         Ok(user) => user,
@@ -819,7 +848,22 @@ async fn remove_user(
     Authed(current): Authed,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    require(&current.user, Op::ManageUsers)?;
+    if let Err(error) = require(&current.user, Op::ManageUsers) {
+        let target = id.to_string();
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "DELETE",
+            "/api/users",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let _guard = app.write.lock().await;
     let target = match load_user(&app, id).await {
         Ok(user) => user,
@@ -893,7 +937,22 @@ async fn reset_password(
     Path(id): Path<i64>,
     Json(body): Json<ResetBody>,
 ) -> Result<StatusCode, ApiError> {
-    require(&current.user, Op::ManageUsers)?;
+    if let Err(error) = require(&current.user, Op::ManageUsers) {
+        let target = id.to_string();
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/users/reset-password",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let target = match load_user(&app, id).await {
         Ok(user) => user,
         Err(error) => {
@@ -7836,6 +7895,138 @@ mod tests {
             .expect("user");
         assert_eq!(admin_user["role"], "admin");
         assert_eq!(admin_user["disabled"], false);
+    }
+
+    #[tokio::test]
+    async fn user_write_denials_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let admin_id = users
+            .iter()
+            .find(|user| user["username"] == "Ada")
+            .expect("admin")["id"]
+            .as_i64()
+            .expect("id");
+        let admin_target = admin_id.to_string();
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&created, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{admin_id}"),
+                Some(&json!({}).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&patched, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, admin_target);
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                &format!("/api/users/{admin_id}"),
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&removed, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 3, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, admin_target);
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let reset = exchange(
+            &app,
+            request(
+                "POST",
+                &format!("/api/users/{admin_id}/reset-password"),
+                Some(&json!({ "password": PASSWORD }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&reset, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 4, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users/reset-password");
+        assert_eq!(row.target, admin_target);
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains(PASSWORD));
+        assert!(!audit_text(&rows[1]).contains(PASSWORD));
+        assert!(!audit_text(&rows[2]).contains(PASSWORD));
+        assert!(!audit_text(&rows[3]).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
+
+        let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        let names: Vec<_> = users
+            .iter()
+            .map(|user| user["username"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["Ada", "Bea"]);
     }
 
     #[tokio::test]
