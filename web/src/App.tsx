@@ -1,6 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type Query,
+  type QueryCache,
+  type QueryCacheNotifyEvent,
+} from "@tanstack/react-query";
+import { useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
@@ -167,17 +174,57 @@ function useHashSection(role: string) {
   return { section: sectionFromHash(hash, role), select };
 }
 
+function queryIsGarageDown(query: Query): boolean {
+  return isGarageDown(query.state.error) || isGarageDown(query.state.fetchFailureReason);
+}
+
+function rememberGarageQuery(held: Set<string>, query: Query) {
+  if (queryIsGarageDown(query)) {
+    held.add(query.queryHash);
+    return;
+  }
+  if (query.state.fetchStatus === "idle") {
+    held.delete(query.queryHash);
+  }
+}
+
+function garageBannerOn(cache: QueryCache, held: ReadonlySet<string>): boolean {
+  if (cache.getAll().some(queryIsGarageDown)) {
+    return true;
+  }
+  for (const hash of held) {
+    const query = cache.get(hash);
+    if (query && query.state.fetchStatus !== "idle") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function GarageBanner() {
   const client = useQueryClient();
   const cache = client.getQueryCache();
+  // 没有 data 时 fetch 会清掉 error 和 fetchFailureReason，重试间隔里 error 仍是 null。
+  // 横幅若只读 state.error，这两段时间会卸掉。记下尚未空闲恢复的查询。
+  const held = useRef(new Set<string>());
   // 横幅看的是整份 query cache。只订阅本组件自己的 query 会漏掉别的区块。
   const subscribe = useCallback(
-    (onStoreChange: () => void) => cache.subscribe(onStoreChange),
+    (onStoreChange: () => void) => {
+      for (const query of cache.getAll()) {
+        rememberGarageQuery(held.current, query);
+      }
+      return cache.subscribe((event: QueryCacheNotifyEvent) => {
+        if (event.type === "removed") {
+          held.current.delete(event.query.queryHash);
+        } else {
+          rememberGarageQuery(held.current, event.query);
+        }
+        onStoreChange();
+      });
+    },
     [cache],
   );
-  const down = useSyncExternalStore(subscribe, () =>
-    cache.getAll().some((query) => isGarageDown(query.state.error)),
-  );
+  const down = useSyncExternalStore(subscribe, () => garageBannerOn(cache, held.current));
   if (!down) {
     return null;
   }
@@ -190,7 +237,7 @@ function GarageBanner() {
         onClick={() => {
           void client.refetchQueries({
             type: "all",
-            predicate: (query) => isGarageDown(query.state.error),
+            predicate: (query) => queryIsGarageDown(query),
           });
         }}
       >
