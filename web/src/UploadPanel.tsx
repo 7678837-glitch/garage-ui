@@ -406,7 +406,7 @@ export function UploadPanel({
       <label className="grid gap-1">
         Choose files
         <input
-          className="border border-ink px-3 py-1"
+          className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
           multiple
           type="file"
           onChange={(event) => {
@@ -418,7 +418,7 @@ export function UploadPanel({
       <label className="grid gap-1">
         Choose folder
         <input
-          className="border border-ink px-3 py-1"
+          className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
           multiple
           type="file"
           webkitdirectory=""
