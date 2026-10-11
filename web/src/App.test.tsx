@@ -868,6 +868,74 @@ test("shows one Garage banner when the bucket list is down and clears it after R
   expect(healthCalls).toBe(healthBefore);
 });
 
+test("keeps the Garage banner while a down bucket list refetch has not settled", async () => {
+  window.location.hash = "#buckets";
+  let bucketCalls = 0;
+  let secondSettled = false;
+  let releaseSecond: () => void = () => {};
+  const secondResponse = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/buckets")) {
+        bucketCalls += 1;
+        if (bucketCalls > 1) {
+          await secondResponse;
+          secondSettled = true;
+        }
+        return new Response(
+          JSON.stringify({
+            code: "garage_unavailable",
+            message: "Garage admin API is not reachable",
+          }),
+          { status: 502 },
+        );
+      }
+      return new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 });
+    }),
+  );
+  renderApp();
+  const alerts = await screen.findAllByRole("alert");
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0]?.textContent).toBe("Garage admin API is not reachable");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => {
+    expect(bucketCalls).toBe(2);
+    expect(screen.getByRole("alert").textContent).toBe("Garage admin API is not reachable");
+  });
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  releaseSecond();
+  await waitFor(() => {
+    expect(secondSettled).toBe(true);
+    expect(screen.queryByText("Loading buckets")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toBe("Garage admin API is not reachable");
+  });
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  const buckets = screen.getByRole("region", { name: "Buckets" });
+  expect(buckets.textContent ?? "").not.toContain("garage_unavailable");
+});
+
 test("an admin with the download bit off still sees upload, delete, preview, and download", async () => {
   window.location.hash = "#buckets/bucket-bea/";
   vi.stubGlobal("fetch", objectBrowserResponse("admin", false));
