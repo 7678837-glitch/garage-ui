@@ -88,6 +88,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
+        .route("/api/admin-tokens", get(list_admin_tokens))
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route("/api/objects/thumbnail", get(thumbnail_object))
@@ -1900,6 +1901,61 @@ fn delete_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
         };
         out.push(key.to_string());
     }
+    Ok(out)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminTokenListItem {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    #[serde(default)]
+    created: Option<String>,
+    #[serde(default)]
+    expiration: Option<String>,
+    expired: bool,
+    scope: Vec<String>,
+    #[serde(default, skip_deserializing)]
+    from_config: bool,
+}
+
+fn admin_token_list(bytes: &[u8]) -> Result<Vec<AdminTokenListItem>, ApiError> {
+    let mut items: Vec<AdminTokenListItem> =
+        serde_json::from_slice(bytes).map_err(|_| ApiError::internal())?;
+    for item in &mut items {
+        // 配置文件里的 admin_token 和 metrics_token 没有 id。null 表示之后不能改。
+        item.from_config = item.id.is_none();
+    }
+    Ok(items)
+}
+
+async fn list_admin_tokens(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let response = proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/ListAdminTokens",
+        None,
+        &[],
+        &headers,
+    )
+    .await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(response);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let items = admin_token_list(&bytes)?;
+    let mut out = Json(items).into_response();
+    *out.status_mut() = status;
     Ok(out)
 }
 
@@ -7368,5 +7424,97 @@ mod tests {
         )
         .await;
         assert_error(&missing, StatusCode::NOT_FOUND, "not_found", "Not found");
+    }
+
+    #[tokio::test]
+    async fn admin_token_list_hides_the_secret_and_marks_a_null_id() {
+        let secret = "fixture-not-a-token";
+        let garage = json!([
+            {
+                "id": null,
+                "name": "admin_token",
+                "created": null,
+                "expiration": null,
+                "expired": false,
+                "scope": ["*"],
+                "secretToken": secret
+            },
+            {
+                "id": "gk-admin-1",
+                "name": "reader",
+                "created": "2026-03-01T00:00:00Z",
+                "expiration": null,
+                "expired": false,
+                "scope": ["GetClusterStatus", "Metrics"],
+                "secretToken": secret
+            }
+        ])
+        .to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(garage)).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let listed = exchange(
+            &app,
+            request("GET", "/api/admin-tokens", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!([
+                {
+                    "id": null,
+                    "name": "admin_token",
+                    "created": null,
+                    "expiration": null,
+                    "expired": false,
+                    "scope": ["*"],
+                    "fromConfig": true
+                },
+                {
+                    "id": "gk-admin-1",
+                    "name": "reader",
+                    "created": "2026-03-01T00:00:00Z",
+                    "expiration": null,
+                    "expired": false,
+                    "scope": ["GetClusterStatus", "Metrics"],
+                    "fromConfig": false
+                }
+            ])
+        );
+        assert!(!listed.body.contains("secretToken"));
+        assert!(!listed.body.contains(secret));
+        let admin_calls = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("ListAdminTokens"))
+            .count();
+        assert_eq!(admin_calls, 1);
+
+        let viewer = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            request("GET", "/api/admin-tokens", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        let denied_rows: Vec<_> = rows
+            .iter()
+            .filter(|row| row.result == "denied" || row.reason == "forbidden")
+            .collect();
+        assert_eq!(denied_rows.len(), 1);
+        assert_eq!(denied_rows[0].result, "denied");
+        assert_eq!(denied_rows[0].reason, "forbidden");
+        let viewer_calls = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("ListAdminTokens"))
+            .count();
+        assert_eq!(viewer_calls, 1);
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+        assert!(!sink.contains("secretToken"));
     }
 }
