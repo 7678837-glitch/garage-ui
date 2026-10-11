@@ -652,7 +652,13 @@ export function Objects({
           Retry
         </button>
       ) : null}
-      {showEmpty ? <p>There are no objects.</p> : null}
+      {showEmpty ? (
+        <p>
+          {!searching && canWrite
+            ? "There are no objects. Upload the first object."
+            : "There are no objects."}
+        </p>
+      ) : null}
       {searching && found.data?.truncated && found.data.reason ? <p>{found.data.reason}</p> : null}
       {shownPicked.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">

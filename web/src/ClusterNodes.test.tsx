@@ -160,7 +160,7 @@ test("shows an up node with a hostname and a down draining node", async () => {
 test("says there are no nodes when the list is empty", async () => {
   installFetch("admin", () => json({ layoutVersion: 3, nodes: [] }));
   renderApp();
-  const message = await screen.findByText("There are no nodes.");
+  const message = await screen.findByText("There are no nodes. Connect the first node.");
   expect(message.tagName).toBe("P");
   expect(screen.getByRole("heading", { name: "Nodes" })).toBeTruthy();
   expect(screen.queryByText("Up")).toBeNull();
@@ -180,7 +180,7 @@ test("says nodes are unavailable when an id is missing or empty", async () => {
   const empty = await screen.findByText("Nodes are unavailable");
   expect(empty.tagName).toBe("P");
   expect(empty.getAttribute("role")).toBeNull();
-  expect(screen.queryByText("There are no nodes.")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   expect(screen.queryByText("Up")).toBeNull();
 });
 
@@ -195,7 +195,7 @@ test("shows the Garage banner instead of the cluster status message", async () =
   expect(banner.textContent).toBe("Garage admin API is not reachable");
   expect(screen.getAllByText("Garage admin API is not reachable")).toHaveLength(1);
   expect(screen.queryByText("garage_unavailable")).toBeNull();
-  expect(screen.queryByText("There are no nodes.")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   expect(screen.getAllByRole("alert")).toHaveLength(1);
 });
 

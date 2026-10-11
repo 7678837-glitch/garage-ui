@@ -586,7 +586,9 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <p>Default order is Id.</p>
         <p>Only loaded rows</p>
       </div>
-      {view.empty ? <p>There are no keys.</p> : null}
+      {view.empty ? (
+        <p>{canManage ? "There are no keys. Create the first key." : "There are no keys."}</p>
+      ) : null}
       {list.data && shown.length > 0 ? (
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">

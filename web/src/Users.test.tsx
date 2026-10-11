@@ -376,7 +376,7 @@ test("shows Loading users and marks the users section busy on the first load", a
   expect(screen.getByText("Loading users").textContent).toBe("Loading users");
   expect(screen.getByText("Loading users").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.queryByText("Refreshing users")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   release(json([ada]));
@@ -424,8 +424,10 @@ test("keeps a visible username while a later fetch refreshes the list", async ()
 test("shows there are no users and keeps the create form", async () => {
   installApi([]);
   renderUsers();
-  expect((await screen.findByText("There are no users")).textContent).toBe("There are no users");
-  expect(screen.getByText("There are no users").getAttribute("role")).toBeNull();
+  expect((await screen.findByText("There are no users. Create the first user.")).textContent).toBe(
+    "There are no users. Create the first user.",
+  );
+  expect(screen.getByText("There are no users. Create the first user.").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
@@ -458,7 +460,7 @@ test("shows the API code and requests the user list again from Retry", async () 
   expect(screen.getByText("upstream_failed").textContent).toBe("upstream_failed");
   expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
@@ -480,7 +482,7 @@ test("filters loaded users from the query string and keeps that choice in the ad
   );
   expect(screen.queryByText("Only loaded rows")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
-  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(window.location.hash).toBe("#users/stay");
   expect(window.location.search).toContain("users=bea");
   expect(window.location.search).toContain("keep=1");
@@ -509,7 +511,7 @@ test("filters loaded users from the query string and keeps that choice in the ad
   fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "admin" } });
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
   expect(screen.queryByRole("cell", { name: "Bea" })).toBeNull();
-  expect(screen.queryByText("There are no users")).toBeNull();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   expect(calls).toHaveLength(1);
 

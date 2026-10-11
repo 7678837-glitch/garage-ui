@@ -270,7 +270,7 @@ test("explains an empty list and lets an admin create a bucket with only a globa
     }),
   );
   renderBuckets(true);
-  expect(await screen.findByText("There are no buckets.")).toBeTruthy();
+  expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
@@ -303,7 +303,7 @@ test("omits globalAlias when the create form is blank and keeps the value when c
     }),
   );
   renderBuckets(true);
-  expect(await screen.findByText("There are no buckets.")).toBeTruthy();
+  expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
   await waitFor(() => {
     expect(calls.some((call) => call.method === "POST")).toBe(true);
@@ -380,7 +380,8 @@ test("cancels a bucket delete without a request, then confirms the delete", asyn
   fireEvent.click(screen.getByRole("button", { name: "Delete bkt-1" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
   expect(await screen.findByText("Bucket deleted")).toBeTruthy();
-  expect(await screen.findByText("There are no buckets.")).toBeTruthy();
+  expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   expect(screen.queryByText("bkt-1")).toBeNull();
   expect(calls.find((call) => call.method === "DELETE")).toEqual({
     url: "/api/buckets/bkt-1",

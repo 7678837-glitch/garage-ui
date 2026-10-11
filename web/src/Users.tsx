@@ -503,7 +503,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           </button>
         </>
       ) : null}
-      {view.empty ? <p>There are no users</p> : null}
+      {view.empty ? <p>There are no users. Create the first user.</p> : null}
       {users.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">

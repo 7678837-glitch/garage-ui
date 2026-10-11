@@ -312,7 +312,9 @@ export function ClusterNodes() {
       ) : null}
       {nodes.isPending ? <p>Loading nodes</p> : null}
       {nodes.isError && !isGarageDown(nodes.error) ? <p>{message}</p> : null}
-      {nodes.isSuccess && nodes.data.length === 0 ? <p>There are no nodes.</p> : null}
+      {nodes.isSuccess && nodes.data.length === 0 ? (
+        <p>There are no nodes. Connect the first node.</p>
+      ) : null}
       {nodes.isSuccess && nodes.data.length > 0 ? (
         <ul className="grid min-w-0 gap-3 text-sm">
           {nodes.data.map((node) => (

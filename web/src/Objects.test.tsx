@@ -364,11 +364,45 @@ test("says there are no objects after the list loads", async () => {
   const section = screen.getByRole("region", { name: "Objects" });
   expect(section.getAttribute("aria-busy")).toBe("true");
   expect(screen.getByText("Loading objects")).toBeTruthy();
-  expect(screen.queryByText("There are no objects.")).toBeNull();
+  expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   release(json(page([])));
-  expect(await screen.findByText("There are no objects.")).toBeTruthy();
+  expect(await screen.findByText("There are no objects. Upload the first object.")).toBeTruthy();
+  expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
   expect(screen.queryByText("Loading objects")).toBeNull();
   expect(screen.getByRole("region", { name: "Objects" }).getAttribute("aria-busy")).toBe("false");
+});
+
+test("says there are no objects and hides upload when the viewer cannot write", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(page([]))),
+  );
+  renderObjects("bkt-1", { canWrite: false, canTransfer: false });
+  expect(await screen.findByText("There are no objects.")).toBeTruthy();
+  expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  expect(screen.queryByText("Loading objects")).toBeNull();
+});
+
+test("keeps the short empty sentence when a search has no matches", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname.endsWith("/search")) {
+        return json({ matches: [], truncated: false, reason: null });
+      }
+      return json(listed("listed.txt"));
+    }),
+  );
+  renderObjects();
+  expect(await screen.findByRole("button", { name: "listed.txt" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "zz" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByText("There are no objects.")).toBeTruthy();
+  expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "listed.txt" })).toBeNull();
+  expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
 });
 
 test("shows the error message and loads again from Retry", async () => {
@@ -388,7 +422,7 @@ test("shows the error message and loads again from Retry", async () => {
   expect(screen.getByText("upstream_failed")).toBeTruthy();
   expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByText("There are no objects.")).toBeNull();
+  expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("button", { name: "back.txt" })).toBeTruthy();
   expect(screen.queryByText("Garage returned an error")).toBeNull();

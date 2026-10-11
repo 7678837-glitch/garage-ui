@@ -963,7 +963,13 @@ export function Buckets({
           }}
         />
       ) : null}
-      {view.empty ? <p>There are no buckets.</p> : null}
+      {view.empty ? (
+        <p>
+          {canManage && !browsing
+            ? "There are no buckets. Create the first bucket."
+            : "There are no buckets."}
+        </p>
+      ) : null}
       {!browsing && list.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">

@@ -169,6 +169,7 @@ test("shows Loading keys and marks the keys section busy on the first load", asy
   expect(screen.queryByText("Refreshing keys")).toBeNull();
   release(json({ items: [], hasMore: false }));
   expect(await screen.findByText("There are no keys.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.getByRole("region", { name: "Keys" }).getAttribute("aria-busy")).toBe("false");
   expect(screen.queryByText("Loading keys")).toBeNull();
 });
@@ -339,7 +340,7 @@ test("keeps the typed name and shows the API message when create fails", async (
     }),
   );
   renderKeys(true);
-  expect(await screen.findByText("There are no keys.")).toBeTruthy();
+  expect(await screen.findByText("There are no keys. Create the first key.")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "my key" } });
   fireEvent.click(screen.getByRole("button", { name: "Create key" }));
   expect(await screen.findByText("Key name is invalid")).toBeTruthy();
@@ -597,7 +598,8 @@ test("cancels a key delete without a request, then confirms the encoded delete",
   fireEvent.click(screen.getByRole("button", { name: "Delete a b&c=d" }));
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByText("Key deleted")).toBeTruthy();
-  expect(await screen.findByText("There are no keys.")).toBeTruthy();
+  expect(await screen.findByText("There are no keys. Create the first key.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
   expect(screen.queryByText("a b&c=d")).toBeNull();
   expect(calls.find((call) => call.method === "DELETE")).toEqual({
     url: "/api/keys/a%20b%26c%3Dd",
