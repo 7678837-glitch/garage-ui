@@ -354,6 +354,12 @@ test("keeps directory selection on the folder input only", () => {
   expect(files.hasAttribute("multiple")).toBe(true);
   expect(folder.hasAttribute("webkitdirectory")).toBe(true);
   expect(folder.hasAttribute("multiple")).toBe(true);
+  expect(files.classList.contains("w-full")).toBe(true);
+  expect(files.classList.contains("min-w-0")).toBe(true);
+  expect(files.classList.contains("max-w-full")).toBe(true);
+  expect(folder.classList.contains("w-full")).toBe(true);
+  expect(folder.classList.contains("min-w-0")).toBe(true);
+  expect(folder.classList.contains("max-w-full")).toBe(true);
 });
 
 test("a dropped file keeps its file name when a relative path is set", () => {
