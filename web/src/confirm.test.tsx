@@ -22,6 +22,7 @@ const actions = [
   ["apply-layout", "high"],
   ["enable-website", "high"],
   ["create-admin-token", "high"],
+  ["update-admin-token", "high"],
 ] as const;
 
 test.each(actions)("riskOf(%s) is %s", (action, level) => {

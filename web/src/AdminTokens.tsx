@@ -5,6 +5,7 @@ import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 
 type AdminToken = {
+  id: string | null;
   name: string;
   scope: string[];
   expiration: string;
@@ -88,7 +89,11 @@ function scopeFrom(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-// 上游响应可能带 id 或 secretToken。页面状态只留要显示的字段。
+function tokenId(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// id 只留在状态里拼 PATCH 路径，不能出现在文本、标签或地址栏。secretToken 不进页面状态。
 function adminTokenFrom(value: unknown): AdminToken {
   if (typeof value !== "object" || value === null) {
     throw new Error("Admin tokens are unavailable");
@@ -98,6 +103,7 @@ function adminTokenFrom(value: unknown): AdminToken {
     throw new Error("Admin tokens are unavailable");
   }
   return {
+    id: tokenId(row.id),
     name: row.name,
     scope: scopeFrom(row.scope),
     expiration: textField(row.expiration),
@@ -133,6 +139,13 @@ function sourceLabel(token: AdminToken): string {
   return token.fromConfig ? "From configuration file" : "";
 }
 
+function issuedTokenId(token: AdminToken): string | null {
+  if (token.fromConfig) {
+    return null;
+  }
+  return token.id;
+}
+
 type TokenDraft = {
   name: string;
   expiration: string;
@@ -163,6 +176,15 @@ function scopeItems(text: string): string[] {
 
 function scopeIsFullAdmin(items: string[]): boolean {
   return items.includes("*") || items.includes("CreateAdminToken");
+}
+
+function draftFrom(token: AdminToken): TokenDraft {
+  return {
+    name: token.name,
+    expiration: token.expiration,
+    neverExpires: token.expiration.trim().length === 0,
+    scope: token.scope.join(", "),
+  };
 }
 
 function createTokenBody(draft: TokenDraft): CreateAdminTokenBody {
@@ -418,42 +440,185 @@ function CreateTokenForm() {
   );
 }
 
-function TokenTable({ rows }: { rows: AdminToken[] }) {
+function EditTokenForm({
+  id,
+  token,
+  onClose,
+}: {
+  id: string;
+  token: AdminToken;
+  onClose: () => void;
+}) {
+  const client = useQueryClient();
+  const [draft, setDraft] = useState(() => draftFrom(token));
+  const [pending, setPending] = useState<TokenDraft | null>(null);
+  const update = useMutation({
+    mutationFn: async (next: TokenDraft) => {
+      await api<unknown>(`/api/admin-tokens/${id}`, {
+        method: "PATCH",
+        headers: { "x-confirm": "yes" },
+        body: JSON.stringify(createTokenBody(next)),
+      });
+    },
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+      onClose();
+    },
+  });
+  const error = update.error instanceof Error ? update.error.message : null;
+  const items = scopeItems(draft.scope);
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-max border-collapse text-left text-sm">
-        <thead>
-          <tr>
-            <th className="py-2 pr-3 font-medium" scope="col">
-              Name
-            </th>
-            <th className="py-2 pr-3 font-medium" scope="col">
-              Scope
-            </th>
-            <th className="py-2 pr-3 font-medium" scope="col">
-              Expiration
-            </th>
-            <th className="py-2 pr-3 font-medium" scope="col">
-              Expired
-            </th>
-            <th className="py-2 font-medium" scope="col">
-              Source
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((token, index) => (
-            <tr key={`${token.name}-${token.created}-${index}`}>
-              <td className="py-2 pr-3">{token.name}</td>
-              <td className="py-2 pr-3">{token.scope.join(", ")}</td>
-              <td className="py-2 pr-3">{token.expiration}</td>
-              <td className="py-2 pr-3">{token.expired ? "Yes" : "No"}</td>
-              <td className="py-2">{sourceLabel(token)}</td>
+    <>
+      <form
+        className="grid max-w-sm gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (draft.name.trim().length === 0 || update.isPending) {
+            return;
+          }
+          update.reset();
+          setPending(draft);
+        }}
+      >
+        <label className="block text-sm">
+          Name
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.name}
+            required
+            onChange={(event) => {
+              setDraft({ ...draft, name: event.target.value });
+            }}
+          />
+        </label>
+        <label className="block text-sm">
+          Expiration
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.expiration}
+            onChange={(event) => {
+              setDraft({ ...draft, expiration: event.target.value });
+            }}
+          />
+        </label>
+        <label className="text-sm">
+          <input
+            className="mr-2"
+            type="checkbox"
+            checked={draft.neverExpires}
+            onChange={(event) => {
+              setDraft({ ...draft, neverExpires: event.target.checked });
+            }}
+          />
+          Never expires
+        </label>
+        <label className="block text-sm">
+          Scope
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.scope}
+            onChange={(event) => {
+              setDraft({ ...draft, scope: event.target.value });
+            }}
+          />
+        </label>
+        {scopeIsFullAdmin(items) ? <p>This scope is equivalent to full admin access.</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="submit"
+          disabled={update.isPending}
+        >
+          Update token
+        </button>
+      </form>
+      {pending !== null ? (
+        <ConfirmDialog
+          action="update-admin-token"
+          name={token.name}
+          scope={pending.scope}
+          pending={update.isPending}
+          consequence="This replaces the token name, expiration, and scope."
+          onCancel={() => {
+            if (!update.isPending) {
+              setPending(null);
+            }
+          }}
+          onConfirm={() => {
+            if (update.isPending) {
+              return;
+            }
+            update.mutate(pending);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function TokenTable({ rows }: { rows: AdminToken[] }) {
+  const [editing, setEditing] = useState<AdminToken | null>(null);
+  const editingId = editing === null ? null : issuedTokenId(editing);
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-max border-collapse text-left text-sm">
+          <thead>
+            <tr>
+              <th className="py-2 pr-3 font-medium" scope="col">
+                Name
+              </th>
+              <th className="py-2 pr-3 font-medium" scope="col">
+                Scope
+              </th>
+              <th className="py-2 pr-3 font-medium" scope="col">
+                Expiration
+              </th>
+              <th className="py-2 pr-3 font-medium" scope="col">
+                Expired
+              </th>
+              <th className="py-2 font-medium" scope="col">
+                Source
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((token, index) => (
+              <tr key={`${token.name}-${token.created}-${index}`}>
+                <td className="py-2 pr-3">{token.name}</td>
+                <td className="py-2 pr-3">{token.scope.join(", ")}</td>
+                <td className="py-2 pr-3">{token.expiration}</td>
+                <td className="py-2 pr-3">{token.expired ? "Yes" : "No"}</td>
+                <td className="py-2">
+                  {sourceLabel(token)}
+                  {issuedTokenId(token) !== null ? (
+                    <button
+                      className="border border-ink px-3 py-1 text-left"
+                      type="button"
+                      onClick={() => {
+                        setEditing(token);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editing !== null && editingId !== null ? (
+        <EditTokenForm
+          key={`${editing.name}-${editing.created}`}
+          id={editingId}
+          token={editing}
+          onClose={() => {
+            setEditing(null);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

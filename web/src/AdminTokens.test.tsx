@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AdminTokens } from "./AdminTokens";
 import { sectionFromHash } from "./Nav";
@@ -211,5 +211,124 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
   expect(document.body.textContent ?? "").not.toContain(CREATED_SECRET);
   for (const node of document.querySelectorAll("input, textarea")) {
     expect((node as HTMLInputElement).value).not.toContain(CREATED_SECRET);
+  }
+});
+
+test("an admin updates an issued token and the response secret stays off the page", async () => {
+  const issuedId = "tok-issued-1a2b";
+  const calls: { method: string; url: string; confirm: string | null; body: unknown }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = String(input);
+      const raw = init?.body;
+      calls.push({
+        method,
+        url,
+        confirm: headers.get("x-confirm"),
+        body: typeof raw === "string" ? (JSON.parse(raw) as unknown) : undefined,
+      });
+      if (method === "PATCH" && url.startsWith("/api/admin-tokens/")) {
+        return json({
+          name: "renamed-reader",
+          scope: ["*"],
+          secretToken: SECRET,
+        });
+      }
+      if (url === "/api/admin-tokens") {
+        return json([
+          {
+            id: null,
+            name: "config-reader",
+            scope: ["GetClusterStatus", "Metrics"],
+            expiration: null,
+            expired: false,
+            fromConfig: true,
+            created: "2026-01-01T00:00:00Z",
+            secretToken: SECRET,
+          },
+          {
+            id: issuedId,
+            name: "issued-reader",
+            scope: ["ListBuckets"],
+            expiration: "2026-12-01T00:00:00Z",
+            expired: true,
+            fromConfig: false,
+            created: "2026-02-01T00:00:00Z",
+            secretToken: SECRET,
+          },
+        ]);
+      }
+      if (url === "/api/admin-tokens/current") {
+        return json({
+          id: UPSTREAM_ID,
+          name: "this-server-reader",
+          scope: ["GetClusterHealth", "ListKeys"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+          secretToken: SECRET,
+        });
+      }
+      return json({ message: "missing" }, 404);
+    }),
+  );
+  renderTokens();
+  const config = await screen.findByRole("row", { name: /config-reader/ });
+  expect(within(config).queryByRole("button", { name: "Edit" })).toBeNull();
+  const issued = screen.getByRole("row", { name: /issued-reader/ });
+  expect(within(issued).getAllByRole("button", { name: "Edit" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
+  expect(
+    within(screen.getByRole("region", { name: "This server" })).queryByRole("button"),
+  ).toBeNull();
+  expect(document.body.textContent ?? "").not.toContain(issuedId);
+  expect(window.location.href).not.toContain(issuedId);
+
+  fireEvent.click(within(issued).getByRole("button", { name: "Edit" }));
+  const update = screen.getByRole("button", { name: "Update token" });
+  const form = update.closest("form");
+  if (!(form instanceof HTMLFormElement)) {
+    throw new Error("missing edit form");
+  }
+  const edit = within(form);
+  expect((edit.getByLabelText("Name") as HTMLInputElement).value).toBe("issued-reader");
+  expect((edit.getByLabelText("Scope") as HTMLInputElement).value).toBe("ListBuckets");
+  expect(
+    edit.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent?.trim()),
+  ).toEqual(["Never expires"]);
+  fireEvent.change(edit.getByLabelText("Scope"), { target: { value: "*" } });
+  expect(edit.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
+  expect(document.body.textContent ?? "").not.toContain(issuedId);
+  fireEvent.change(edit.getByLabelText("Name"), { target: { value: "renamed-reader" } });
+  fireEvent.click(update);
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("This replaces the token name, expiration, and scope.");
+  expect(dialog.textContent).toContain("*");
+  fireEvent.change(screen.getByLabelText("Type issued-reader to confirm"), {
+    target: { value: "issued-reader" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => {
+    expect(calls.some((call) => call.method === "PATCH")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Update token" })).toBeNull();
+  });
+  const patched = calls.find((call) => call.method === "PATCH");
+  expect(patched?.url).toContain(`/api/admin-tokens/${issuedId}`);
+  expect(patched?.confirm).toBe("yes");
+  expect(patched?.body).toMatchObject({ name: "renamed-reader", scope: ["*"] });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByLabelText("Secret")).toBeNull();
+  const text = document.body.textContent ?? "";
+  expect(text).not.toContain(SECRET);
+  expect(text).not.toContain(issuedId);
+  expect(window.location.href).not.toContain(issuedId);
+  for (const node of document.querySelectorAll("input, textarea")) {
+    expect((node as HTMLInputElement).value).not.toContain(SECRET);
+    expect((node as HTMLInputElement).value).not.toContain(issuedId);
   }
 });
