@@ -1545,6 +1545,47 @@ async fn upload_object(
     ))
 }
 
+// 参数就是审计表的列。和 record 一样不另做结构，reason 保持 'static。
+#[allow(clippy::too_many_arguments)]
+async fn audit_object(
+    app: &App,
+    current: &Current,
+    result: &'static str,
+    reason: &'static str,
+    method: &'static str,
+    path: &str,
+    target: &str,
+    status: StatusCode,
+) -> Result<(), ApiError> {
+    record(
+        app,
+        &current.user.username,
+        &current.ip,
+        result,
+        reason,
+        method,
+        path,
+        target,
+        i64::from(status.as_u16()),
+    )
+    .await
+}
+
+async fn reject_object<T>(
+    app: &App,
+    current: &Current,
+    result: &'static str,
+    method: &'static str,
+    path: &str,
+    target: &str,
+    error: ApiError,
+) -> Result<T, ApiError> {
+    let reason = error.code();
+    let status = error.status_code();
+    audit_object(app, current, result, reason, method, path, target, status).await?;
+    Err(error)
+}
+
 async fn put_bucket_object(
     State(app): State<App>,
     Authed(current): Authed,
@@ -1552,10 +1593,19 @@ async fn put_bucket_object(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
-    require(&current.user, Op::WriteObjects)?;
-    let size = upload_length(&headers, app.settings.max_upload_bytes)?;
+    let path = format!("/api/buckets/{id}/objects/{key}");
+    let target = format!("{id}/{key}");
+    if let Err(error) = require(&current.user, Op::WriteObjects) {
+        return reject_object(&app, &current, "denied", "PUT", &path, &target, error).await;
+    }
+    let size = match upload_length(&headers, app.settings.max_upload_bytes) {
+        Ok(size) => size,
+        Err(error) => {
+            return reject_object(&app, &current, "error", "PUT", &path, &target, error).await;
+        }
+    };
     let content_type = upload_content_type(&headers);
-    put_object(
+    match put_object(
         &app,
         &id,
         &key,
@@ -1568,6 +1618,16 @@ async fn put_bucket_object(
         },
     )
     .await
+    {
+        Ok(stored) => {
+            audit_object(
+                &app, &current, "success", "ok", "PUT", &path, &target, stored.0,
+            )
+            .await?;
+            Ok(stored)
+        }
+        Err(error) => reject_object(&app, &current, "error", "PUT", &path, &target, error).await,
+    }
 }
 
 async fn put_object(
@@ -1733,14 +1793,47 @@ async fn delete_bucket_object(
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<DeleteObjectQuery>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::WriteObjects)?;
-    if query.recursive == Some(true) {
-        let outcome = objects::delete_prefix(&app, &id, &key).await?;
-        Ok(Json(outcome).into_response())
-    } else {
-        objects::delete(&app, &id, &key).await?;
-        Ok(StatusCode::NO_CONTENT.into_response())
+    let path = format!("/api/buckets/{id}/objects/{key}");
+    let target = format!("{id}/{key}");
+    if let Err(error) = require(&current.user, Op::WriteObjects) {
+        return reject_object(&app, &current, "denied", "DELETE", &path, &target, error).await;
     }
+    if query.recursive == Some(true) {
+        let outcome = match objects::delete_prefix(&app, &id, &key).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return reject_object(&app, &current, "error", "DELETE", &path, &target, error)
+                    .await;
+            }
+        };
+        audit_object(
+            &app,
+            &current,
+            "success",
+            "ok",
+            "DELETE",
+            &path,
+            &target,
+            StatusCode::OK,
+        )
+        .await?;
+        return Ok(Json(outcome).into_response());
+    }
+    if let Err(error) = objects::delete(&app, &id, &key).await {
+        return reject_object(&app, &current, "error", "DELETE", &path, &target, error).await;
+    }
+    audit_object(
+        &app,
+        &current,
+        "success",
+        "ok",
+        "DELETE",
+        &path,
+        &target,
+        StatusCode::NO_CONTENT,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn delete_bucket_objects(
@@ -1749,10 +1842,34 @@ async fn delete_bucket_objects(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<Json<objects::DeleteMany>, ApiError> {
-    require(&current.user, Op::WriteObjects)?;
-    let keys = delete_keys(&body)?;
-    let result = objects::delete_many(&app, &id, keys).await?;
-    Ok(Json(result))
+    let path = format!("/api/buckets/{id}/objects:delete");
+    let target = id.as_str();
+    if let Err(error) = require(&current.user, Op::WriteObjects) {
+        return reject_object(&app, &current, "denied", "POST", &path, target, error).await;
+    }
+    let keys = match delete_keys(&body) {
+        Ok(keys) => keys,
+        Err(error) => {
+            return reject_object(&app, &current, "error", "POST", &path, target, error).await;
+        }
+    };
+    match objects::delete_many(&app, &id, keys).await {
+        Ok(result) => {
+            audit_object(
+                &app,
+                &current,
+                "success",
+                "ok",
+                "POST",
+                &path,
+                target,
+                StatusCode::OK,
+            )
+            .await?;
+            Ok(Json(result))
+        }
+        Err(error) => reject_object(&app, &current, "error", "POST", &path, target, error).await,
+    }
 }
 
 fn invalid_keys() -> ApiError {
@@ -6322,6 +6439,228 @@ mod tests {
         }
         xml.push_str("</DeleteResult>");
         http_xml(&xml)
+    }
+
+    fn audit_text(row: &crate::db::AuditRow) -> String {
+        format!(
+            "{} {} {} {} {} {} {} {}",
+            row.username,
+            row.ip,
+            row.result,
+            row.reason,
+            row.method,
+            row.path,
+            row.target,
+            row.status
+        )
+    }
+
+    #[tokio::test]
+    async fn object_writes_leave_an_audit_row() {
+        let mock = S3Mock::start(|line| {
+            if line.starts_with("PUT ") {
+                return put_ok("abc123");
+            }
+            if line.starts_with("DELETE ") {
+                return delete_ok();
+            }
+            if line.starts_with("POST ") {
+                return delete_result(&["left-photo", "right-photo", "docs/2024/notes.txt"], &[]);
+            }
+            if line.starts_with("GET ") {
+                return list_xml(false, None, &[("docs/2024/notes.txt", 4, "abc")], &[]);
+            }
+            head_ok()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before_viewer = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let denied = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.body);
+        assert!(mock.requests().is_empty());
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_viewer.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 403);
+
+        let body = b"hello";
+        let before_put = rows.len();
+        let put = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                body,
+                Some("5"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_eq!(put.status, StatusCode::CREATED, "{}", put.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_put + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 201);
+        assert!(!audit_text(row).contains("hello"), "{}", audit_text(row));
+
+        let before_delete = rows.len();
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_delete + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 204);
+
+        let before_batch = rows.len();
+        let s3_before_batch = mock.requests().len();
+        let batch = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": ["left-photo", "right-photo"] }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(batch.status, StatusCode::OK, "{}", batch.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_batch + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects:delete");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 200);
+        let text = audit_text(row);
+        assert!(!text.contains("left-photo"), "{text}");
+        assert!(!text.contains("right-photo"), "{text}");
+        assert!(mock.requests().len() > s3_before_batch);
+
+        let before_many = rows.len();
+        let s3_before_many = mock.requests().len();
+        let keys: Vec<_> = (0..1001).map(|index| format!("k{index}")).collect();
+        let too_many = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": keys }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(
+            too_many.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            too_many.body
+        );
+        assert_eq!(code_of(&too_many.body), "too_many_keys");
+        assert_eq!(mock.requests().len(), s3_before_many);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_many + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "too_many_keys");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects:delete");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+        let text = audit_text(row);
+        assert!(!text.contains("k1000"), "{text}");
+        assert!(!text.contains("k0"), "{text}");
+
+        let before_recursive = rows.len();
+        let recursive = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(recursive.status, StatusCode::OK, "{}", recursive.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_recursive + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.ip, "127.0.0.1");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/docs/2024");
+        assert_eq!(row.target, "bkt-1/docs/2024");
+        assert_eq!(row.status, 200);
+        assert!(
+            !audit_text(row).contains("notes.txt"),
+            "{}",
+            audit_text(row)
+        );
+
+        let before_get = rows.len();
+        let fetched = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before_get);
     }
 
     #[tokio::test]

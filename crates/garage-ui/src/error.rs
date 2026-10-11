@@ -106,6 +106,18 @@ impl ApiError {
             },
         }
     }
+
+    pub(crate) fn status_code(&self) -> StatusCode {
+        self.status
+    }
+
+    // 上游正文可能含对象内容。审计原因只用固定码，不抄响应字节。
+    pub(crate) fn code(&self) -> &'static str {
+        match &self.kind {
+            Kind::Local { code, .. } => *code,
+            Kind::Upstream { .. } => "upstream_error",
+        }
+    }
 }
 
 #[derive(Serialize)]
