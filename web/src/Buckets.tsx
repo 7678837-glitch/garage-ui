@@ -5,6 +5,7 @@ import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 import { Objects } from "./Objects";
+import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type Alias =
   | { scope: "global"; name: string }
@@ -454,20 +455,38 @@ function UsageText({ bucket }: { bucket: Bucket }) {
 
 function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas }) {
   const client = useQueryClient();
-  const [maxSize, setMaxSize] = useState(fieldText(quotas.maxSize));
-  const [maxObjects, setMaxObjects] = useState(fieldText(quotas.maxObjects));
+  const loadedSize = fieldText(quotas.maxSize);
+  const loadedObjects = fieldText(quotas.maxObjects);
+  const [maxSize, setMaxSize] = useState(loadedSize);
+  const [maxObjects, setMaxObjects] = useState(loadedObjects);
+  const [savedSize, setSavedSize] = useState(loadedSize);
+  const [savedObjects, setSavedObjects] = useState(loadedObjects);
   const [rejected, setRejected] = useState<string | null>(null);
+  const submitted = useRef({ size: loadedSize, objects: loadedObjects });
+  const quotaDirty = maxSize !== savedSize || maxObjects !== savedObjects;
+  useEffect(() => {
+    setFormDirty(`quota:${bucketId}`, quotaDirty);
+    return () => setFormDirty(`quota:${bucketId}`, false);
+  }, [bucketId, quotaDirty]);
   const save = useMutation({
     mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/quotas`, { method: "PUT", body }),
     onMutate: () => {
+      submitted.current = { size: maxSize, objects: maxObjects };
       setRejected(null);
     },
     onSuccess: async () => {
+      setSavedSize(submitted.current.size);
+      setSavedObjects(submitted.current.objects);
       await client.invalidateQueries({ queryKey: ["buckets"] });
     },
   });
   const apiError = save.error instanceof Error ? save.error.message : null;
   const error = rejected ?? apiError;
+  const quotaStatus = saveStatus(
+    savePhase(save.isPending, rejected !== null || save.isError, save.isSuccess),
+    quotaDirty,
+    "Saved",
+  );
   return (
     <form
       className="mt-3 grid max-w-sm gap-2"
@@ -508,6 +527,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         />
       </label>
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {quotaStatus ? <p>{quotaStatus}</p> : null}
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="submit"
@@ -852,6 +872,12 @@ export function Buckets({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [hash, assignHash] = useLocationHash();
+  const goHash = (next: string) => {
+    if (!releaseHash(next)) {
+      return;
+    }
+    assignHash(next);
+  };
   const location = bucketLocationFromHash(hash);
   const browsing = location.kind === "objects";
   const list = useInfiniteQuery({
@@ -961,7 +987,7 @@ export function Buckets({
           canWrite={canWrite}
           canTransfer={canTransfer}
           onBack={() => {
-            assignHash("#buckets");
+            goHash("#buckets");
           }}
         />
       ) : null}
@@ -997,7 +1023,7 @@ export function Buckets({
                       className="ml-2 border border-neutral-900 px-2 py-1 text-left"
                       type="button"
                       onClick={() => {
-                        assignHash(hashForObjects(bucket.id, ""));
+                        goHash(hashForObjects(bucket.id, ""));
                       }}
                     >
                       Objects for {bucket.id}

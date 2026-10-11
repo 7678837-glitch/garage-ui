@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
 
@@ -176,6 +176,112 @@ test("shows why a short login password did not submit", async () => {
   expect(
     fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/change-password")),
   ).toBe(false);
+});
+
+test("password form shows unsaved, saving, saved, and failed", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  let mode: "hold" | "fail" = "hold";
+  let releaseSave: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      if (url.includes("/api/auth/status")) {
+        return sessionResponse("viewer");
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/auth/change-password")) {
+        if (mode === "fail") {
+          return new Response(JSON.stringify({ message: "Wrong password" }), { status: 400 });
+        }
+        return new Promise<Response>((resolve) => {
+          releaseSave = resolve;
+        });
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  const current = (await screen.findByLabelText("Current password")) as HTMLInputElement;
+  const next = screen.getByLabelText("New password") as HTMLInputElement;
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  fireEvent.change(current, { target: { value: "current secret" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  fireEvent.change(current, { target: { value: "" } });
+  fireEvent.change(next, { target: { value: "" } });
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  fireEvent.change(current, { target: { value: "current secret" } });
+  fireEvent.change(next, { target: { value: "new password1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  expect(await screen.findByText("Saving")).toBeTruthy();
+  const pending = screen.getByRole("button", { name: "Change password" }) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Change password");
+  const finish = releaseSave;
+  if (!finish) {
+    throw new Error("password save did not start");
+  }
+  finish(new Response(JSON.stringify({}), { status: 200 }));
+  expect(await screen.findByText("Password updated")).toBeTruthy();
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  expect(screen.queryByText("Saving")).toBeNull();
+  expect(current.value).toBe("");
+  expect(next.value).toBe("");
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+
+  mode = "fail";
+  fireEvent.change(current, { target: { value: "current secret" } });
+  fireEvent.change(next, { target: { value: "new password1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  expect(await screen.findByText("Wrong password")).toBeTruthy();
+  expect(screen.getByText("Save failed")).toBeTruthy();
+  expect(current.value).toBe("current secret");
+  expect(next.value).toBe("new password1");
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+});
+
+test("a cancelled confirm keeps the hash and a dirty password does not replace onbeforeunload", async () => {
+  const uploadGuard = () => "upload";
+  window.onbeforeunload = uploadGuard;
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  stubSignedIn("admin");
+  renderApp();
+  const current = (await screen.findByLabelText("Current password")) as HTMLInputElement;
+  const cleanLeave = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(cleanLeave);
+  expect(cleanLeave.defaultPrevented).toBe(false);
+  expect(window.onbeforeunload).toBe(uploadGuard);
+  fireEvent.change(current, { target: { value: "current secret" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  expect(window.onbeforeunload).toBe(uploadGuard);
+  const leaving = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(leaving);
+  expect(leaving.defaultPrevented).toBe(true);
+  fireEvent.click(screen.getByRole("link", { name: "Keys" }));
+  expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  expect(window.location.hash).toBe("");
+  expect(current.value).toBe("current secret");
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  window.location.hash = "#keys";
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+  expect(window.location.hash).toBe("");
+  expect(current.value).toBe("current secret");
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+  expect(confirm).toHaveBeenCalledTimes(2);
+  window.onbeforeunload = null;
 });
 
 test("shows why a short new password did not submit", async () => {

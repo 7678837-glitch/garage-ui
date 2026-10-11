@@ -7,7 +7,7 @@ import {
   type QueryCache,
   type QueryCacheNotifyEvent,
 } from "@tanstack/react-query";
-import { useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
@@ -19,6 +19,7 @@ import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
 import { Nav, sectionFromHash, useLocationHash, type SectionId } from "./Nav";
 import { ThemeChooser } from "./theme";
+import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
 
 const passwordBounds = "Password must be 10 to 72 characters";
@@ -169,7 +170,11 @@ function LoginForm() {
 function useHashSection(role: string) {
   const [hash, assignHash] = useLocationHash();
   const select = (id: SectionId) => {
-    assignHash(`#${id}`);
+    const next = `#${id}`;
+    if (!releaseHash(next)) {
+      return;
+    }
+    assignHash(next);
   };
   return { section: sectionFromHash(hash, role), select };
 }
@@ -255,13 +260,23 @@ function Home({ status }: { status: SessionStatus }) {
   });
   const { section, select } = useHashSection(status.role ?? "");
   const [menuOpen, setMenuOpen] = useState(true);
-  const form = useForm<PasswordChange>({ resolver: zodResolver(passwordChange) });
+  const form = useForm<PasswordChange>({
+    resolver: zodResolver(passwordChange),
+    defaultValues: { current_password: "", new_password: "" },
+  });
   const { errors } = form.formState;
+  const currentPassword = form.watch("current_password") ?? "";
+  const newPassword = form.watch("new_password") ?? "";
+  const passwordDirty = currentPassword.length > 0 || newPassword.length > 0;
+  useEffect(() => {
+    setFormDirty("password", passwordDirty);
+    return () => setFormDirty("password", false);
+  }, [passwordDirty]);
   const change = useMutation({
     mutationFn: (input: PasswordChange) =>
       api("/api/auth/change-password", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: () => {
-      form.reset();
+      form.reset({ current_password: "", new_password: "" });
     },
   });
   const logout = useMutation({
@@ -276,6 +291,8 @@ function Home({ status }: { status: SessionStatus }) {
   } else if (health.isError) {
     healthText = "unavailable";
   }
+  const passwordPhase = savePhase(change.isPending, change.isError, change.isSuccess);
+  const passwordStatus = saveStatus(passwordPhase, passwordDirty, "Password updated");
   const admin = status.role === "admin";
   // 管理员忽略 download 位。只读用户要这位才看得到预览和下载。
   const canTransfer = admin || status.can_download === true;
@@ -324,11 +341,15 @@ function Home({ status }: { status: SessionStatus }) {
                   />
                 </label>
                 <ErrorText message={errors.new_password?.message} />
-                <ErrorText message={change.isSuccess ? "Password updated" : undefined} />
                 <ErrorText
                   message={change.error instanceof Error ? change.error.message : undefined}
                 />
-                <button className="border border-ink px-3 py-1 text-left" type="submit">
+                {passwordStatus ? <p>{passwordStatus}</p> : null}
+                <button
+                  className="border border-ink px-3 py-1 text-left"
+                  type="submit"
+                  disabled={change.isPending}
+                >
                   Change password
                 </button>
               </form>
