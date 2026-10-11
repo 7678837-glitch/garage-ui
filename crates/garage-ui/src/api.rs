@@ -1093,7 +1093,22 @@ async fn create_bucket(
     headers: HeaderMap,
     Json(body): Json<CreateBucketBody>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeBuckets)?;
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        let target = body.global_alias.as_deref().unwrap_or("");
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/buckets",
+            target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let bytes = serde_json::to_vec(&body).map_err(|_| ApiError::internal())?;
     post_garage(&app, &current, &headers, "CreateBucket", None, &bytes).await
 }
@@ -1125,7 +1140,21 @@ async fn delete_bucket(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeBuckets)?;
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "DELETE",
+            "/api/buckets",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let query = format!("id={}", percent_encode(&id));
     post_garage(&app, &current, &headers, "DeleteBucket", Some(&query), &[]).await
 }
@@ -1137,7 +1166,21 @@ async fn put_bucket_quotas(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeBuckets)?;
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "PUT",
+            "/api/buckets/quotas",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let bytes = match quota_update(&body) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -4438,6 +4481,76 @@ mod tests {
                 .map(|call| call.line.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn bucket_write_denials_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets",
+                Some(&json!({ "globalAlias": "photos" }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&created, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets");
+        assert_eq!(row.target, "photos");
+        assert_eq!(row.status, 403);
+
+        let removed = exchange(
+            &app,
+            request("DELETE", "/api/buckets/bkt-1", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&removed, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+
+        let quotas = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxSize":null,"maxObjects":null}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&quotas, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 3, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/quotas");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
     }
 
     #[tokio::test]
