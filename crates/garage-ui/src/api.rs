@@ -688,11 +688,45 @@ async fn patch_user(
     let _guard = app.write.lock().await;
     let target = load_user(&app, id).await?;
     let role = match body.role.as_deref() {
-        Some(role) => parse_role(role)?,
+        Some(role) => match parse_role(role) {
+            Ok(role) => role,
+            Err(error) => {
+                record(
+                    &app,
+                    &current.user.username,
+                    &current.ip,
+                    "error",
+                    "invalid_role",
+                    "PATCH",
+                    "/api/users",
+                    &target.username,
+                    400,
+                )
+                .await?;
+                return Err(error);
+            }
+        },
         None => target.role.as_str(),
     };
     let download = body.can_download.unwrap_or(target.can_download);
-    let share = resolved_share(download, body.can_share, target.can_share)?;
+    let share = match resolved_share(download, body.can_share, target.can_share) {
+        Ok(share) => share,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "share_requires_download",
+                "PATCH",
+                "/api/users",
+                &target.username,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let disabled = body.disabled.unwrap_or(target.disabled);
     let (download, share) = normalize_bits(role, download, share)?;
     if target.id == current.user.id && (disabled || role != current.user.role) {
@@ -7310,6 +7344,113 @@ mod tests {
         let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
         assert_eq!(users.len(), 1, "{users:?}");
         assert_eq!(users[0]["username"], "Ada");
+    }
+
+    #[tokio::test]
+    async fn patch_user_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Bea",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let created_body: Value = serde_json::from_str(&created.body).unwrap();
+        let bea_id = created_body["id"].as_i64().expect("id");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let invalid_role = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{bea_id}"),
+                Some(&json!({ "role": "editor" }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(
+            invalid_role.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            invalid_role.body
+        );
+        assert_eq!(code_of(&invalid_role.body), "invalid_role");
+        assert!(!invalid_role.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_role");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Bea");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let share = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{bea_id}"),
+                Some(&json!({ "can_share": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(share.status, StatusCode::BAD_REQUEST, "{}", share.body);
+        assert_eq!(code_of(&share.body), "share_requires_download");
+        assert!(!share.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let newest = &rows[0];
+        assert_eq!(newest.username, "Ada");
+        assert_eq!(newest.result, "error");
+        assert_eq!(newest.reason, "share_requires_download");
+        assert_eq!(newest.method, "PATCH");
+        assert_eq!(newest.path, "/api/users");
+        assert_eq!(newest.target, "Bea");
+        assert_eq!(newest.status, 400);
+        let earlier = &rows[1];
+        assert_eq!(earlier.username, "Ada");
+        assert_eq!(earlier.result, "error");
+        assert_eq!(earlier.reason, "invalid_role");
+        assert_eq!(earlier.method, "PATCH");
+        assert_eq!(earlier.path, "/api/users");
+        assert_eq!(earlier.target, "Bea");
+        assert_eq!(earlier.status, 400);
+        assert!(!audit_text(newest).contains(PASSWORD));
+        assert!(!audit_text(earlier).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
+
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let bea = users
+            .iter()
+            .find(|user| user["username"] == "Bea")
+            .expect("user");
+        assert_eq!(bea["role"], "viewer");
+        assert_eq!(bea["can_share"], false);
+        assert_eq!(bea["disabled"], false);
     }
 
     #[tokio::test]
