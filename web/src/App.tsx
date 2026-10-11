@@ -122,8 +122,12 @@ function SetupForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={setup.error instanceof Error ? setup.error.message : undefined} />
-      <button className="border border-ink px-3 py-1 text-left" type="submit">
-        Create administrator
+      <button
+        className="border border-ink px-3 py-1 text-left"
+        type="submit"
+        disabled={setup.isPending}
+      >
+        {setup.isPending ? "Creating administrator" : "Create administrator"}
       </button>
     </form>
   );
@@ -160,8 +164,12 @@ function LoginForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={login.error instanceof Error ? login.error.message : undefined} />
-      <button className="border border-ink px-3 py-1 text-left" type="submit">
-        Log in
+      <button
+        className="border border-ink px-3 py-1 text-left"
+        type="submit"
+        disabled={login.isPending}
+      >
+        {login.isPending ? "Logging in" : "Log in"}
       </button>
     </form>
   );
@@ -357,9 +365,10 @@ function Home({ status }: { status: SessionStatus }) {
               <button
                 className="border border-ink px-3 py-1 text-left"
                 type="button"
+                disabled={logout.isPending}
                 onClick={() => logout.mutate()}
               >
-                Log out
+                {logout.isPending ? "Logging out" : "Log out"}
               </button>
             </div>
             <About garageVersion={status.garage_version} />

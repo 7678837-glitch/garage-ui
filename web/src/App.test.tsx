@@ -178,6 +178,173 @@ test("shows why a short login password did not submit", async () => {
   ).toBe(false);
 });
 
+test("shows Logging in on the disabled login button and keeps the typed credentials when login fails", async () => {
+  let releaseLogin: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      if (url.includes("/api/auth/login")) {
+        return new Promise<Response>((resolve) => {
+          releaseLogin = resolve;
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          initialized: true,
+          authenticated: false,
+          username: null,
+          role: null,
+          can_download: null,
+          can_share: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  renderApp();
+  const username = (await screen.findByLabelText("Username")) as HTMLInputElement;
+  const password = screen.getByLabelText("Password") as HTMLInputElement;
+  const idle = screen.getByRole("button", { name: "Log in" }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Log in");
+  fireEvent.change(username, { target: { value: "Ada" } });
+  fireEvent.change(password, { target: { value: "correct horse" } });
+  fireEvent.click(idle);
+  const pending = (await screen.findByRole("button", { name: "Logging in" })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Logging in");
+  expect(username.value).toBe("Ada");
+  expect(password.value).toBe("correct horse");
+  expect(screen.queryByText("Invalid username or password")).toBeNull();
+  const finish = releaseLogin;
+  if (!finish) {
+    throw new Error("login did not start");
+  }
+  finish(
+    new Response(JSON.stringify({ message: "Invalid username or password" }), { status: 401 }),
+  );
+  expect(await screen.findByText("Invalid username or password")).toBeTruthy();
+  expect(username.value).toBe("Ada");
+  expect(password.value).toBe("correct horse");
+  const again = screen.getByRole("button", { name: "Log in" }) as HTMLButtonElement;
+  expect(again.disabled).toBe(false);
+  expect(again.textContent).toBe("Log in");
+  expect(screen.queryByRole("button", { name: "Logging in" })).toBeNull();
+});
+
+test("shows Creating administrator on the disabled setup button and keeps the typed values when setup fails", async () => {
+  let releaseSetup: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      if (url.includes("/api/setup")) {
+        return new Promise<Response>((resolve) => {
+          releaseSetup = resolve;
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          initialized: false,
+          authenticated: false,
+          username: null,
+          role: null,
+          can_download: null,
+          can_share: null,
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  renderApp();
+  const username = (await screen.findByLabelText("Username")) as HTMLInputElement;
+  const password = screen.getByLabelText("Password") as HTMLInputElement;
+  const idle = screen.getByRole("button", { name: "Create administrator" }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Create administrator");
+  fireEvent.change(username, { target: { value: "Ada" } });
+  fireEvent.change(password, { target: { value: "correct horse" } });
+  fireEvent.click(idle);
+  const pending = (await screen.findByRole("button", {
+    name: "Creating administrator",
+  })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Creating administrator");
+  expect(username.value).toBe("Ada");
+  expect(password.value).toBe("correct horse");
+  expect(screen.queryByText("Could not create the administrator")).toBeNull();
+  const finish = releaseSetup;
+  if (!finish) {
+    throw new Error("setup did not start");
+  }
+  finish(
+    new Response(JSON.stringify({ message: "Could not create the administrator" }), {
+      status: 400,
+    }),
+  );
+  expect(await screen.findByText("Could not create the administrator")).toBeTruthy();
+  expect(username.value).toBe("Ada");
+  expect(password.value).toBe("correct horse");
+  const again = screen.getByRole("button", { name: "Create administrator" }) as HTMLButtonElement;
+  expect(again.disabled).toBe(false);
+  expect(again.textContent).toBe("Create administrator");
+  expect(screen.queryByRole("button", { name: "Creating administrator" })).toBeNull();
+});
+
+test("shows Logging out on the disabled logout button until logout fails", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  let releaseLogout: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      if (url.includes("/api/auth/status")) {
+        return sessionResponse("viewer");
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/auth/logout")) {
+        return new Promise<Response>((resolve) => {
+          releaseLogout = resolve;
+        });
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  const idle = (await screen.findByRole("button", { name: "Log out" })) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Log out");
+  fireEvent.click(idle);
+  const pending = (await screen.findByRole("button", {
+    name: "Logging out",
+  })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Logging out");
+  expect(screen.getByText("Bea · viewer")).toBeTruthy();
+  const finish = releaseLogout;
+  if (!finish) {
+    throw new Error("logout did not start");
+  }
+  finish(new Response(JSON.stringify({ message: "Logout failed" }), { status: 500 }));
+  const again = (await screen.findByRole("button", { name: "Log out" })) as HTMLButtonElement;
+  expect(again.disabled).toBe(false);
+  expect(again.textContent).toBe("Log out");
+  expect(screen.queryByRole("button", { name: "Logging out" })).toBeNull();
+  expect(screen.getByText("Bea · viewer")).toBeTruthy();
+});
+
 test("password form shows unsaved, saving, saved, and failed", async () => {
   document.cookie = "garage_csrf=csrf-token";
   let mode: "hold" | "fail" = "hold";
