@@ -258,7 +258,21 @@ async fn setup(
             "Setup is already complete",
         ));
     }
-    validate_username(&body.username)?;
+    if let Err(error) = validate_username(&body.username) {
+        record(
+            &app,
+            &body.username,
+            &ip.0,
+            "error",
+            "invalid_username",
+            "POST",
+            "/api/setup",
+            "",
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
     if let Err(error) = validate_password(&body.password) {
         record(
             &app,
@@ -6844,6 +6858,39 @@ mod tests {
             row.target,
             row.status
         )
+    }
+
+    #[tokio::test]
+    async fn setup_invalid_username_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let username = "bad name";
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": username, "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{}", response.body);
+        assert_eq!(code_of(&response.body), "invalid_username");
+        assert!(!response.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, username);
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_username");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/setup");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
     }
 
     #[tokio::test]
