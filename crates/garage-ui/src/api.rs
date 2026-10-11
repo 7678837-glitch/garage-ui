@@ -724,12 +724,38 @@ async fn reset_password(
     require(&current.user, Op::ManageUsers)?;
     let target = load_user(&app, id).await?;
     if target.id == current.user.id {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "cannot_reset_self",
+            "POST",
+            "/api/users/reset-password",
+            &target.username,
+            400,
+        )
+        .await?;
         return Err(ApiError::bad_request(
             "cannot_reset_self",
             "Use change-password for your own password",
         ));
     }
-    validate_password(&body.password)?;
+    if let Err(error) = validate_password(&body.password) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "password_invalid",
+            "POST",
+            "/api/users/reset-password",
+            &target.username,
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
     let _guard = app.write.lock().await;
     db::update_user(
@@ -7009,6 +7035,85 @@ mod tests {
         assert_eq!(row.target, "");
         assert_eq!(row.status, 400);
         assert!(!audit_text(row).contains(submitted));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(submitted));
+    }
+
+    #[tokio::test]
+    async fn reset_password_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        viewer_session(&app, &admin).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let id_of = |name: &str| {
+            users
+                .iter()
+                .find(|user| user["username"] == name)
+                .expect("user")["id"]
+                .as_i64()
+                .expect("id")
+        };
+        let admin_id = id_of("Ada");
+        let other_id = id_of("Bea");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let submitted = "shortpw";
+
+        let self_reset = exchange(
+            &app,
+            request(
+                "POST",
+                &format!("/api/users/{admin_id}/reset-password"),
+                Some(&json!({ "password": submitted }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(
+            self_reset.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            self_reset.body
+        );
+        assert_eq!(code_of(&self_reset.body), "cannot_reset_self");
+        assert!(!self_reset.body.contains(submitted));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "cannot_reset_self");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users/reset-password");
+        assert_eq!(row.target, "Ada");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(submitted));
+
+        let invalid = exchange(
+            &app,
+            request(
+                "POST",
+                &format!("/api/users/{other_id}/reset-password"),
+                Some(&json!({ "password": submitted }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(invalid.status, StatusCode::BAD_REQUEST, "{}", invalid.body);
+        assert_eq!(code_of(&invalid.body), "password_invalid");
+        assert!(!invalid.body.contains(submitted));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "password_invalid");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users/reset-password");
+        assert_eq!(row.target, "Bea");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(&rows[1]).contains(submitted));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
     }
