@@ -88,7 +88,10 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
-        .route("/api/admin-tokens", get(list_admin_tokens))
+        .route(
+            "/api/admin-tokens",
+            get(list_admin_tokens).post(create_admin_token),
+        )
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route("/api/objects/thumbnail", get(thumbnail_object))
@@ -1918,6 +1921,72 @@ struct AdminTokenListItem {
     scope: Vec<String>,
     #[serde(default, skip_deserializing)]
     from_config: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct CreateAdminTokenBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expiration: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    never_expires: Option<bool>,
+}
+
+async fn create_admin_token(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    Json(body): Json<CreateAdminTokenBody>,
+) -> Result<Response, ApiError> {
+    let bytes = serde_json::to_vec(&body).map_err(|_| ApiError::internal())?;
+    let response = post_garage(&app, &current, &headers, "CreateAdminToken", None, &bytes).await?;
+    finish_created_admin_token(&app, &current, response).await
+}
+
+async fn finish_created_admin_token(
+    app: &App,
+    current: &Current,
+    response: Response,
+) -> Result<Response, ApiError> {
+    let status = response.status();
+    let mut headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    if status.is_success()
+        && let Some(id) = created_admin_token_id(&bytes)
+    {
+        record(
+            app,
+            &current.user.username,
+            &current.ip,
+            "success",
+            "ok",
+            "POST",
+            "/api/admin-tokens",
+            &id,
+            i64::from(status.as_u16()),
+        )
+        .await?;
+    }
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    *out.headers_mut() = headers;
+    Ok(out)
+}
+
+fn created_admin_token_id(bytes: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    let id = value.get("id")?.as_str()?;
+    (!id.is_empty()).then(|| id.to_string())
 }
 
 fn admin_token_list(bytes: &[u8]) -> Result<Vec<AdminTokenListItem>, ApiError> {
@@ -7516,5 +7585,152 @@ mod tests {
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(secret));
         assert!(!sink.contains("secretToken"));
+    }
+
+    fn with_confirm(mut call: Request<Body>) -> Request<Body> {
+        call.headers_mut()
+            .insert("x-confirm", HeaderValue::from_static("yes"));
+        call
+    }
+
+    #[tokio::test]
+    async fn admin_token_create_returns_the_secret_once() {
+        let secret = "shown-once-fixture";
+        let created =
+            format!(r#"{{"secretToken":"{secret}","id":"tok-1","name":"reader","expired":false}}"#);
+        let sent = json!({
+            "name": "reader",
+            "expiration": "2026-12-01T00:00:00Z",
+            "scope": ["GetClusterStatus", "Metrics"]
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(created.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/admin-tokens",
+                Some(&sent.to_string()),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, created);
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        let creates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/CreateAdminToken "))
+            .collect();
+        assert_eq!(
+            creates.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&creates[0].body).unwrap(),
+            sent
+        );
+        assert!(!creates[0].body.contains("secretToken"));
+        assert!(!creates[0].body.contains(secret));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        let listed = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{} {} {} {} {} {} {}",
+                    row.username, row.ip, row.result, row.reason, row.method, row.path, row.target
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!listed.contains(secret), "{listed}");
+        assert!(rows.iter().any(|row| {
+            row.result == "success"
+                && row.reason == "ok"
+                && row.method == "POST"
+                && row.path == "/api/admin-tokens"
+                && row.target == "tok-1"
+        }));
+        assert!(
+            rows.iter()
+                .any(|row| row.result == "success" && row.target == "CreateAdminToken")
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+        assert!(!sink.contains("secretToken"));
+
+        let bare = Upstream::start(UpstreamReply::Ok(created.clone())).await;
+        let bare_dir = crate::util::temp_dir();
+        let bare_app = app_for(&bare_dir, &bare.url).await;
+        let (bare_admin, _) = login(&bare_app).await;
+        let before = crate::db::recent_audit(&bare_app.db).await.unwrap().len();
+        let unconfirmed = exchange(
+            &bare_app,
+            request(
+                "POST",
+                "/api/admin-tokens",
+                Some(&sent.to_string()),
+                Some(&bare_admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &unconfirmed,
+            StatusCode::FORBIDDEN,
+            "confirmation_required",
+            "Confirmation required",
+        );
+        assert!(
+            bare.calls()
+                .iter()
+                .all(|call| !call.line.contains("CreateAdminToken"))
+        );
+        assert_eq!(
+            crate::db::recent_audit(&bare_app.db).await.unwrap().len(),
+            before
+        );
+
+        let blocked = Upstream::start(UpstreamReply::Ok(created)).await;
+        let blocked_dir = crate::util::temp_dir();
+        let blocked_app = app_for(&blocked_dir, &blocked.url).await;
+        let (blocked_admin, _) = login(&blocked_app).await;
+        let viewer = viewer_session(&blocked_app, &blocked_admin).await;
+        let denied = exchange(
+            &blocked_app,
+            with_confirm(request(
+                "POST",
+                "/api/admin-tokens",
+                Some(&sent.to_string()),
+                Some(&viewer),
+            )),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let denied_rows: Vec<_> = crate::db::recent_audit(&blocked_app.db)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.result == "denied" || row.reason == "forbidden")
+            .collect();
+        assert_eq!(denied_rows.len(), 1);
+        assert_eq!(denied_rows[0].result, "denied");
+        assert_eq!(denied_rows[0].reason, "forbidden");
+        assert!(
+            blocked
+                .calls()
+                .iter()
+                .all(|call| !call.line.contains("CreateAdminToken"))
+        );
     }
 }
