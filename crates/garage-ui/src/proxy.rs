@@ -123,6 +123,18 @@ pub async fn dispatch(
     if endpoint.writes {
         let link = ensure_garage_link(app).await;
         if !link.writes_allowed {
+            audit(
+                app,
+                user,
+                ip,
+                "error",
+                "garage_too_old",
+                method.as_str(),
+                path,
+                name,
+                409,
+            )
+            .await?;
             return Err(ApiError::conflict(
                 "garage_too_old",
                 "Garage v2.3.0 or newer is required",

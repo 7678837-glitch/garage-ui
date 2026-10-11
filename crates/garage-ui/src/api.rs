@@ -3338,6 +3338,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn old_garage_write_block_is_audited() {
+        let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/garage/v2/CreateBucket",
+                Some("{}"),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::CONFLICT,
+            "garage_too_old",
+            "Garage v2.3.0 or newer is required",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "garage_too_old");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "v2/CreateBucket");
+        assert_eq!(row.target, "CreateBucket");
+        assert_eq!(row.status, 409);
+        let seen = mock.requests().join("\n");
+        assert!(!seen.contains("CreateBucket"), "{seen}");
+        let health = exchange(
+            &app,
+            request("GET", "/api/garage/v2/GetClusterHealth", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(health.status, StatusCode::OK, "{}", health.body);
+        let after_read = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(after_read.len(), rows.len(), "{after_read:?}");
+    }
+
+    #[tokio::test]
     async fn garage_2_3_0_allows_a_write() {
         let mock = GarageMock::start(r#"{"garageVersion":"v2.3.0"}"#).await;
         let dir = crate::util::temp_dir();
