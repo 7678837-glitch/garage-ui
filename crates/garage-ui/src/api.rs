@@ -388,7 +388,21 @@ async fn change_password(
         .await?;
         return Err(ApiError::rate_limited(wait.as_secs()));
     }
-    validate_password(&body.new_password)?;
+    if let Err(error) = validate_password(&body.new_password) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "password_invalid",
+            "POST",
+            "/api/auth/change-password",
+            "",
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
     let matches =
         password::verify_async(body.current_password, current.user.password_hash.clone()).await;
     if !matches {
@@ -6816,6 +6830,46 @@ mod tests {
             row.target,
             row.status
         )
+    }
+
+    #[tokio::test]
+    async fn change_password_invalid_new_password_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let submitted = "badpass";
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/change-password",
+                Some(
+                    &json!({
+                        "current_password": PASSWORD,
+                        "new_password": submitted
+                    })
+                    .to_string(),
+                ),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{}", response.body);
+        assert_eq!(code_of(&response.body), "password_invalid");
+        assert!(!response.body.contains(submitted));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "password_invalid");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/change-password");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(submitted));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(submitted));
     }
 
     #[tokio::test]
