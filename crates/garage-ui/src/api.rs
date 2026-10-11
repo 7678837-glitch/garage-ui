@@ -1617,7 +1617,21 @@ async fn create_key(
     headers: HeaderMap,
     Json(body): Json<CreateKeyBody>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeKeys)?;
+    if let Err(error) = require(&current.user, Op::ChangeKeys) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/keys",
+            &body.name,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     if !valid_new_key_name(&body.name) {
         record(
             &app,
@@ -1649,7 +1663,21 @@ async fn patch_key(
     headers: HeaderMap,
     Json(body): Json<PatchKeyBody>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeKeys)?;
+    if let Err(error) = require(&current.user, Op::ChangeKeys) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "PATCH",
+            "/api/keys",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let patch = match key_patch(body) {
         Ok(patch) => patch,
         Err(error) => {
@@ -1679,7 +1707,21 @@ async fn delete_key(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeKeys)?;
+    if let Err(error) = require(&current.user, Op::ChangeKeys) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "DELETE",
+            "/api/keys",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let query = format!("id={}", percent_encode(&id));
     post_garage(&app, &current, &headers, "DeleteKey", Some(&query), &[]).await
 }
@@ -5000,6 +5042,76 @@ mod tests {
         assert_eq!(row.path, "/api/keys");
         assert_eq!(row.target, "GK1");
         assert_eq!(row.status, 400);
+    }
+
+    #[tokio::test]
+    async fn key_write_denials_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(&json!({ "name": "photos" }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&created, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "photos");
+        assert_eq!(row.status, 403);
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                "/api/keys/GK1",
+                Some(&json!({ "name": "renamed" }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&patched, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "GK1");
+        assert_eq!(row.status, 403);
+
+        let removed = exchange(
+            &app,
+            request("DELETE", "/api/keys/GK1", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&removed, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 3, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "GK1");
+        assert_eq!(row.status, 403);
     }
 
     #[tokio::test]
