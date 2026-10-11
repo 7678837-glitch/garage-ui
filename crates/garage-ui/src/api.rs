@@ -92,6 +92,7 @@ pub fn routes(app: App) -> Router<App> {
             "/api/admin-tokens",
             get(list_admin_tokens).post(create_admin_token),
         )
+        .route("/api/admin-tokens/{id}", patch(update_admin_token))
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route("/api/objects/thumbnail", get(thumbnail_object))
@@ -1987,6 +1988,78 @@ fn created_admin_token_id(bytes: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     let id = value.get("id")?.as_str()?;
     (!id.is_empty()).then(|| id.to_string())
+}
+
+async fn update_admin_token(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateAdminTokenBody>,
+) -> Result<Response, ApiError> {
+    let bytes = serde_json::to_vec(&body).map_err(|_| ApiError::internal())?;
+    let query = format!("id={}", percent_encode(&id));
+    let response = post_garage(
+        &app,
+        &current,
+        &headers,
+        "UpdateAdminToken",
+        Some(&query),
+        &bytes,
+    )
+    .await?;
+    finish_updated_admin_token(&app, &current, &id, response).await
+}
+
+async fn finish_updated_admin_token(
+    app: &App,
+    current: &Current,
+    id: &str,
+    response: Response,
+) -> Result<Response, ApiError> {
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(response);
+    }
+    let mut headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    // 更新成功时上游仍可能带回 secret。这次之后的响应里不能再有它。
+    let bytes = without_admin_token_secret(&bytes)?;
+    record(
+        app,
+        &current.user.username,
+        &current.ip,
+        "success",
+        "ok",
+        "PATCH",
+        &format!("/api/admin-tokens/{id}"),
+        id,
+        i64::from(status.as_u16()),
+    )
+    .await?;
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    *out.headers_mut() = headers;
+    Ok(out)
+}
+
+fn without_admin_token_secret(bytes: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(bytes.to_vec());
+    };
+    let Some(object) = value.as_object_mut() else {
+        return Ok(bytes.to_vec());
+    };
+    if object.remove("secretToken").is_none() {
+        return Ok(bytes.to_vec());
+    }
+    serde_json::to_vec(&value).map_err(|_| ApiError::internal())
 }
 
 fn admin_token_list(bytes: &[u8]) -> Result<Vec<AdminTokenListItem>, ApiError> {
@@ -7731,6 +7804,173 @@ mod tests {
                 .calls()
                 .iter()
                 .all(|call| !call.line.contains("CreateAdminToken"))
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_token_update_drops_the_secret() {
+        let token_id = "tok-upd-1";
+        let secret = "upd-fixture-secret";
+        let path = format!("/api/admin-tokens/{token_id}");
+        let upstream = json!({
+            "secretToken": secret,
+            "id": token_id,
+            "name": "renamed",
+            "created": "2026-03-01T00:00:00Z",
+            "expiration": "2027-01-01T00:00:00Z",
+            "expired": false,
+            "scope": ["GetClusterStatus"],
+            "neverExpires": false
+        });
+        let sent = json!({
+            "name": "renamed",
+            "expiration": "2027-01-01T00:00:00Z",
+            "scope": ["GetClusterStatus"],
+            "neverExpires": false
+        });
+        let upstream_body = upstream.to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(upstream_body.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            with_confirm(request(
+                "PATCH",
+                &path,
+                Some(&sent.to_string()),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let mut expected = upstream;
+        expected.as_object_mut().unwrap().remove("secretToken");
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            expected
+        );
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        assert!(!response.body.contains(secret));
+        assert!(!response.body.contains("secretToken"));
+        let updates: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/UpdateAdminToken?"))
+            .collect();
+        assert_eq!(
+            updates.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            updates[0].line.contains(&format!("id={token_id}")),
+            "{}",
+            updates[0].line
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&updates[0].body).unwrap(),
+            sent
+        );
+        assert!(!updates[0].body.contains(secret));
+        assert!(!updates[0].body.contains("secretToken"));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        let listed = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{} {} {} {} {} {} {} {}",
+                    row.username,
+                    row.ip,
+                    row.result,
+                    row.reason,
+                    row.method,
+                    row.path,
+                    row.target,
+                    row.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!listed.contains(secret), "{listed}");
+        assert!(rows.iter().any(|row| {
+            row.result == "success"
+                && row.reason == "ok"
+                && row.method == "PATCH"
+                && row.path == path
+                && row.target == token_id
+        }));
+        assert!(
+            rows.iter()
+                .any(|row| row.result == "success" && row.target == "UpdateAdminToken")
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+        assert!(!sink.contains("secretToken"));
+
+        let bare = Upstream::start(UpstreamReply::Ok(upstream_body.clone())).await;
+        let bare_dir = crate::util::temp_dir();
+        let bare_app = app_for(&bare_dir, &bare.url).await;
+        let (bare_admin, _) = login(&bare_app).await;
+        let before = crate::db::recent_audit(&bare_app.db).await.unwrap().len();
+        let unconfirmed = exchange(
+            &bare_app,
+            request("PATCH", &path, Some(&sent.to_string()), Some(&bare_admin)),
+        )
+        .await;
+        assert_error(
+            &unconfirmed,
+            StatusCode::FORBIDDEN,
+            "confirmation_required",
+            "Confirmation required",
+        );
+        assert!(
+            bare.calls()
+                .iter()
+                .all(|call| !call.line.contains("UpdateAdminToken"))
+        );
+        assert_eq!(
+            crate::db::recent_audit(&bare_app.db).await.unwrap().len(),
+            before
+        );
+
+        let blocked = Upstream::start(UpstreamReply::Ok(upstream_body)).await;
+        let blocked_dir = crate::util::temp_dir();
+        let blocked_app = app_for(&blocked_dir, &blocked.url).await;
+        let (blocked_admin, _) = login(&blocked_app).await;
+        let viewer = viewer_session(&blocked_app, &blocked_admin).await;
+        let denied = exchange(
+            &blocked_app,
+            with_confirm(request(
+                "PATCH",
+                &path,
+                Some(&sent.to_string()),
+                Some(&viewer),
+            )),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let denied_rows: Vec<_> = crate::db::recent_audit(&blocked_app.db)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.result == "denied" || row.reason == "forbidden")
+            .collect();
+        assert_eq!(denied_rows.len(), 1);
+        assert_eq!(denied_rows[0].result, "denied");
+        assert_eq!(denied_rows[0].reason, "forbidden");
+        assert!(
+            blocked
+                .calls()
+                .iter()
+                .all(|call| !call.line.contains("UpdateAdminToken"))
         );
     }
 }
