@@ -650,6 +650,18 @@ async fn patch_user(
     let disabled = body.disabled.unwrap_or(target.disabled);
     let (download, share) = normalize_bits(role, download, share)?;
     if target.id == current.user.id && (disabled || role != current.user.role) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "cannot_lock_self",
+            "PATCH",
+            "/api/users",
+            &target.username,
+            400,
+        )
+        .await?;
         return Err(ApiError::bad_request(
             "cannot_lock_self",
             "You cannot disable or demote yourself",
@@ -711,6 +723,18 @@ async fn remove_user(
     let _guard = app.write.lock().await;
     let target = load_user(&app, id).await?;
     if target.id == current.user.id {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "cannot_lock_self",
+            "DELETE",
+            "/api/users",
+            &target.username,
+            400,
+        )
+        .await?;
         return Err(ApiError::bad_request(
             "cannot_lock_self",
             "You cannot delete yourself",
@@ -7224,6 +7248,105 @@ mod tests {
         assert!(!audit_text(&rows[1]).contains(submitted));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
+    }
+
+    #[tokio::test]
+    async fn self_lock_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let id_of = |name: &str| {
+            users
+                .iter()
+                .find(|user| user["username"] == name)
+                .expect("user")["id"]
+                .as_i64()
+                .expect("id")
+        };
+        let admin_id = id_of("Ada");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let disable = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{admin_id}"),
+                Some(&json!({ "disabled": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(disable.status, StatusCode::BAD_REQUEST, "{}", disable.body);
+        assert_eq!(code_of(&disable.body), "cannot_lock_self");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "cannot_lock_self");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Ada");
+        assert_eq!(row.status, 400);
+
+        let demote = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{admin_id}"),
+                Some(&json!({ "role": "viewer" }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(demote.status, StatusCode::BAD_REQUEST, "{}", demote.body);
+        assert_eq!(code_of(&demote.body), "cannot_lock_self");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "cannot_lock_self");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Ada");
+        assert_eq!(row.status, 400);
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                &format!("/api/users/{admin_id}"),
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::BAD_REQUEST, "{}", removed.body);
+        assert_eq!(code_of(&removed.body), "cannot_lock_self");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 3, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "cannot_lock_self");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Ada");
+        assert_eq!(row.status, 400);
+
+        let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        let admin_user = users
+            .iter()
+            .find(|user| user["username"] == "Ada")
+            .expect("user");
+        assert_eq!(admin_user["role"], "admin");
+        assert_eq!(admin_user["disabled"], false);
     }
 
     #[tokio::test]
