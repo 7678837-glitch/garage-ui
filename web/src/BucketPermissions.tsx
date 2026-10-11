@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
 
 type BucketKeyGrant = {
@@ -284,7 +285,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
     >
       {view.busy ? <p>Loading keys</p> : null}
       {view.refreshing ? <p>Refreshing keys</p> : null}
-      {view.failure ? (
+      {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}

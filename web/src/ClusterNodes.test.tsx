@@ -184,17 +184,19 @@ test("says nodes are unavailable when an id is missing or empty", async () => {
   expect(screen.queryByText("Up")).toBeNull();
 });
 
-test("shows the cluster status API message without an alert", async () => {
+test("shows the Garage banner instead of the cluster status message", async () => {
   installFetch("admin", () =>
     json({ code: "garage_unavailable", message: "Garage admin API is not reachable" }, 502),
   );
   renderApp();
-  const message = await screen.findByText("Garage admin API is not reachable");
-  expect(message.tagName).toBe("P");
-  expect(message.getAttribute("role")).toBeNull();
+  const banner = await screen.findByText("Garage admin API is not reachable");
+  expect(banner.tagName).toBe("P");
+  expect(banner.getAttribute("role")).toBe("alert");
+  expect(banner.textContent).toBe("Garage admin API is not reachable");
+  expect(screen.getAllByText("Garage admin API is not reachable")).toHaveLength(1);
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("There are no nodes.")).toBeNull();
-  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
 });
 
 test("does not show cluster nodes to a viewer or request them", async () => {

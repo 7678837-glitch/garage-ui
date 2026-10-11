@@ -378,21 +378,21 @@ test("shows the error message and loads again from Retry", async () => {
     vi.fn(async () => {
       calls += 1;
       if (calls === 1) {
-        return json({ code: "garage_unavailable", message: "Objects are not reachable" }, 502);
+        return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
       }
       return json(listed("back.txt"));
     }),
   );
   renderObjects();
-  expect(await screen.findByText("Objects are not reachable")).toBeTruthy();
-  expect(screen.getByText("garage_unavailable")).toBeTruthy();
-  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(await screen.findByText("Garage returned an error")).toBeTruthy();
+  expect(screen.getByText("upstream_failed")).toBeTruthy();
+  expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no objects.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("button", { name: "back.txt" })).toBeTruthy();
-  expect(screen.queryByText("Objects are not reachable")).toBeNull();
-  expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
+  expect(screen.queryByText("upstream_failed")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(calls).toBe(2);
 });

@@ -144,7 +144,7 @@ test("shows the status word and the seven cluster health counts to an admin", as
   expect(fetchMock.mock.calls.some((entry) => entry[0] === "/api/cluster/statistics")).toBe(true);
 });
 
-test("shows the cluster health API message and leaves the version alert as the only alert", async () => {
+test("shows the Garage banner for a down health query and keeps the version alert", async () => {
   stubFetch(
     json({
       bucketCount: 2,
@@ -159,9 +159,11 @@ test("shows the cluster health API message and leaves the version alert as the o
     true,
   );
   renderApp();
-  const message = await screen.findByText("Garage admin API is not reachable");
-  expect(message.tagName).toBe("P");
-  expect(message.getAttribute("role")).toBeNull();
+  const banner = await screen.findByText("Garage admin API is not reachable");
+  expect(banner.tagName).toBe("P");
+  expect(banner.getAttribute("role")).toBe("alert");
+  expect(banner.textContent).toBe("Garage admin API is not reachable");
+  expect(screen.getAllByText("Garage admin API is not reachable")).toHaveLength(1);
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("degraded")).toBeNull();
   expect(screen.queryByText("Known nodes")).toBeNull();
@@ -170,8 +172,8 @@ test("shows the cluster health API message and leaves the version alert as the o
   expect(valueOf("Object bytes")).toBe("1.00 KB");
   expect(document.body.textContent).not.toContain(disconnected);
   const alerts = screen.getAllByRole("alert");
-  expect(alerts).toHaveLength(1);
-  expect(alerts[0]?.textContent).toBe("Garage v2.3.0 or newer is required");
+  expect(alerts).toHaveLength(2);
+  expect(screen.getByText("Garage v2.3.0 or newer is required").getAttribute("role")).toBe("alert");
 });
 
 test("does not show cluster health to a viewer or request it", async () => {
@@ -238,14 +240,17 @@ test("shows the disconnected-node sentence only when incompleteAvailInfo is true
   expect(screen.queryAllByRole("alert")).toHaveLength(0);
 });
 
-test("shows the statistics API message and still shows the health counts", async () => {
+test("shows the Garage banner instead of the statistics message and still shows the health counts", async () => {
   stubFetch(
     json({ code: "garage_unavailable", message: "Cluster statistics are not reachable" }, 502),
   );
   renderApp();
-  const message = await screen.findByText("Statistics: Cluster statistics are not reachable");
-  expect(message.tagName).toBe("P");
-  expect(message.getAttribute("role")).toBeNull();
+  const banner = await screen.findByText("Garage admin API is not reachable");
+  expect(banner.tagName).toBe("P");
+  expect(banner.getAttribute("role")).toBe("alert");
+  expect(banner.textContent).toBe("Garage admin API is not reachable");
+  expect(screen.queryByText("Statistics: Cluster statistics are not reachable")).toBeNull();
+  expect(screen.queryByText("Cluster statistics are not reachable")).toBeNull();
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("Buckets", { selector: "dt" })).toBeNull();
   expect(screen.queryByText("Object bytes")).toBeNull();
@@ -258,5 +263,5 @@ test("shows the statistics API message and still shows the health counts", async
   expect(valueOf("Partitions")).toBe("256");
   expect(valueOf("Partitions with quorum")).toBe("250");
   expect(valueOf("Partitions all ok")).toBe("240");
-  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
 });

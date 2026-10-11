@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -195,31 +196,35 @@ function parseNodes(text: string): NodeLine[] {
   return nodes.map(parseNode);
 }
 
-function messageFrom(text: string, status: number): string {
+function failureFrom(text: string, status: number): { message: string; code: string | null } {
   const fallback = `request failed (${status})`;
+  const empty = { message: fallback, code: null };
   if (!text.startsWith("{")) {
-    return fallback;
+    return empty;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    return fallback;
+    return empty;
   }
-  if (typeof parsed === "object" && parsed && "message" in parsed) {
-    const message = parsed.message;
-    if (typeof message === "string" && message.length > 0) {
-      return message;
-    }
+  if (typeof parsed !== "object" || parsed === null) {
+    return empty;
   }
-  return fallback;
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
 }
 
 async function loadNodes(): Promise<NodeLine[]> {
   const response = await fetch("/api/cluster/status", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(messageFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    // 节点列表按原文解析，不经过 api()。横幅只认 error.code。
+    throw new ApiError(failure.message, failure.code);
   }
   return parseNodes(text);
 }
@@ -306,7 +311,7 @@ export function ClusterNodes() {
         </ul>
       ) : null}
       {nodes.isPending ? <p>Loading nodes</p> : null}
-      {nodes.isError ? <p>{message}</p> : null}
+      {nodes.isError && !isGarageDown(nodes.error) ? <p>{message}</p> : null}
       {nodes.isSuccess && nodes.data.length === 0 ? <p>There are no nodes.</p> : null}
       {nodes.isSuccess && nodes.data.length > 0 ? (
         <ul className="grid min-w-0 gap-3 text-sm">

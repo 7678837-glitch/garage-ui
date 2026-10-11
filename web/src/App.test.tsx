@@ -807,6 +807,67 @@ test("a viewer with download sees preview and download but not write controls", 
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
 });
 
+test("shows one Garage banner when the bucket list is down and clears it after Retry", async () => {
+  window.location.hash = "#buckets";
+  let bucketCalls = 0;
+  let healthCalls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        healthCalls += 1;
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/buckets")) {
+        bucketCalls += 1;
+        if (bucketCalls === 1) {
+          return new Response(
+            JSON.stringify({
+              code: "garage_unavailable",
+              message: "Garage admin API is not reachable",
+            }),
+            { status: 502 },
+          );
+        }
+        return new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 });
+    }),
+  );
+  renderApp();
+  const alerts = await screen.findAllByRole("alert");
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0]?.textContent).toBe("Garage admin API is not reachable");
+  const buckets = screen.getByRole("region", { name: "Buckets" });
+  expect(buckets.textContent ?? "").not.toContain("garage_unavailable");
+  expect(buckets.textContent ?? "").not.toContain("Garage admin API is not reachable");
+  const bucketsBefore = bucketCalls;
+  const healthBefore = healthCalls;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(bucketCalls).toBe(bucketsBefore + 1);
+  expect(healthCalls).toBe(healthBefore);
+});
+
 test("an admin with the download bit off still sees upload, delete, preview, and download", async () => {
   window.location.hash = "#buckets/bucket-bea/";
   vi.stubGlobal("fetch", objectBrowserResponse("admin", false));

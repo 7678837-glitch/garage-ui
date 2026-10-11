@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { encodeObjectKey } from "./App";
 import { ApiError, api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
@@ -495,6 +496,8 @@ export function Objects({
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
   const metaFailure = selected !== null && meta.isError ? failureOf(meta.error) : null;
   const failure = listFailure ?? searchFailure;
+  const showFailure = failure !== null && !isGarageDown(failure);
+  const showMeta = metaFailure !== null && !isGarageDown(metaFailure);
   const showRows = visible.length > 0 && (searching ? found.isSuccess : page !== null);
   const showEmpty = searching
     ? found.isSuccess && found.data !== undefined && found.data.matches.length === 0
@@ -636,11 +639,11 @@ export function Objects({
       </label>
       {browse.sort !== "key" ? <p>Only this page</p> : null}
       {loading ? <p>Loading objects</p> : null}
-      {failure ? <p>{failure.message}</p> : null}
-      {failure?.code ? <p>{failure.code}</p> : null}
-      {metaFailure ? <p>{metaFailure.message}</p> : null}
-      {metaFailure?.code ? <p>{metaFailure.code}</p> : null}
-      {failure || metaFailure ? (
+      {showFailure && failure ? <p>{failure.message}</p> : null}
+      {showFailure && failure?.code ? <p>{failure.code}</p> : null}
+      {showMeta && metaFailure ? <p>{metaFailure.message}</p> : null}
+      {showMeta && metaFailure?.code ? <p>{metaFailure.code}</p> : null}
+      {showFailure || showMeta ? (
         <button
           className="border border-neutral-900 px-3 py-1 text-left"
           type="button"

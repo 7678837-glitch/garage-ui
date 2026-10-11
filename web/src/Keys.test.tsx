@@ -234,7 +234,7 @@ test("shows the API code and requests the key list again from Retry", async () =
       calls += 1;
       if (calls === 1) {
         return json(
-          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          { code: "upstream_failed", message: "Garage returned an error" },
           502,
         );
       }
@@ -242,16 +242,16 @@ test("shows the API code and requests the key list again from Retry", async () =
     }),
   );
   renderKeys();
-  expect(await screen.findByText("Garage admin API is not reachable")).toBeTruthy();
-  expect(screen.getByText("garage_unavailable")).toBeTruthy();
-  expect(screen.getByText("garage_unavailable").getAttribute("role")).toBeNull();
+  expect(await screen.findByText("Garage returned an error")).toBeTruthy();
+  expect(screen.getByText("upstream_failed")).toBeTruthy();
+  expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no keys.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
-  expect(screen.queryByText("garage_unavailable")).toBeNull();
-  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByText("upstream_failed")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(calls).toBe(2);
 });

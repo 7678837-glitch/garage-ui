@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 
 const COUNTS = [
   ["knownNodes", "Known nodes"],
@@ -96,24 +97,26 @@ function parseHealth(body: unknown): ClusterHealthReport {
   };
 }
 
-function messageFrom(text: string, status: number): string {
+function failureFrom(text: string, status: number): { message: string; code: string | null } {
   const fallback = `request failed (${status})`;
+  const empty = { message: fallback, code: null };
   if (!text.startsWith("{")) {
-    return fallback;
+    return empty;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    return fallback;
+    return empty;
   }
-  if (typeof parsed === "object" && parsed && "message" in parsed) {
-    const message = parsed.message;
-    if (typeof message === "string" && message.length > 0) {
-      return message;
-    }
+  if (typeof parsed !== "object" || parsed === null) {
+    return empty;
   }
-  return fallback;
+  const body = parsed as Record<string, unknown>;
+  const message =
+    typeof body.message === "string" && body.message.length > 0 ? body.message : fallback;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : null;
+  return { message, code };
 }
 
 function countText(raw: RawStat | undefined): CountText {
@@ -285,7 +288,9 @@ async function loadStatistics(): Promise<ClusterStatistics> {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(messageFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    // 统计响应按原文解析，不经过 api()。横幅只认 error.code。
+    throw new ApiError(failure.message, failure.code);
   }
   return readStatistics(text);
 }
@@ -310,7 +315,7 @@ export function ClusterHealth() {
     <section className="grid gap-4" aria-label="Cluster health">
       <h2 className="text-lg font-semibold">Cluster health</h2>
       {health.isPending ? <p>Loading cluster health</p> : null}
-      {health.isError ? <p>{healthMessage}</p> : null}
+      {health.isError && !isGarageDown(health.error) ? <p>{healthMessage}</p> : null}
       {health.isSuccess ? (
         <dl className="grid gap-2 text-sm">
           <div>
@@ -325,7 +330,9 @@ export function ClusterHealth() {
           ))}
         </dl>
       ) : null}
-      {statistics.isError ? <p>{`Statistics: ${statisticsMessage}`}</p> : null}
+      {statistics.isError && !isGarageDown(statistics.error) ? (
+        <p>{`Statistics: ${statisticsMessage}`}</p>
+      ) : null}
       {statistics.isSuccess ? (
         <>
           <dl className="grid gap-2 text-sm">

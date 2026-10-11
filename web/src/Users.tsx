@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 
 type Role = "admin" | "viewer";
 
@@ -487,7 +488,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
       </div>
       {view.busy ? <p>Loading users</p> : null}
       {view.refreshing ? <p>Refreshing users</p> : null}
-      {view.failure ? (
+      {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}

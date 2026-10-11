@@ -1,9 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
+import { isGarageDown } from "./garageDown";
 import { About } from "./About";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
@@ -166,6 +167,39 @@ function useHashSection(role: string) {
   return { section: sectionFromHash(hash, role), select };
 }
 
+function GarageBanner() {
+  const client = useQueryClient();
+  const cache = client.getQueryCache();
+  // 横幅看的是整份 query cache。只订阅本组件自己的 query 会漏掉别的区块。
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => cache.subscribe(onStoreChange),
+    [cache],
+  );
+  const down = useSyncExternalStore(subscribe, () =>
+    cache.getAll().some((query) => isGarageDown(query.state.error)),
+  );
+  if (!down) {
+    return null;
+  }
+  return (
+    <>
+      <p role="alert">Garage admin API is not reachable</p>
+      <button
+        className="border border-ink px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          void client.refetchQueries({
+            type: "all",
+            predicate: (query) => isGarageDown(query.state.error),
+          });
+        }}
+      >
+        Retry
+      </button>
+    </>
+  );
+}
+
 function Home({ status }: { status: SessionStatus }) {
   const client = useQueryClient();
   const health = useQuery({
@@ -208,6 +242,7 @@ function Home({ status }: { status: SessionStatus }) {
         onSelect={select}
       />
       <div className="grid min-w-0 flex-1 gap-6">
+        <GarageBanner />
         {section === "overview" ? (
           <>
             <div className="grid max-w-sm gap-6">

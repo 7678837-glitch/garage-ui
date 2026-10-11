@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { isGarageDown } from "./garageDown";
 
 type ProbeWord = "unknown" | "present" | "absent";
 
@@ -113,7 +114,7 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
     <section className="grid gap-4" aria-label="About">
       <h2 className="text-lg font-semibold">About</h2>
       <p>{garageLine(garageVersion)}</p>
-      {failure ? (
+      {failure && !isGarageDown(failure) ? (
         <>
           <p>
             {failure.message}

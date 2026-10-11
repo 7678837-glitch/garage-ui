@@ -93,7 +93,7 @@ test("shows the API message and code, then loads capabilities again from Retry",
       calls += 1;
       if (calls === 1) {
         return json(
-          { code: "garage_unavailable", message: "Garage admin API is not reachable" },
+          { code: "upstream_failed", message: "Garage returned an error" },
           502,
         );
       }
@@ -105,7 +105,7 @@ test("shows the API message and code, then loads capabilities again from Retry",
     }),
   );
   renderAbout("v2.4.1");
-  const paragraph = await screen.findByText("Garage admin API is not reachable garage_unavailable");
+  const paragraph = await screen.findByText("Garage returned an error upstream_failed");
   expect(paragraph.tagName).toBe("P");
   expect(paragraph.getAttribute("role")).toBeNull();
   expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
@@ -115,7 +115,7 @@ test("shows the API message and code, then loads capabilities again from Retry",
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info absent")).toBeTruthy();
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
-  expect(screen.queryByText("Garage admin API is not reachable garage_unavailable")).toBeNull();
+  expect(screen.queryByText("Garage returned an error upstream_failed")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(calls).toBe(2);
 });

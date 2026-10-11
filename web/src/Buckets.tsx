@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 import { Objects } from "./Objects";
@@ -899,7 +900,7 @@ export function Buckets({
       {canManage && !browsing ? <CreateBucketForm /> : null}
       {view.loading ? <p>Loading buckets</p> : null}
       {view.refreshing ? <p>Refreshing buckets</p> : null}
-      {view.failure ? (
+      {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
