@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -8,6 +8,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
+  window.history.replaceState(null, "", "/");
 });
 
 function renderApp() {
@@ -408,4 +409,141 @@ test("shows Connecting while connect is submitting, then Connected when no lines
   expect(idle.disabled).toBe(false);
   expect(idle.textContent).toBe("Connect node");
   expect(screen.getByText("node-up")).toBeTruthy();
+});
+
+function nodeCardText(): string[] {
+  return screen.queryAllByRole("listitem").map((item) => item.textContent ?? "");
+}
+
+test("filters loaded nodes from the query string and keeps that choice in the address", async () => {
+  window.history.replaceState(null, "", "/?nodes=APPLE&keep=1#stay");
+  const fetchMock = installFetch("admin", () =>
+    json({
+      nodes: [
+        {
+          id: "n-b",
+          hostname: "Apple",
+          addr: "10.0.0.2:3901",
+          garageVersion: "v2.4.1",
+          isUp: true,
+          draining: false,
+        },
+        {
+          id: "n-a",
+          hostname: "apple",
+          addr: "10.0.0.3:3901",
+          garageVersion: "v2.4.1",
+          isUp: true,
+          draining: false,
+        },
+        { id: "n-z", hostname: "", isUp: false, draining: false },
+        { id: "n-c", isUp: false, draining: false },
+        {
+          id: "n-m",
+          hostname: "mango",
+          addr: "10.0.0.4:3901",
+          garageVersion: "v2.4.1",
+          isUp: true,
+          draining: false,
+        },
+      ],
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("n-b")).toBeTruthy();
+  expect(screen.getByText("n-a")).toBeTruthy();
+  expect(screen.queryByText("n-z")).toBeNull();
+  expect(screen.queryByText("n-c")).toBeNull();
+  expect(screen.queryByText("n-m")).toBeNull();
+  expect(nodeCardText()).toEqual([
+    "n-bApple10.0.0.2:3901v2.4.1Up",
+    "n-aapple10.0.0.3:3901v2.4.1Up",
+  ]);
+  expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("APPLE");
+  const sort = screen.getByLabelText("Sort nodes") as HTMLSelectElement;
+  expect(sort.value).toBe("id");
+  expect(Array.from(sort.options).map((option) => option.value)).toEqual(["id", "hostname"]);
+  expect(Array.from(sort.options).map((option) => option.text)).toEqual(["Id", "Hostname"]);
+  expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
+  expect(screen.queryByText("Only loaded rows")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  expect(screen.queryByText("Nodes are unavailable")).toBeNull();
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe("");
+  expect(screen.getByRole("button", { name: "Connect node" }).textContent).toBe("Connect node");
+  expect(window.location.hash).toBe("#stay");
+  expect(window.location.search).toContain("nodes=APPLE");
+  expect(window.location.search).toContain("keep=1");
+  const statusCalls = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/cluster/status").length;
+  expect(statusCalls()).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Filter nodes"), { target: { value: "" } });
+  expect(nodeCardText()).toEqual([
+    "n-bApple10.0.0.2:3901v2.4.1Up",
+    "n-aapple10.0.0.3:3901v2.4.1Up",
+    "n-zDown",
+    "n-cDown",
+    "n-mmango10.0.0.4:3901v2.4.1Up",
+  ]);
+  expect(window.location.search).toBe("?keep=1");
+  expect(window.location.hash).toBe("#stay");
+  expect(statusCalls()).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Sort nodes"), { target: { value: "hostname" } });
+  expect(nodeCardText()).toEqual([
+    "n-cDown",
+    "n-zDown",
+    "n-aapple10.0.0.3:3901v2.4.1Up",
+    "n-bApple10.0.0.2:3901v2.4.1Up",
+    "n-mmango10.0.0.4:3901v2.4.1Up",
+  ]);
+  expect(new URLSearchParams(window.location.search).get("nodesSort")).toBe("hostname");
+  expect(new URLSearchParams(window.location.search).has("nodes")).toBe(false);
+  expect(new URLSearchParams(window.location.search).get("keep")).toBe("1");
+  expect(window.location.hash).toBe("#stay");
+  expect(statusCalls()).toBe(1);
+
+  fireEvent.change(screen.getByLabelText("Filter nodes"), { target: { value: "N-Z" } });
+  expect(nodeCardText()).toEqual(["n-zDown"]);
+  expect(screen.queryByText("n-c")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  expect(window.location.search).toContain("nodes=N-Z");
+  expect(window.location.search).toContain("nodesSort=hostname");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#stay");
+  expect(statusCalls()).toBe(1);
+
+  act(() => {
+    window.history.pushState(null, "", "/?nodes=missing&keep=1#stay");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(nodeCardText()).toEqual([]);
+  expect(screen.queryByText("n-a")).toBeNull();
+  expect(screen.queryByText("n-b")).toBeNull();
+  expect(screen.queryByText("n-c")).toBeNull();
+  expect(screen.queryByText("n-z")).toBeNull();
+  expect(screen.queryByText("n-m")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  expect(screen.queryByText("Nodes are unavailable")).toBeNull();
+  expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("missing");
+  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(window.location.hash).toBe("#stay");
+  expect(statusCalls()).toBe(1);
+
+  act(() => {
+    window.history.pushState(null, "", "/?nodesSort=capacity&keep=1#stay");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(nodeCardText()).toEqual([
+    "n-bApple10.0.0.2:3901v2.4.1Up",
+    "n-aapple10.0.0.3:3901v2.4.1Up",
+    "n-zDown",
+    "n-cDown",
+    "n-mmango10.0.0.4:3901v2.4.1Up",
+  ]);
+  expect(window.location.search).toContain("nodesSort=capacity");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#stay");
+  expect(statusCalls()).toBe(1);
 });

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api } from "./api/client";
 import { isGarageDown } from "./garageDown";
 
@@ -254,6 +254,71 @@ async function connectNode(address: string): Promise<string[]> {
   return body.map(connectLine);
 }
 
+type NodeSort = "id" | "hostname";
+
+type NodeQuery = {
+  filter: string;
+  sort: NodeSort;
+};
+
+function nodeSortFrom(value: string | null): NodeSort {
+  return value === "hostname" ? "hostname" : "id";
+}
+
+function readNodeQuery(): NodeQuery {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    filter: params.get("nodes") ?? "",
+    sort: nodeSortFrom(params.get("nodesSort")),
+  };
+}
+
+function writeNodeQuery(query: NodeQuery) {
+  const params = new URLSearchParams(window.location.search);
+  if (query.filter.length > 0) {
+    params.set("nodes", query.filter);
+  } else {
+    params.delete("nodes");
+  }
+  if (query.sort === "hostname") {
+    params.set("nodesSort", "hostname");
+  } else {
+    params.delete("nodesSort");
+  }
+  const search = params.toString();
+  const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.replaceState(window.history.state, "", next);
+  }
+}
+
+function nodeMatches(node: NodeLine, filter: string): boolean {
+  if (filter.length === 0) {
+    return true;
+  }
+  const needle = filter.toLowerCase();
+  if (node.id.toLowerCase().includes(needle)) {
+    return true;
+  }
+  return node.hostname !== null && node.hostname.toLowerCase().includes(needle);
+}
+
+function orderedNodes(rows: NodeLine[], sort: NodeSort): NodeLine[] {
+  if (sort === "id") {
+    return rows;
+  }
+  return [...rows].sort((left, right) => {
+    const byHost = (left.hostname ?? "")
+      .toLowerCase()
+      .localeCompare((right.hostname ?? "").toLowerCase());
+    if (byHost !== 0) {
+      return byHost;
+    }
+    return left.id.toLowerCase().localeCompare(right.id.toLowerCase());
+  });
+}
+
 export function ClusterNodes() {
   const client = useQueryClient();
   const [address, setAddress] = useState("");
@@ -269,6 +334,18 @@ export function ClusterNodes() {
       await client.invalidateQueries({ queryKey: ["cluster", "status"] });
     },
   });
+  const [query, setQuery] = useState(readNodeQuery);
+  useEffect(() => {
+    const sync = () => setQuery(readNodeQuery());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const shown = nodes.isSuccess
+    ? orderedNodes(
+        nodes.data.filter((node) => nodeMatches(node, query.filter)),
+        query.sort,
+      )
+    : [];
   const trimmed = address.trim();
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -311,6 +388,39 @@ export function ClusterNodes() {
           ))}
         </ul>
       ) : null}
+      <div className="grid max-w-sm gap-3">
+        <label className="block">
+          <span className="text-sm">Filter nodes</span>
+          <input
+            className="mt-1 w-full border border-line px-2 py-1"
+            value={query.filter}
+            onChange={(event) => {
+              const next = { filter: event.target.value, sort: query.sort };
+              setQuery(next);
+              writeNodeQuery(next);
+            }}
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm">Sort nodes</span>
+          <select
+            className="mt-1 w-full border border-line px-2 py-1"
+            value={query.sort}
+            onChange={(event) => {
+              const next = {
+                filter: query.filter,
+                sort: nodeSortFrom(event.target.value),
+              };
+              setQuery(next);
+              writeNodeQuery(next);
+            }}
+          >
+            <option value="id">Id</option>
+            <option value="hostname">Hostname</option>
+          </select>
+        </label>
+        <p>Default order is Id.</p>
+      </div>
       {nodes.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading nodes" />
       ) : null}
@@ -318,9 +428,9 @@ export function ClusterNodes() {
       {nodes.isSuccess && nodes.data.length === 0 ? (
         <p>There are no nodes. Connect the first node.</p>
       ) : null}
-      {nodes.isSuccess && nodes.data.length > 0 ? (
+      {nodes.isSuccess && shown.length > 0 ? (
         <ul className="grid min-w-0 gap-3 text-sm">
-          {nodes.data.map((node) => (
+          {shown.map((node) => (
             <li key={node.id} className="min-w-0">
               <p className="break-all">{node.id}</p>
               {node.hostname !== null ? <p className="break-all">{node.hostname}</p> : null}
