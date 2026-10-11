@@ -1702,7 +1702,21 @@ async fn key_secret(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ViewSecret)?;
+    if let Err(error) = require(&current.user, Op::ViewSecret) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/keys/secret",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     if !confirmed(&headers) {
         return Err(ApiError::forbidden(
             "confirmation_required",
@@ -5655,6 +5669,31 @@ mod tests {
         assert_eq!(row.reason, "forbidden");
         assert_eq!(row.method, "DELETE");
         assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "GK1");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn key_secret_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request("POST", "/api/keys/GK1/secret", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/keys/secret");
         assert_eq!(row.target, "GK1");
         assert_eq!(row.status, 403);
     }
