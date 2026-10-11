@@ -67,6 +67,7 @@ test("shows health status when the session is authenticated", async () => {
   );
   renderApp();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.getAllByText("Ada · admin")).toHaveLength(1);
   expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
@@ -967,7 +968,7 @@ test("loading #keys shows keys", async () => {
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
-  expect(screen.queryByText("Bea · viewer")).toBeNull();
+  expect(screen.getAllByText("Bea · viewer")).toHaveLength(1);
 });
 
 test("an admin sees Users and a viewer opening #users sees overview", async () => {

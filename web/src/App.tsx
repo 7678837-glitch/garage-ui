@@ -322,15 +322,15 @@ function Home({ status }: { status: SessionStatus }) {
       />
       <div className="grid min-w-0 flex-1 gap-6">
         <GarageBanner />
+        <p>
+          {status.username} · {status.role}
+        </p>
         {section === "overview" ? (
           <>
             <div className="grid max-w-sm gap-6">
               {status.garage_write_blocked === true ? (
                 <p role="alert">Garage v2.3.0 or newer is required</p>
               ) : null}
-              <p>
-                {status.username} · {status.role}
-              </p>
               <p>{healthText}</p>
               <form
                 className="grid gap-3"
