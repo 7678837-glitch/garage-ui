@@ -1218,7 +1218,16 @@ async fn grant_bucket_permissions(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    change_bucket_permissions(&app, &current, &headers, &id, &body, "AllowBucketKey").await
+    change_bucket_permissions(
+        &app,
+        &current,
+        &headers,
+        &id,
+        &body,
+        "POST",
+        "AllowBucketKey",
+    )
+    .await
 }
 
 async fn revoke_bucket_permissions(
@@ -1228,7 +1237,16 @@ async fn revoke_bucket_permissions(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    change_bucket_permissions(&app, &current, &headers, &id, &body, "DenyBucketKey").await
+    change_bucket_permissions(
+        &app,
+        &current,
+        &headers,
+        &id,
+        &body,
+        "DELETE",
+        "DenyBucketKey",
+    )
+    .await
 }
 
 async fn change_bucket_permissions(
@@ -1237,9 +1255,24 @@ async fn change_bucket_permissions(
     headers: &HeaderMap,
     id: &str,
     body: &[u8],
+    method: &'static str,
     endpoint: &'static str,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeBucketKeys)?;
+    if let Err(error) = require(&current.user, Op::ChangeBucketKeys) {
+        record(
+            app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            method,
+            "/api/buckets/permissions",
+            id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let bytes = permission_bytes(id, body)?;
     post_garage(app, current, headers, endpoint, None, &bytes).await
 }
@@ -4635,6 +4668,61 @@ mod tests {
         assert_eq!(row.reason, "forbidden");
         assert_eq!(row.method, "DELETE");
         assert_eq!(row.path, "/api/buckets/aliases");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn bucket_permission_denials_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let body =
+            r#"{"accessKeyId":"GK1","permissions":{"owner":false,"read":true,"write":false}}"#;
+
+        let granted = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/permissions",
+                Some(body),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&granted, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/permissions");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+
+        let revoked = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/permissions",
+                Some(body),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&revoked, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets/permissions");
         assert_eq!(row.target, "bkt-1");
         assert_eq!(row.status, 403);
     }
