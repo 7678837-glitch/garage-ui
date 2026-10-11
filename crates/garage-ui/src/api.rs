@@ -2037,7 +2037,7 @@ fn effective_share(user: &User) -> bool {
     user.role == "admin" || (user.can_share && user.can_download)
 }
 
-fn validate_username(username: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_username(username: &str) -> Result<(), ApiError> {
     let count = username.chars().count();
     let legal = (1..=64).contains(&count)
         && username

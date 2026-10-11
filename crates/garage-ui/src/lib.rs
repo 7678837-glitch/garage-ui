@@ -2,6 +2,7 @@ mod access;
 mod api;
 mod assets;
 mod bind;
+pub mod cli;
 mod config;
 mod db;
 mod error;

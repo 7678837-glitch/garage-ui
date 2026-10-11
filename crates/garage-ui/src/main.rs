@@ -1,39 +1,32 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use clap::Parser;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
+use garage_ui::cli::{self, Command, UserArgs, UserCommand};
 use garage_ui::{PORT, boot, listen_addr, probe, router, shutdown_wait};
 
-#[derive(Parser)]
-#[command(name = "garage-ui", version = garage_ui::version())]
-struct Cli {
-    /// 检查本机 127.0.0.1:3909 的 /healthz，成功时退出码为 0。
-    #[arg(long = "health")]
-    health: bool,
-}
-
 fn main() -> anyhow::Result<()> {
-    let mut args: Vec<String> = std::env::args().collect();
-    // 规格沿用单横线 `-health`，clap 的长参数是 `--health`。
-    for arg in &mut args {
-        if arg == "-health" {
-            *arg = "--health".to_string();
-        }
-    }
-    let cli = Cli::parse_from(args);
+    let cli = cli::parse();
     init_tracing();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("启动 tokio 失败")?;
+    // 健康检查不能打开数据库。带了子命令也先探测。
     if cli.health {
         return runtime.block_on(probe(SocketAddr::from(([127, 0, 0, 1], PORT))));
     }
-    runtime.block_on(serve())
+    match cli.command {
+        None => runtime.block_on(serve()),
+        Some(Command::Users) => runtime.block_on(cli::list()),
+        Some(Command::User(UserArgs { action })) => match action {
+            UserCommand::ResetPassword { username } => runtime.block_on(cli::reset(username)),
+            UserCommand::CreateAdmin { username } => runtime.block_on(cli::create(username)),
+        },
+    }
 }
 
 async fn serve() -> anyhow::Result<()> {
