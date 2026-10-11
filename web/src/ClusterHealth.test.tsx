@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -74,9 +74,20 @@ const statistics = {
   freeform,
 };
 
+type RouteResponse = Response | (() => Response | Promise<Response>);
+
+function routeResponse(source: RouteResponse): Response | Promise<Response> {
+  return typeof source === "function" ? source() : source;
+}
+
+function healthLines(): string[] {
+  const section = screen.getByRole("region", { name: "Cluster health" });
+  return [...section.querySelectorAll("p")].map((node) => node.textContent ?? "");
+}
+
 function stubFetch(
-  statisticsResponse: Response,
-  health: Response = json(report),
+  statisticsResponse: RouteResponse,
+  health: RouteResponse = json(report),
   role: "admin" | "viewer" = "admin",
   writeBlocked = false,
 ) {
@@ -93,10 +104,10 @@ function stubFetch(
       return json(session(role, writeBlocked));
     }
     if (url === "/api/cluster/health") {
-      return health;
+      return routeResponse(health);
     }
     if (url === "/api/cluster/statistics") {
-      return statisticsResponse;
+      return routeResponse(statisticsResponse);
     }
     if (url === "/api/cluster/status") {
       return json({ nodes: [] });
@@ -174,6 +185,7 @@ test("shows the Garage banner for a down health query and keeps the version aler
   const alerts = screen.getAllByRole("alert");
   expect(alerts).toHaveLength(2);
   expect(screen.getByText("Garage v2.3.0 or newer is required").getAttribute("role")).toBe("alert");
+  expect(screen.queryByRole("button", { name: "Retry health" })).toBeNull();
 });
 
 test("does not show cluster health to a viewer or request it", async () => {
@@ -251,6 +263,7 @@ test("shows the Garage banner instead of the statistics message and still shows 
   expect(banner.textContent).toBe("Garage admin API is not reachable");
   expect(screen.queryByText("Statistics: Cluster statistics are not reachable")).toBeNull();
   expect(screen.queryByText("Cluster statistics are not reachable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry statistics" })).toBeNull();
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("Buckets", { selector: "dt" })).toBeNull();
   expect(screen.queryByText("Object bytes")).toBeNull();
@@ -264,4 +277,125 @@ test("shows the Garage banner instead of the statistics message and still shows 
   expect(valueOf("Partitions with quorum")).toBe("250");
   expect(valueOf("Partitions all ok")).toBe("240");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
+});
+
+test("shows the health code and loads health again from Retry health", async () => {
+  let healthCalls = 0;
+  let statisticsCalls = 0;
+  let recoverHealth = false;
+  stubFetch(
+    () => {
+      statisticsCalls += 1;
+      return json(statistics);
+    },
+    () => {
+      healthCalls += 1;
+      if (!recoverHealth) {
+        return json(
+          { code: "health_failed", message: "Cluster health could not be read" },
+          500,
+        );
+      }
+      return json(report);
+    },
+  );
+  renderApp();
+  expect(await screen.findByText("Cluster health could not be read")).toBeTruthy();
+  expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
+  expect(healthLines()).toEqual(["Cluster health could not be read", "health_failed"]);
+  expect(screen.getByText("health_failed").getAttribute("role")).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry health" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry statistics" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(valueOf("Buckets")).toBe("2");
+  expect(valueOf("Object bytes")).toBe("1.00 KB");
+  expect(screen.queryByText("Known nodes")).toBeNull();
+  const healthSeen = healthCalls;
+  const statisticsSeen = statisticsCalls;
+  recoverHealth = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry health" }));
+  expect(await screen.findByText("degraded")).toBeTruthy();
+  expect(valueOf("Status")).toBe("degraded");
+  expect(valueOf("Known nodes")).toBe("5");
+  expect(valueOf("Buckets")).toBe("2");
+  expect(screen.queryByText("Cluster health could not be read")).toBeNull();
+  expect(screen.queryByText("health_failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry health" })).toBeNull();
+  expect(healthCalls).toBe(healthSeen + 1);
+  expect(statisticsCalls).toBe(statisticsSeen);
+});
+
+test("shows a health failure without an empty code line", async () => {
+  stubFetch(json(statistics), json({ code: "", message: "Cluster health could not be read" }, 500));
+  renderApp();
+  expect(await screen.findByText("Cluster health could not be read")).toBeTruthy();
+  expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
+  expect(healthLines()).toEqual(["Cluster health could not be read"]);
+  expect(screen.getByRole("button", { name: "Retry health" })).toBeTruthy();
+  expect(valueOf("Buckets")).toBe("2");
+  expect(screen.queryByText("Known nodes")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("shows the statistics code and loads statistics again from Retry statistics", async () => {
+  let healthCalls = 0;
+  let statisticsCalls = 0;
+  let recoverStatistics = false;
+  stubFetch(
+    () => {
+      statisticsCalls += 1;
+      if (!recoverStatistics) {
+        return json(
+          { code: "stats_failed", message: "Cluster statistics could not be read" },
+          500,
+        );
+      }
+      return json(statistics);
+    },
+    () => {
+      healthCalls += 1;
+      return json(report);
+    },
+  );
+  renderApp();
+  expect(await screen.findByText("degraded")).toBeTruthy();
+  expect(await screen.findByText("Statistics: Cluster statistics could not be read")).toBeTruthy();
+  expect(healthLines()).toEqual([
+    "Statistics: Cluster statistics could not be read",
+    "stats_failed",
+  ]);
+  expect(screen.getByText("stats_failed").getAttribute("role")).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry statistics" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry health" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(valueOf("Status")).toBe("degraded");
+  expect(valueOf("Known nodes")).toBe("5");
+  expect(screen.queryByText("Buckets", { selector: "dt" })).toBeNull();
+  const healthSeen = healthCalls;
+  const statisticsSeen = statisticsCalls;
+  recoverStatistics = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry statistics" }));
+  expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
+  expect(valueOf("Buckets")).toBe("2");
+  expect(valueOf("Object bytes")).toBe("1.00 KB");
+  expect(valueOf("Status")).toBe("degraded");
+  expect(valueOf("Known nodes")).toBe("5");
+  expect(screen.queryByText("Statistics: Cluster statistics could not be read")).toBeNull();
+  expect(screen.queryByText("stats_failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry statistics" })).toBeNull();
+  expect(statisticsCalls).toBe(statisticsSeen + 1);
+  expect(healthCalls).toBe(healthSeen);
+});
+
+test("shows a statistics failure without an empty code line", async () => {
+  stubFetch(json({ message: "Cluster statistics could not be read" }, 500));
+  renderApp();
+  expect(await screen.findByText("degraded")).toBeTruthy();
+  expect(await screen.findByText("Statistics: Cluster statistics could not be read")).toBeTruthy();
+  expect(healthLines()).toEqual(["Statistics: Cluster statistics could not be read"]);
+  expect(screen.getByRole("button", { name: "Retry statistics" })).toBeTruthy();
+  expect(valueOf("Known nodes")).toBe("5");
+  expect(screen.queryByText("Buckets", { selector: "dt" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -281,6 +281,13 @@ function formatInUnit(bytes: string, scale: number): string {
   return `${whole}.${fraction}`;
 }
 
+function shownCode(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.code === null || error.code.length === 0) {
+    return null;
+  }
+  return error.code;
+}
+
 async function loadStatistics(): Promise<ClusterStatistics> {
   const response = await fetch("/api/cluster/statistics", {
     method: "GET",
@@ -310,6 +317,8 @@ export function ClusterHealth() {
     statistics.error instanceof Error
       ? statistics.error.message
       : "Cluster statistics are unavailable";
+  const healthCode = shownCode(health.error);
+  const statisticsCode = shownCode(statistics.error);
 
   return (
     <section className="grid gap-4" aria-label="Cluster health">
@@ -317,7 +326,21 @@ export function ClusterHealth() {
       {health.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading cluster health" />
       ) : null}
-      {health.isError && !isGarageDown(health.error) ? <p>{healthMessage}</p> : null}
+      {health.isError && !isGarageDown(health.error) ? (
+        <>
+          <p>{healthMessage}</p>
+          {healthCode ? <p>{healthCode}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void health.refetch();
+            }}
+          >
+            Retry health
+          </button>
+        </>
+      ) : null}
       {health.isSuccess ? (
         <dl className="grid gap-2 text-sm">
           <div>
@@ -333,7 +356,19 @@ export function ClusterHealth() {
         </dl>
       ) : null}
       {statistics.isError && !isGarageDown(statistics.error) ? (
-        <p>{`Statistics: ${statisticsMessage}`}</p>
+        <>
+          <p>{`Statistics: ${statisticsMessage}`}</p>
+          {statisticsCode ? <p>{statisticsCode}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void statistics.refetch();
+            }}
+          >
+            Retry statistics
+          </button>
+        </>
       ) : null}
       {statistics.isSuccess ? (
         <>
