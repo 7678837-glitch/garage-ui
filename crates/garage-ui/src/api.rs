@@ -1314,7 +1314,16 @@ async fn add_bucket_alias(
     headers: HeaderMap,
     Json(body): Json<AliasBody>,
 ) -> Result<Response, ApiError> {
-    change_alias(&app, &current, &headers, &id, body, "AddBucketAlias").await
+    change_alias(
+        &app,
+        &current,
+        &headers,
+        &id,
+        body,
+        "POST",
+        "AddBucketAlias",
+    )
+    .await
 }
 
 async fn remove_bucket_alias(
@@ -1324,7 +1333,16 @@ async fn remove_bucket_alias(
     headers: HeaderMap,
     Json(body): Json<AliasBody>,
 ) -> Result<Response, ApiError> {
-    change_alias(&app, &current, &headers, &id, body, "RemoveBucketAlias").await
+    change_alias(
+        &app,
+        &current,
+        &headers,
+        &id,
+        body,
+        "DELETE",
+        "RemoveBucketAlias",
+    )
+    .await
 }
 
 async fn change_alias(
@@ -1333,9 +1351,24 @@ async fn change_alias(
     headers: &HeaderMap,
     id: &str,
     body: AliasBody,
+    method: &'static str,
     endpoint: &'static str,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeBuckets)?;
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        record(
+            app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            method,
+            "/api/buckets/aliases",
+            id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     let bytes = alias_bytes(id, body)?;
     post_garage(app, current, headers, endpoint, None, &bytes).await
 }
@@ -4549,6 +4582,59 @@ mod tests {
         assert_eq!(row.reason, "forbidden");
         assert_eq!(row.method, "PUT");
         assert_eq!(row.path, "/api/buckets/quotas");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn bucket_alias_denials_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let added = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"globalAlias":"photos"}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&added, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/aliases");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"globalAlias":"photos"}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&removed, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/buckets/aliases");
         assert_eq!(row.target, "bkt-1");
         assert_eq!(row.status, 403);
     }
