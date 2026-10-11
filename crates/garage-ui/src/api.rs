@@ -568,8 +568,36 @@ async fn create_user(
     Json(body): Json<NewUser>,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ManageUsers)?;
-    validate_username(&body.username)?;
-    validate_password(&body.password)?;
+    if let Err(error) = validate_username(&body.username) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "invalid_username",
+            "POST",
+            "/api/users",
+            &body.username,
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
+    if let Err(error) = validate_password(&body.password) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "password_invalid",
+            "POST",
+            "/api/users",
+            &body.username,
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
     let role = parse_role(&body.role)?;
     let (download, share) = normalize_bits(role, body.can_download, body.can_share)?;
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
@@ -7037,6 +7065,86 @@ mod tests {
         assert!(!audit_text(row).contains(submitted));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
+    }
+
+    #[tokio::test]
+    async fn create_user_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let bad_name = "bad name";
+        let submitted = "shortpw";
+
+        let name = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": bad_name,
+                        "password": PASSWORD,
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(name.status, StatusCode::BAD_REQUEST, "{}", name.body);
+        assert_eq!(code_of(&name.body), "invalid_username");
+        assert!(!name.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_username");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, bad_name);
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let valid_name = "Cara";
+        let invalid = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": valid_name,
+                        "password": submitted,
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(invalid.status, StatusCode::BAD_REQUEST, "{}", invalid.body);
+        assert_eq!(code_of(&invalid.body), "password_invalid");
+        assert!(!invalid.body.contains(submitted));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "password_invalid");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, valid_name);
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(&rows[1]).contains(submitted));
+        assert!(!audit_text(&rows[1]).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(submitted));
+        assert!(!sink.contains(PASSWORD));
     }
 
     #[tokio::test]
