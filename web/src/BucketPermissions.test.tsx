@@ -142,7 +142,8 @@ test("says when the bucket has no keys", async () => {
   );
   renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
-  expect(await screen.findByText("This bucket has no keys.")).toBeTruthy();
+  expect(await screen.findByText("This bucket has no keys. Grant the first key.")).toBeTruthy();
+  expect(screen.getByRole("form", { name: "Grant permissions on bkt-1" })).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("index-secret.html")).toBeNull();
   expect(screen.queryByText("cors-secret.example")).toBeNull();
@@ -181,7 +182,7 @@ test("shows Loading keys and marks the panel busy on the first load", async () =
   expect(screen.queryByText("This bucket has no keys.")).toBeNull();
   expect(screen.queryByText("Refreshing keys")).toBeNull();
   release(json({ keys: [] }));
-  expect(await screen.findByText("This bucket has no keys.")).toBeTruthy();
+  expect(await screen.findByText("This bucket has no keys. Grant the first key.")).toBeTruthy();
   expect(
     screen.getByRole("region", { name: "Permissions for bkt-1" }).getAttribute("aria-busy"),
   ).toBe("false");
@@ -531,6 +532,18 @@ test("shows the API message when revoke fails and keeps the dialog", async () =>
   expect(failed.textContent).toContain("Cannot revoke");
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Revoke GK1" })).toBeTruthy();
+});
+
+test("a viewer sees no keys and no grant form", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({ keys: [] })),
+  );
+  renderPermissions("bkt-1", false);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  expect(await screen.findByText("This bucket has no keys.")).toBeTruthy();
+  expect(screen.queryByText("This bucket has no keys. Grant the first key.")).toBeNull();
+  expect(screen.queryByRole("form", { name: "Grant permissions on bkt-1" })).toBeNull();
 });
 
 test("a viewer sees the keys and does not call POST or DELETE", async () => {
