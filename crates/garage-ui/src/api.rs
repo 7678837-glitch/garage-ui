@@ -606,6 +606,18 @@ async fn create_user(
     {
         Ok(id) => id,
         Err(error) if is_unique(&error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "username_taken",
+                "POST",
+                "/api/users",
+                &body.username,
+                409,
+            )
+            .await?;
             return Err(ApiError::conflict(
                 "username_taken",
                 "Username is already in use",
@@ -7169,6 +7181,52 @@ mod tests {
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
         assert!(!sink.contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn create_user_duplicate_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Ada",
+                        "password": PASSWORD,
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::CONFLICT, "{}", response.body);
+        assert_eq!(code_of(&response.body), "username_taken");
+        assert!(!response.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "username_taken");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Ada");
+        assert_eq!(row.status, 409);
+        assert!(!audit_text(row).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        assert_eq!(users.len(), 1, "{users:?}");
+        assert_eq!(users[0]["username"], "Ada");
     }
 
     #[tokio::test]
