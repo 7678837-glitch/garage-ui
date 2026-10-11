@@ -196,6 +196,8 @@ function Home({ status }: { status: SessionStatus }) {
     healthText = "unavailable";
   }
   const admin = status.role === "admin";
+  // 管理员忽略 download 位。只读用户要这位才看得到预览和下载。
+  const canTransfer = admin || status.can_download === true;
   return (
     <div className="flex flex-col gap-6 sm:flex-row">
       <Nav
@@ -261,7 +263,9 @@ function Home({ status }: { status: SessionStatus }) {
             {admin ? <ClusterNodes /> : null}
           </>
         ) : null}
-        {section === "buckets" ? <Buckets canManage={admin} /> : null}
+        {section === "buckets" ? (
+          <Buckets canManage={admin} canWrite={admin} canTransfer={canTransfer} />
+        ) : null}
         {section === "keys" ? <Keys canManage={admin} /> : null}
         {section === "users" && admin && status.username ? (
           <Users selfUsername={status.username} />

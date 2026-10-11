@@ -703,3 +703,119 @@ test("encodes each object key segment and allows the spec folder names", () => {
   expect(folderNameAllowed("a\nb")).toBe(false);
   expect(folderNameAllowed("a\u0000b")).toBe(false);
 });
+
+function objectBrowserResponse(role: "admin" | "viewer", canDownload: boolean) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/capabilities")) {
+      return capabilitiesResponse();
+    }
+    if (url.includes("/api/auth/status")) {
+      return new Response(
+        JSON.stringify({
+          initialized: true,
+          authenticated: true,
+          username: role === "admin" ? "Ada" : "Bea",
+          role,
+          can_download: canDownload,
+          can_share: false,
+          garage_version: "v2.4.1",
+          garage_write_blocked: false,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/healthz")) {
+      return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+    }
+    if (url.includes("/objects/a.txt")) {
+      return new Response(
+        JSON.stringify({
+          key: "a.txt",
+          size: 1,
+          etag: "abc",
+          lastModified: "2026-10-11T00:00:00Z",
+          contentType: "text/plain",
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/objects")) {
+      return new Response(
+        JSON.stringify({
+          prefix: "",
+          entries: [
+            { kind: "prefix", prefix: "photos/" },
+            {
+              kind: "object",
+              key: "a.txt",
+              size: 1,
+              etag: "abc",
+              lastModified: "2026-10-11T00:00:00Z",
+            },
+          ],
+          next: null,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/api/buckets")) {
+      return new Response(
+        JSON.stringify({
+          items: [{ id: "bucket-bea", globalAliases: ["west"] }],
+          hasMore: false,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response("no", { status: 500 });
+  });
+}
+
+test("a viewer without download does not see preview or write controls", async () => {
+  window.location.hash = "#buckets/bucket-bea/";
+  vi.stubGlobal("fetch", objectBrowserResponse("viewer", false));
+  renderApp();
+  expect(await screen.findByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  expect(screen.getByLabelText("Search")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+  expect(await screen.findByText("text/plain")).toBeTruthy();
+});
+
+test("a viewer with download sees preview and download but not write controls", async () => {
+  window.location.hash = "#buckets/bucket-bea/";
+  vi.stubGlobal("fetch", objectBrowserResponse("viewer", true));
+  renderApp();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("link", { name: "Preview" }).getAttribute("href")).toBe(
+    "/api/buckets/bucket-bea/objects/a.txt?preview=1",
+  );
+  expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
+    "/api/buckets/bucket-bea/objects/a.txt?download=1",
+  );
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+});
+
+test("an admin with the download bit off still sees upload, delete, preview, and download", async () => {
+  window.location.hash = "#buckets/bucket-bea/";
+  vi.stubGlobal("fetch", objectBrowserResponse("admin", false));
+  renderApp();
+  expect(await screen.findByRole("button", { name: "Delete folder" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Upload" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Preview" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Download" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+});

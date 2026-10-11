@@ -327,7 +327,17 @@ async function copyText(value: string): Promise<"copied" | "manual"> {
   }
 }
 
-export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => void }) {
+export function Objects({
+  bucketId,
+  onBack,
+  canWrite,
+  canTransfer,
+}: {
+  bucketId: string;
+  onBack: () => void;
+  canWrite: boolean;
+  canTransfer: boolean;
+}) {
   const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
   const location = bucketLocationFromHash(hash);
@@ -593,7 +603,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           >
             Copy path
           </button>
-          {deleteTarget !== null ? (
+          {canWrite && deleteTarget !== null ? (
             <button
               className="border border-neutral-900 px-3 py-1 text-left"
               type="button"
@@ -605,7 +615,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
               Delete
             </button>
           ) : null}
-          {singleKey !== null ? (
+          {canTransfer && singleKey !== null ? (
             <>
               <a
                 className="border border-neutral-900 px-3 py-1 text-left"
@@ -639,7 +649,7 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
           ) : null}
         </div>
       ) : null}
-      <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} />
+      {canWrite ? <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} /> : null}
       {showRows && visible.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
@@ -681,16 +691,18 @@ export function Objects({ bucketId, onBack }: { bucketId: string; onBack: () => 
                         >
                           {entry.prefix}
                         </button>
-                        <button
-                          className="border border-neutral-900 px-2 py-1 text-left"
-                          type="button"
-                          onClick={() => {
-                            removePrefix.reset();
-                            setPendingDelete({ kind: "prefix", name: entry.prefix });
-                          }}
-                        >
-                          Delete folder
-                        </button>
+                        {canWrite ? (
+                          <button
+                            className="border border-neutral-900 px-2 py-1 text-left"
+                            type="button"
+                            onClick={() => {
+                              removePrefix.reset();
+                              setPendingDelete({ kind: "prefix", name: entry.prefix });
+                            }}
+                          >
+                            Delete folder
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                     <td />
