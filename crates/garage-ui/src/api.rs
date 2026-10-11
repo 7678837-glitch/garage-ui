@@ -2897,7 +2897,22 @@ async fn connect_cluster(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ChangeLayout)?;
+    if let Err(error) = require(&current.user, Op::ChangeLayout) {
+        let target = String::from_utf8_lossy(&body);
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/cluster/connect",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
     post_garage(&app, &current, &headers, "ConnectClusterNodes", None, &body).await
 }
 
@@ -6243,6 +6258,32 @@ mod tests {
                 .map(|call| call.line.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn connect_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let sent = r#"["abcd@127.0.0.1:3901"]"#;
+        let response = exchange(
+            &app,
+            request("POST", "/api/cluster/connect", Some(sent), Some(&viewer)),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/cluster/connect");
+        assert_eq!(row.target, sent);
+        assert_eq!(row.status, 403);
     }
 
     #[tokio::test]
