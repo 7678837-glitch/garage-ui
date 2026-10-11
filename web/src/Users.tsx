@@ -456,7 +456,9 @@ export function Users({ selfUsername }: { selfUsername: string }) {
     queryKey: ["users"],
     queryFn: loadUsers,
   });
-  const accounts = users.data ?? [];
+  const accounts = [...(users.data ?? [])].sort((left, right) =>
+    left.username.toLowerCase().localeCompare(right.username.toLowerCase()),
+  );
   const [filter, setFilter] = useState(readUserFilter);
   useEffect(() => {
     const sync = () => setFilter(readUserFilter());
