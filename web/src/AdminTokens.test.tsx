@@ -332,3 +332,100 @@ test("an admin updates an issued token and the response secret stays off the pag
     expect((node as HTMLInputElement).value).not.toContain(issuedId);
   }
 });
+
+test("an admin deletes an issued token and the response secret stays off the page", async () => {
+  const issuedId = "tok-issued-1a2b";
+  const calls: { method: string; url: string; confirm: string | null }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = String(input);
+      calls.push({
+        method,
+        url,
+        confirm: headers.get("x-confirm"),
+      });
+      if (method === "DELETE" && url.startsWith("/api/admin-tokens/")) {
+        return json({
+          name: "issued-reader",
+          secretToken: SECRET,
+        });
+      }
+      if (url === "/api/admin-tokens") {
+        return json([
+          {
+            id: null,
+            name: "config-reader",
+            scope: ["GetClusterStatus", "Metrics"],
+            expiration: null,
+            expired: false,
+            fromConfig: true,
+            created: "2026-01-01T00:00:00Z",
+            secretToken: SECRET,
+          },
+          {
+            id: issuedId,
+            name: "issued-reader",
+            scope: ["ListBuckets"],
+            expiration: "2026-12-01T00:00:00Z",
+            expired: true,
+            fromConfig: false,
+            created: "2026-02-01T00:00:00Z",
+            secretToken: SECRET,
+          },
+        ]);
+      }
+      if (url === "/api/admin-tokens/current") {
+        return json({
+          id: UPSTREAM_ID,
+          name: "this-server-reader",
+          scope: ["GetClusterHealth", "ListKeys"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+          secretToken: SECRET,
+        });
+      }
+      return json({ message: "missing" }, 404);
+    }),
+  );
+  renderTokens();
+  const config = await screen.findByRole("row", { name: /config-reader/ });
+  expect(within(config).queryByRole("button", { name: "Delete" })).toBeNull();
+  const issued = screen.getByRole("row", { name: /issued-reader/ });
+  expect(within(issued).getAllByRole("button", { name: "Delete" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
+  const server = await screen.findByRole("region", { name: "This server" });
+  expect(within(server).queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(document.body.textContent ?? "").not.toContain(issuedId);
+  expect(window.location.href).not.toContain(issuedId);
+
+  fireEvent.click(within(issued).getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("issued-reader");
+  expect(dialog.textContent).toContain("This deletes the admin token.");
+  expect(within(dialog).queryByRole("textbox")).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  expect(document.body.textContent ?? "").not.toContain(issuedId);
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => {
+    expect(calls.some((call) => call.method === "DELETE")).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  const deleted = calls.find((call) => call.method === "DELETE");
+  expect(deleted?.url).toBe(`/api/admin-tokens/${issuedId}`);
+  expect(deleted?.confirm).toBeNull();
+  expect(screen.queryByLabelText("Secret")).toBeNull();
+  const text = document.body.textContent ?? "";
+  expect(text).not.toContain(SECRET);
+  expect(text).not.toContain(issuedId);
+  expect(window.location.href).not.toContain(issuedId);
+  for (const node of document.querySelectorAll("input, textarea")) {
+    expect((node as HTMLInputElement).value).not.toContain(SECRET);
+    expect((node as HTMLInputElement).value).not.toContain(issuedId);
+  }
+});

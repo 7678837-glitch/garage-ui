@@ -93,7 +93,7 @@ function tokenId(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-// id 只留在状态里拼 PATCH 路径，不能出现在文本、标签或地址栏。secretToken 不进页面状态。
+// id 只留在状态里拼 PATCH 和 DELETE 路径，不能出现在文本、标签或地址栏。secretToken 不进页面状态。
 function adminTokenFrom(value: unknown): AdminToken {
   if (typeof value !== "object" || value === null) {
     throw new Error("Admin tokens are unavailable");
@@ -557,8 +557,22 @@ function EditTokenForm({
 }
 
 function TokenTable({ rows }: { rows: AdminToken[] }) {
+  const client = useQueryClient();
   const [editing, setEditing] = useState<AdminToken | null>(null);
+  const [removing, setRemoving] = useState<AdminToken | null>(null);
   const editingId = editing === null ? null : issuedTokenId(editing);
+  const removingId = removing === null ? null : issuedTokenId(removing);
+  const remove = useMutation({
+    mutationFn: async (id: string) => {
+      await api<unknown>(`/api/admin-tokens/${id}`, {
+        method: "DELETE",
+      });
+    },
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+      setRemoving(null);
+    },
+  });
   return (
     <>
       <div className="overflow-x-auto">
@@ -592,15 +606,26 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                 <td className="py-2">
                   {sourceLabel(token)}
                   {issuedTokenId(token) !== null ? (
-                    <button
-                      className="border border-ink px-3 py-1 text-left"
-                      type="button"
-                      onClick={() => {
-                        setEditing(token);
-                      }}
-                    >
-                      Edit
-                    </button>
+                    <>
+                      <button
+                        className="border border-ink px-3 py-1 text-left"
+                        type="button"
+                        onClick={() => {
+                          setEditing(token);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="ml-2 border border-ink px-3 py-1 text-left"
+                        type="button"
+                        onClick={() => {
+                          setRemoving(token);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
                   ) : null}
                 </td>
               </tr>
@@ -615,6 +640,25 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
           token={editing}
           onClose={() => {
             setEditing(null);
+          }}
+        />
+      ) : null}
+      {removing !== null && removingId !== null ? (
+        <ConfirmDialog
+          action="delete-admin-token"
+          name={removing.name}
+          pending={remove.isPending}
+          consequence="This deletes the admin token."
+          onCancel={() => {
+            if (!remove.isPending) {
+              setRemoving(null);
+            }
+          }}
+          onConfirm={() => {
+            if (remove.isPending) {
+              return;
+            }
+            remove.mutate(removingId);
           }}
         />
       ) : null}

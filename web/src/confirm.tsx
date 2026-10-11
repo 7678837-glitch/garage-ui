@@ -16,6 +16,7 @@ const RISK = {
   "enable-website": "high",
   "create-admin-token": "high",
   "update-admin-token": "high",
+  "delete-admin-token": "medium",
 } as const;
 
 export type WriteAction = keyof typeof RISK;
