@@ -244,6 +244,74 @@ function metadataPath(bucketId: string, key: string): string {
   return `${bucketUrl(bucketId)}/objects/${encodeObjectKey(key)}`;
 }
 
+function previewPath(bucketId: string, key: string): string {
+  return `${metadataPath(bucketId, key)}?preview=1`;
+}
+
+type InlineKind = "image" | "text" | "pdf" | "video" | "audio";
+
+const INLINE_KIND: Record<string, InlineKind> = {
+  "image/png": "image",
+  "image/jpeg": "image",
+  "image/gif": "image",
+  "image/webp": "image",
+  "image/avif": "image",
+  "image/bmp": "image",
+  "image/x-icon": "image",
+  "image/vnd.microsoft.icon": "image",
+  "text/plain": "text",
+  "application/pdf": "pdf",
+  "video/mp4": "video",
+  "video/webm": "video",
+  "audio/mpeg": "audio",
+  "audio/ogg": "audio",
+  "audio/wav": "audio",
+};
+
+function inlineKind(contentType: string): InlineKind | null {
+  const mime = (contentType.split(";")[0] ?? "").trim().toLowerCase();
+  return INLINE_KIND[mime] ?? null;
+}
+
+async function readPreviewText(path: string): Promise<string> {
+  // api() 会把响应当 JSON 解析，纯文本预览必须直接读 body。
+  const response = await fetch(path, { credentials: "include" });
+  if (!response.ok) {
+    throw new Error(UNAVAILABLE);
+  }
+  return response.text();
+}
+
+function InlineBody({
+  kind,
+  objectKey,
+  src,
+  text,
+}: {
+  kind: InlineKind;
+  objectKey: string;
+  src: string;
+  text: string | undefined;
+}) {
+  switch (kind) {
+    case "image":
+      return <img alt={objectKey} src={src} />;
+    case "text":
+      return text === undefined ? null : <pre>{text}</pre>;
+    case "pdf":
+      // 只放开脚本，不授予同源，避免 PDF 脚本访问管理台。
+      return <iframe sandbox="allow-scripts" src={src} title={objectKey} />;
+    case "video":
+      return <video controls src={src} />;
+    case "audio":
+      return <audio controls src={src} />;
+    default: {
+      const unexpected: never = kind;
+      return unexpected;
+    }
+  }
+}
+
 function failureOf(error: unknown): Failure {
   if (error instanceof ApiError) {
     return { message: error.message, code: error.code };
@@ -488,6 +556,22 @@ export function Objects({
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
+  const previewKey = canTransfer ? singleKey : null;
+  const previewMeta = useQuery({
+    queryKey: ["bucket-object", bucketId, previewKey],
+    queryFn: () => readJson(metadataPath(bucketId, previewKey ?? "")).then(parseMeta),
+    enabled: previewKey !== null,
+  });
+  const preview =
+    previewKey !== null && previewMeta.data && previewMeta.data.key === previewKey
+      ? previewMeta.data
+      : null;
+  const kind = preview === null ? null : inlineKind(preview.contentType);
+  const previewText = useQuery({
+    queryKey: ["bucket-object-text", bucketId, previewKey],
+    queryFn: () => readPreviewText(previewPath(bucketId, previewKey ?? "")),
+    enabled: previewKey !== null && kind === "text",
+  });
   const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
   const prefixError = removePrefix.error instanceof Error ? removePrefix.error.message : null;
   const batchError = removeMany.error instanceof Error ? removeMany.error.message : null;
@@ -691,24 +775,14 @@ export function Objects({
             </button>
           ) : null}
           {canTransfer && singleKey !== null ? (
-            <>
-              <a
-                className="border border-neutral-900 px-3 py-1 text-left"
-                href={`${metadataPath(bucketId, singleKey)}?preview=1`}
-                target="_blank"
-                rel="noopener"
-              >
-                Preview
-              </a>
-              <a
-                className="border border-neutral-900 px-3 py-1 text-left"
-                href={`${metadataPath(bucketId, singleKey)}?download=1`}
-                target="_blank"
-                rel="noopener"
-              >
-                Download
-              </a>
-            </>
+            <a
+              className="border border-neutral-900 px-3 py-1 text-left"
+              href={`${metadataPath(bucketId, singleKey)}?download=1`}
+              target="_blank"
+              rel="noopener"
+            >
+              Download
+            </a>
           ) : null}
           {copyNote === "copied" ? <p>Copied</p> : null}
           {copyNote === "manual" ? (
@@ -723,6 +797,22 @@ export function Objects({
             </>
           ) : null}
         </div>
+      ) : null}
+      {preview ? (
+        <section aria-label="Object details">
+          <p>Size {preview.size}</p>
+          <p>Content type {preview.contentType}</p>
+          <p>ETag {preview.etag}</p>
+          <p>Last modified {preview.lastModified}</p>
+          {kind !== null ? (
+            <InlineBody
+              kind={kind}
+              objectKey={preview.key}
+              src={previewPath(bucketId, preview.key)}
+              text={previewText.data}
+            />
+          ) : null}
+        </section>
       ) : null}
       {canWrite ? <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} /> : null}
       {showRows && visible.length > 0 ? (

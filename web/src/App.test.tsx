@@ -1072,6 +1072,9 @@ function objectBrowserResponse(role: "admin" | "viewer", canDownload: boolean) {
       return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
     }
     if (url.includes("/objects/a.txt")) {
+      if (url.includes("preview=1")) {
+        return new Response("plain body of a.txt", { status: 200 });
+      }
       return new Response(
         JSON.stringify({
           key: "a.txt",
@@ -1129,8 +1132,10 @@ test("a viewer without download does not see preview or write controls", async (
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByText("plain body of a.txt")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
   expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(screen.queryByText("plain body of a.txt")).toBeNull();
 });
 
 test("a viewer with download sees preview and download but not write controls", async () => {
@@ -1138,12 +1143,13 @@ test("a viewer with download sees preview and download but not write controls", 
   vi.stubGlobal("fetch", objectBrowserResponse("viewer", true));
   renderApp();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-  expect(screen.getByRole("link", { name: "Preview" }).getAttribute("href")).toBe(
-    "/api/buckets/bucket-bea/objects/a.txt?preview=1",
-  );
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect((await screen.findByText("plain body of a.txt")).tagName).toBe("PRE");
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
     "/api/buckets/bucket-bea/objects/a.txt?download=1",
   );
+  expect(screen.getByRole("link", { name: "Download" }).getAttribute("target")).toBe("_blank");
+  expect(screen.getByRole("link", { name: "Download" }).getAttribute("rel")).toBe("noopener");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
@@ -1287,7 +1293,10 @@ test("an admin with the download bit off still sees upload, delete, preview, and
   expect(screen.getByRole("region", { name: "Upload" })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Preview" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Download" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect((await screen.findByText("plain body of a.txt")).tagName).toBe("PRE");
+  expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
+    "/api/buckets/bucket-bea/objects/a.txt?download=1",
+  );
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
