@@ -1402,7 +1402,24 @@ async fn change_alias(
         .await?;
         return Err(error);
     }
-    let bytes = alias_bytes(id, body)?;
+    let bytes = match alias_bytes(id, body) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            record(
+                app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                error.code(),
+                method,
+                "/api/buckets/aliases",
+                id,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     post_garage(app, current, headers, endpoint, None, &bytes).await
 }
 
@@ -4670,6 +4687,68 @@ mod tests {
         assert_eq!(row.path, "/api/buckets/aliases");
         assert_eq!(row.target, "bkt-1");
         assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn bucket_alias_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let empty = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/aliases",
+                Some("{}"),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &empty,
+            StatusCode::BAD_REQUEST,
+            "invalid_alias",
+            "Alias must be global or local",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_alias");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/aliases");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+
+        let mismatch = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/aliases",
+                Some(r#"{"bucketId":"other","globalAlias":"photos"}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &mismatch,
+            StatusCode::BAD_REQUEST,
+            "bucket_id_mismatch",
+            "Bucket id does not match",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "bucket_id_mismatch");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/aliases");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
     }
 
     #[tokio::test]
