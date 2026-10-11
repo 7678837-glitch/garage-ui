@@ -135,6 +135,18 @@ async fn csrf(State(app): State<App>, request: Request, next: Next) -> Result<Re
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
     if !csrf_matches(header, &current.csrf_token) {
+        record(
+            &app,
+            &current.user.username,
+            &ip,
+            "denied",
+            "csrf_rejected",
+            method.as_str(),
+            &path,
+            "",
+            403,
+        )
+        .await?;
         return Err(ApiError::forbidden(
             "csrf_rejected",
             "CSRF token missing or mismatched",
@@ -8018,6 +8030,51 @@ mod tests {
             row.target,
             row.status
         )
+    }
+
+    #[tokio::test]
+    async fn csrf_rejection_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let rejected = exchange(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/logout")
+                .header("cookie", cookie_header(&admin))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_error(
+            &rejected,
+            StatusCode::FORBIDDEN,
+            "csrf_rejected",
+            "CSRF token missing or mismatched",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "csrf_rejected");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/logout");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 403);
+        assert_eq!(row.username, "Ada");
+        assert!(!audit_text(row).contains(&admin.csrf));
+        let status = exchange(
+            &app,
+            request("GET", "/api/auth/status", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(status.status, StatusCode::OK, "{}", status.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&status.body).unwrap()["authenticated"],
+            true
+        );
     }
 
     #[tokio::test]
