@@ -267,7 +267,13 @@ function Home({ status }: { status: SessionStatus }) {
     queryFn: () => api<Health>("/healthz"),
   });
   const { section, select } = useHashSection(status.role ?? "");
-  const [menuOpen, setMenuOpen] = useState(true);
+  // 窄屏只决定初次是否收起。挂上 resize 监听会在用户点开 Menu 之后又把它关掉。
+  const [menuOpen, setMenuOpen] = useState(() => {
+    if (typeof window.matchMedia !== "function") {
+      return true;
+    }
+    return !window.matchMedia("(max-width: 639px)").matches;
+  });
   const form = useForm<PasswordChange>({
     resolver: zodResolver(passwordChange),
     defaultValues: { current_password: "", new_password: "" },
