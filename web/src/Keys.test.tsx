@@ -163,7 +163,8 @@ test("shows Loading keys and marks the keys section busy on the first load", asy
   renderKeys();
   const section = screen.getByRole("region", { name: "Keys" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading keys")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no keys.")).toBeNull();
   expect(screen.queryByText("Refreshing keys")).toBeNull();
@@ -171,6 +172,7 @@ test("shows Loading keys and marks the keys section busy on the first load", asy
   expect(await screen.findByText("There are no keys.")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.getByRole("region", { name: "Keys" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByLabelText("Loading keys")).toBeNull();
   expect(screen.queryByText("Loading keys")).toBeNull();
 });
 
@@ -199,6 +201,7 @@ test("keeps a visible key id while a later fetch refreshes the list", async () =
   expect(await screen.findByText("Refreshing keys")).toBeTruthy();
   expect(screen.getByText("GK9")).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByLabelText("Loading keys")).toBeNull();
   expect(screen.queryByText("Loading keys")).toBeNull();
   expect(screen.getByRole("region", { name: "Keys" }).getAttribute("aria-busy")).toBe("false");
   releaseNext(json({ items: [{ id: "GK9", name: "kept" }], hasMore: false }));

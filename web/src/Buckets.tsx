@@ -898,7 +898,9 @@ export function Buckets({
     <section className="grid gap-4" aria-label="Buckets" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Buckets</h2>
       {canManage && !browsing ? <CreateBucketForm /> : null}
-      {view.loading ? <p>Loading buckets</p> : null}
+      {view.loading ? (
+        <div className="h-16 border border-line" aria-label="Loading buckets" />
+      ) : null}
       {view.refreshing ? <p>Refreshing buckets</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

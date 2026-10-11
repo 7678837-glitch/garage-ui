@@ -310,7 +310,9 @@ export function ClusterNodes() {
           ))}
         </ul>
       ) : null}
-      {nodes.isPending ? <p>Loading nodes</p> : null}
+      {nodes.isPending ? (
+        <div className="h-16 border border-line" aria-label="Loading nodes" />
+      ) : null}
       {nodes.isError && !isGarageDown(nodes.error) ? <p>{message}</p> : null}
       {nodes.isSuccess && nodes.data.length === 0 ? (
         <p>There are no nodes. Connect the first node.</p>

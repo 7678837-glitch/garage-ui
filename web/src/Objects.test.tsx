@@ -363,11 +363,13 @@ test("says there are no objects after the list loads", async () => {
   renderObjects();
   const section = screen.getByRole("region", { name: "Objects" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByText("Loading objects")).toBeTruthy();
+  expect(screen.getByLabelText("Loading objects")).toBeTruthy();
+  expect(screen.queryByText("Loading objects")).toBeNull();
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   release(json(page([])));
   expect(await screen.findByText("There are no objects. Upload the first object.")).toBeTruthy();
   expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
+  expect(screen.queryByLabelText("Loading objects")).toBeNull();
   expect(screen.queryByText("Loading objects")).toBeNull();
   expect(screen.getByRole("region", { name: "Objects" }).getAttribute("aria-busy")).toBe("false");
 });
@@ -381,6 +383,7 @@ test("says there are no objects and hides upload when the viewer cannot write", 
   expect(await screen.findByText("There are no objects.")).toBeTruthy();
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  expect(screen.queryByLabelText("Loading objects")).toBeNull();
   expect(screen.queryByText("Loading objects")).toBeNull();
 });
 

@@ -638,7 +638,9 @@ export function Objects({
         </select>
       </label>
       {browse.sort !== "key" ? <p>Only this page</p> : null}
-      {loading ? <p>Loading objects</p> : null}
+      {loading && !showRows ? (
+        <div className="h-16 border border-line" aria-label="Loading objects" />
+      ) : null}
       {showFailure && failure ? <p>{failure.message}</p> : null}
       {showFailure && failure?.code ? <p>{failure.code}</p> : null}
       {showMeta && metaFailure ? <p>{metaFailure.message}</p> : null}

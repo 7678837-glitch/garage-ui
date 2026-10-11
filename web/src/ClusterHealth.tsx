@@ -314,7 +314,9 @@ export function ClusterHealth() {
   return (
     <section className="grid gap-4" aria-label="Cluster health">
       <h2 className="text-lg font-semibold">Cluster health</h2>
-      {health.isPending ? <p>Loading cluster health</p> : null}
+      {health.isPending ? (
+        <div className="h-16 border border-line" aria-label="Loading cluster health" />
+      ) : null}
       {health.isError && !isGarageDown(health.error) ? <p>{healthMessage}</p> : null}
       {health.isSuccess ? (
         <dl className="grid gap-2 text-sm">

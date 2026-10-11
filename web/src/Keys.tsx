@@ -534,7 +534,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     <section className="grid min-w-0 gap-4" aria-label="Keys" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Keys</h2>
       {canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
-      {view.busy ? <p>Loading keys</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label="Loading keys" /> : null}
       {view.refreshing ? <p>Refreshing keys</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

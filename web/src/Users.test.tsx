@@ -373,8 +373,8 @@ test("shows Loading users and marks the users section busy on the first load", a
   renderUsers();
   const section = screen.getByRole("region", { name: "Users" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByText("Loading users").textContent).toBe("Loading users");
-  expect(screen.getByText("Loading users").getAttribute("role")).toBeNull();
+  expect(screen.getByLabelText("Loading users").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading users")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.queryByText("Refreshing users")).toBeNull();
@@ -382,6 +382,7 @@ test("shows Loading users and marks the users section busy on the first load", a
   release(json([ada]));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByLabelText("Loading users")).toBeNull();
   expect(screen.queryByText("Loading users")).toBeNull();
 });
 
@@ -409,6 +410,7 @@ test("keeps a visible username while a later fetch refreshes the list", async ()
   const refresh = client.refetchQueries({ queryKey: ["users"] });
   expect(await screen.findByText("Refreshing users")).toBeTruthy();
   expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(screen.queryByLabelText("Loading users")).toBeNull();
   expect(screen.queryByText("Loading users")).toBeNull();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
   expect(screen.queryByRole("alert")).toBeNull();
@@ -431,6 +433,7 @@ test("shows there are no users and keeps the create form", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect(screen.queryByLabelText("Loading users")).toBeNull();
   expect(screen.queryByText("Loading users")).toBeNull();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
 });

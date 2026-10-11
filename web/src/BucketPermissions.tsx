@@ -283,7 +283,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       aria-label={`Permissions for ${bucketId}`}
       aria-busy={view.busy}
     >
-      {view.busy ? <p>Loading keys</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label="Loading keys" /> : null}
       {view.refreshing ? <p>Refreshing keys</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

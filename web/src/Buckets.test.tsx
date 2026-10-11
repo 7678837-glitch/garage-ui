@@ -144,7 +144,8 @@ test("shows Loading buckets and marks the buckets section busy on the first load
   renderBuckets();
   const section = screen.getByRole("region", { name: "Buckets" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByText("Loading buckets").getAttribute("role")).toBeNull();
+  expect(screen.getByLabelText("Loading buckets").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading buckets")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no buckets.")).toBeNull();
   expect(screen.queryByText("Refreshing buckets")).toBeNull();
@@ -152,6 +153,7 @@ test("shows Loading buckets and marks the buckets section busy on the first load
   release(json({ items: [], hasMore: false }));
   expect(await screen.findByText("There are no buckets.")).toBeTruthy();
   expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByLabelText("Loading buckets")).toBeNull();
   expect(screen.queryByText("Loading buckets")).toBeNull();
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
 });
@@ -183,6 +185,7 @@ test("keeps a visible bucket id while a later fetch refreshes the list", async (
   expect(await screen.findByText("Refreshing buckets")).toBeTruthy();
   expect(screen.getByText("bkt-9")).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByLabelText("Loading buckets")).toBeNull();
   expect(screen.queryByText("Loading buckets")).toBeNull();
   expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("true");
   releaseNext(json({ items: [{ id: "bkt-9", globalAliases: ["kept"] }], hasMore: false }));

@@ -177,7 +177,8 @@ test("shows Loading keys and marks the panel busy on the first load", async () =
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   const panel = screen.getByRole("region", { name: "Permissions for bkt-1" });
   expect(panel.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading keys")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("This bucket has no keys.")).toBeNull();
   expect(screen.queryByText("Refreshing keys")).toBeNull();
@@ -186,6 +187,7 @@ test("shows Loading keys and marks the panel busy on the first load", async () =
   expect(
     screen.getByRole("region", { name: "Permissions for bkt-1" }).getAttribute("aria-busy"),
   ).toBe("false");
+  expect(screen.queryByLabelText("Loading keys")).toBeNull();
   expect(screen.queryByText("Loading keys")).toBeNull();
 });
 
@@ -224,6 +226,7 @@ test("keeps a visible access key while a later fetch refreshes the panel", async
   expect(await screen.findByText("Refreshing keys")).toBeTruthy();
   expect(screen.getByText("GK9")).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
+  expect(screen.queryByLabelText("Loading keys")).toBeNull();
   expect(screen.queryByText("Loading keys")).toBeNull();
   expect(
     screen.getByRole("region", { name: "Permissions for bkt-1" }).getAttribute("aria-busy"),

@@ -486,7 +486,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         </label>
         <p>Default order is Username.</p>
       </div>
-      {view.busy ? <p>Loading users</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label="Loading users" /> : null}
       {view.refreshing ? <p>Refreshing users</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
