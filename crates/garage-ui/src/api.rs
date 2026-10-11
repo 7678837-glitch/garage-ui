@@ -686,7 +686,27 @@ async fn patch_user(
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::ManageUsers)?;
     let _guard = app.write.lock().await;
-    let target = load_user(&app, id).await?;
+    let target = match load_user(&app, id).await {
+        Ok(user) => user,
+        Err(error) => {
+            if error.code() == "not_found" {
+                let missing = id.to_string();
+                record(
+                    &app,
+                    &current.user.username,
+                    &current.ip,
+                    "error",
+                    "not_found",
+                    "PATCH",
+                    "/api/users",
+                    &missing,
+                    404,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
     let role = match body.role.as_deref() {
         Some(role) => match parse_role(role) {
             Ok(role) => role,
@@ -801,7 +821,27 @@ async fn remove_user(
 ) -> Result<StatusCode, ApiError> {
     require(&current.user, Op::ManageUsers)?;
     let _guard = app.write.lock().await;
-    let target = load_user(&app, id).await?;
+    let target = match load_user(&app, id).await {
+        Ok(user) => user,
+        Err(error) => {
+            if error.code() == "not_found" {
+                let missing = id.to_string();
+                record(
+                    &app,
+                    &current.user.username,
+                    &current.ip,
+                    "error",
+                    "not_found",
+                    "DELETE",
+                    "/api/users",
+                    &missing,
+                    404,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
     if target.id == current.user.id {
         record(
             &app,
@@ -854,7 +894,27 @@ async fn reset_password(
     Json(body): Json<ResetBody>,
 ) -> Result<StatusCode, ApiError> {
     require(&current.user, Op::ManageUsers)?;
-    let target = load_user(&app, id).await?;
+    let target = match load_user(&app, id).await {
+        Ok(user) => user,
+        Err(error) => {
+            if error.code() == "not_found" {
+                let missing = id.to_string();
+                record(
+                    &app,
+                    &current.user.username,
+                    &current.ip,
+                    "error",
+                    "not_found",
+                    "POST",
+                    "/api/users/reset-password",
+                    &missing,
+                    404,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
     if target.id == current.user.id {
         record(
             &app,
@@ -7576,6 +7636,107 @@ mod tests {
         assert!(!audit_text(&rows[1]).contains(submitted));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
+    }
+
+    #[tokio::test]
+    async fn missing_user_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        assert_eq!(users.len(), 1, "{users:?}");
+        assert_eq!(users[0]["username"], "Ada");
+        let admin_id = users[0]["id"].as_i64().expect("id");
+        let missing = admin_id.wrapping_add(1);
+        let missing_target = missing.to_string();
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{missing}"),
+                Some(&json!({}).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(patched.status, StatusCode::NOT_FOUND, "{}", patched.body);
+        assert_eq!(code_of(&patched.body), "not_found");
+        assert!(!patched.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "not_found");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, missing_target);
+        assert_eq!(row.status, 404);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                &format!("/api/users/{missing}"),
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::NOT_FOUND, "{}", removed.body);
+        assert_eq!(code_of(&removed.body), "not_found");
+        assert!(!removed.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "not_found");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, missing_target);
+        assert_eq!(row.status, 404);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let reset = exchange(
+            &app,
+            request(
+                "POST",
+                &format!("/api/users/{missing}/reset-password"),
+                Some(&json!({ "password": PASSWORD }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(reset.status, StatusCode::NOT_FOUND, "{}", reset.body);
+        assert_eq!(code_of(&reset.body), "not_found");
+        assert!(!reset.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 3, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "not_found");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users/reset-password");
+        assert_eq!(row.target, missing_target);
+        assert_eq!(row.status, 404);
+        assert!(!audit_text(row).contains(PASSWORD));
+        assert!(!audit_text(&rows[1]).contains(PASSWORD));
+        assert!(!audit_text(&rows[2]).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
+
+        let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        assert_eq!(users.len(), 1, "{users:?}");
+        assert_eq!(users[0]["username"], "Ada");
     }
 
     #[tokio::test]
