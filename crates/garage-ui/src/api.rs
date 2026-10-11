@@ -1138,7 +1138,24 @@ async fn put_bucket_quotas(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ChangeBuckets)?;
-    let bytes = quota_update(&body)?;
+    let bytes = match quota_update(&body) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_quota",
+                "PUT",
+                "/api/buckets/quotas",
+                &id,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let query = format!("id={}", percent_encode(&id));
     post_garage(
         &app,
@@ -4358,6 +4375,40 @@ mod tests {
                 .map(|call| call.line.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn bucket_quota_rejection_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/quotas",
+                Some(r#"{"maxSize":1}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_quota",
+            "maxSize and maxObjects must be non-negative integers or null",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_quota");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/quotas");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
     }
 
     #[tokio::test]
