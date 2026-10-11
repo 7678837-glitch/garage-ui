@@ -116,3 +116,100 @@ test("the page text does not contain the secret field name or the secret", async
   expect(text).not.toContain("secretToken");
   expect(text).not.toContain(SECRET);
 });
+
+const CREATED_SECRET = "created-token-secret-9f3a";
+
+test("an admin creates a token, sees a full-admin scope warning, and the secret leaves the page", async () => {
+  const calls: { method: string; url: string; confirm: string | null; body: unknown }[] = [];
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = String(input);
+      const raw = init?.body;
+      calls.push({
+        method,
+        url,
+        confirm: headers.get("x-confirm"),
+        body: typeof raw === "string" ? (JSON.parse(raw) as unknown) : undefined,
+      });
+      if (method === "POST" && url === "/api/admin-tokens") {
+        return json({
+          id: "tok-new",
+          name: "reader",
+          secretToken: CREATED_SECRET,
+          scope: ["*"],
+          expired: false,
+        });
+      }
+      if (url === "/api/admin-tokens") {
+        return json([
+          {
+            id: "tok-issued-1a2b",
+            name: "issued-reader",
+            scope: ["ListBuckets"],
+            expiration: "2026-12-01T00:00:00Z",
+            expired: false,
+            fromConfig: false,
+            created: "2026-02-01T00:00:00Z",
+          },
+        ]);
+      }
+      if (url === "/api/admin-tokens/current") {
+        return json({
+          name: "this-server-reader",
+          scope: ["GetClusterHealth"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+        });
+      }
+      return json({ message: "missing" }, 404);
+    }),
+  );
+  renderTokens();
+  expect(
+    screen.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent?.trim()),
+  ).toEqual(["Never expires"]);
+  expect(screen.queryByRole("checkbox", { name: "ListBuckets" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "GetClusterStatus" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "CreateAdminToken" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "*" } });
+  expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+  const confirm = screen.getByRole("dialog");
+  expect(confirm.textContent).toContain("The secret is shown once. It cannot be viewed again.");
+  expect(confirm.textContent).toContain("*");
+  fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  const field = (await screen.findByLabelText("Secret")) as HTMLInputElement;
+  expect(field.type).toBe("password");
+  expect(document.body.textContent ?? "").not.toContain(CREATED_SECRET);
+  const posted = calls.find((call) => call.method === "POST");
+  expect(posted).toEqual({
+    method: "POST",
+    url: "/api/admin-tokens",
+    confirm: "yes",
+    body: { name: "reader", scope: ["*"] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Show secret" }));
+  expect(field.type).toBe("text");
+  expect(field.value).toBe(CREATED_SECRET);
+  fireEvent.click(screen.getByRole("button", { name: "Copy secret" }));
+  expect(await screen.findByText("Copied")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.body.textContent ?? "").not.toContain(CREATED_SECRET);
+  for (const node of document.querySelectorAll("input, textarea")) {
+    expect((node as HTMLInputElement).value).not.toContain(CREATED_SECRET);
+  }
+});

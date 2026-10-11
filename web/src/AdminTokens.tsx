@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
+import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 
 type AdminToken = {
@@ -132,6 +133,291 @@ function sourceLabel(token: AdminToken): string {
   return token.fromConfig ? "From configuration file" : "";
 }
 
+type TokenDraft = {
+  name: string;
+  expiration: string;
+  neverExpires: boolean;
+  scope: string;
+};
+
+type CreateAdminTokenBody = {
+  name: string;
+  expiration?: string;
+  neverExpires?: true;
+  scope?: string[];
+};
+
+const EMPTY_DRAFT: TokenDraft = {
+  name: "",
+  expiration: "",
+  neverExpires: false,
+  scope: "",
+};
+
+function scopeItems(text: string): string[] {
+  return text
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function scopeIsFullAdmin(items: string[]): boolean {
+  return items.includes("*") || items.includes("CreateAdminToken");
+}
+
+function createTokenBody(draft: TokenDraft): CreateAdminTokenBody {
+  const body: CreateAdminTokenBody = { name: draft.name };
+  if (draft.neverExpires) {
+    body.neverExpires = true;
+  } else if (draft.expiration.trim().length > 0) {
+    body.expiration = draft.expiration.trim();
+  }
+  const scope = scopeItems(draft.scope);
+  if (scope.length > 0) {
+    body.scope = scope;
+  }
+  return body;
+}
+
+function createdSecret(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const secret = (value as Record<string, unknown>).secretToken;
+  if (typeof secret !== "string" || secret.length === 0) {
+    return null;
+  }
+  return secret;
+}
+
+async function copySecret(secret: string): Promise<"copied" | "select"> {
+  const clipboard = navigator.clipboard;
+  if (!window.isSecureContext || typeof clipboard?.writeText !== "function") {
+    return "select";
+  }
+  try {
+    await clipboard.writeText(secret);
+    return "copied";
+  } catch {
+    return "select";
+  }
+}
+
+function openDialog(dialog: HTMLDialogElement) {
+  if (typeof dialog.showModal === "function") {
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+    return;
+  }
+  dialog.setAttribute("open", "");
+}
+
+function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const copyRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const [visible, setVisible] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) {
+      return;
+    }
+    openDialog(dialog);
+    copyRef.current?.focus();
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-modal="true"
+      aria-labelledby={titleId}
+      className="border border-ink bg-canvas p-4 text-ink"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <h3 id={titleId} className="font-medium">
+        Admin token secret
+      </h3>
+      <p>This secret is shown once. Closing this dialog removes it from the page.</p>
+      <label className="block">
+        <span className="text-sm">Secret</span>
+        <input
+          className="mt-1 w-full border border-line px-2 py-1"
+          readOnly
+          autoComplete="off"
+          type={visible ? "text" : "password"}
+          value={secret}
+        />
+      </label>
+      <button
+        className="mr-2 border border-ink px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setVisible(true);
+        }}
+      >
+        Show secret
+      </button>
+      <button
+        ref={copyRef}
+        className="mr-2 border border-ink px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          void copySecret(secret).then((result) => {
+            if (result === "copied") {
+              setFeedback("Copied");
+              return;
+            }
+            setVisible(true);
+            setFeedback("Select the secret and copy it");
+          });
+        }}
+      >
+        Copy secret
+      </button>
+      {feedback ? <p>{feedback}</p> : null}
+      <button className="border border-ink px-3 py-1 text-left" type="button" onClick={onClose}>
+        I have saved it
+      </button>
+    </dialog>
+  );
+}
+
+function CreateTokenForm() {
+  const client = useQueryClient();
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [pending, setPending] = useState<TokenDraft | null>(null);
+  const [reveal, setReveal] = useState<string | null>(null);
+  const create = useMutation({
+    mutationFn: async (next: TokenDraft) => {
+      const body = await api<unknown>("/api/admin-tokens", {
+        method: "POST",
+        headers: { "x-confirm": "yes" },
+        body: JSON.stringify(createTokenBody(next)),
+      });
+      const secret = createdSecret(body);
+      if (!secret) {
+        throw new Error("Admin token secret is unavailable");
+      }
+      return secret;
+    },
+    onSuccess: async (secret) => {
+      setPending(null);
+      setDraft(EMPTY_DRAFT);
+      // secret 只留在对话框。列表刷新走 loadAdminTokens，不把创建响应写进查询缓存。
+      setReveal(secret);
+      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+    },
+  });
+  const error = create.error instanceof Error ? create.error.message : null;
+  const items = scopeItems(draft.scope);
+  return (
+    <>
+      <form
+        className="grid max-w-sm gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (draft.name.trim().length === 0 || create.isPending) {
+            return;
+          }
+          create.reset();
+          setPending(draft);
+        }}
+      >
+        <label className="block text-sm">
+          Name
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.name}
+            required
+            onChange={(event) => {
+              setDraft({ ...draft, name: event.target.value });
+            }}
+          />
+        </label>
+        <label className="block text-sm">
+          Expiration
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.expiration}
+            onChange={(event) => {
+              setDraft({ ...draft, expiration: event.target.value });
+            }}
+          />
+        </label>
+        <label className="text-sm">
+          <input
+            className="mr-2"
+            type="checkbox"
+            checked={draft.neverExpires}
+            onChange={(event) => {
+              setDraft({ ...draft, neverExpires: event.target.checked });
+            }}
+          />
+          Never expires
+        </label>
+        <label className="block text-sm">
+          Scope
+          <input
+            className="mt-1 w-full border border-ink px-2 py-1"
+            value={draft.scope}
+            onChange={(event) => {
+              setDraft({ ...draft, scope: event.target.value });
+            }}
+          />
+        </label>
+        {scopeIsFullAdmin(items) ? <p>This scope is equivalent to full admin access.</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="submit"
+          disabled={create.isPending}
+        >
+          Create token
+        </button>
+      </form>
+      {pending !== null ? (
+        <ConfirmDialog
+          action="create-admin-token"
+          name={pending.name}
+          scope={pending.scope}
+          pending={create.isPending}
+          consequence="The secret is shown once. It cannot be viewed again."
+          onCancel={() => {
+            if (!create.isPending) {
+              setPending(null);
+            }
+          }}
+          onConfirm={() => {
+            if (create.isPending) {
+              return;
+            }
+            create.mutate(pending);
+          }}
+        />
+      ) : null}
+      {reveal !== null ? (
+        <SecretDialog
+          secret={reveal}
+          onClose={() => {
+            setReveal(null);
+            create.reset();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function TokenTable({ rows }: { rows: AdminToken[] }) {
   return (
     <div className="overflow-x-auto">
@@ -237,6 +523,7 @@ export function AdminTokens() {
       aria-busy={list.isPending || current.isPending}
     >
       <h2 className="text-lg font-semibold">Admin tokens</h2>
+      <CreateTokenForm />
       <div className="grid max-w-sm gap-3">
         <label className="block text-sm">
           Filter admin tokens
