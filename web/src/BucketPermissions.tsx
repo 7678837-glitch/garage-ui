@@ -338,6 +338,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
         <ConfirmDialog
           action="revoke-permission"
           name={target.accessKeyId}
+          pending={revoke.isPending}
           consequence={`This revokes the current owner, read, and write permissions for ${target.accessKeyId}.${revokeError ? ` ${revokeError}` : ""}`}
           onCancel={() => {
             setTarget(null);
