@@ -218,6 +218,66 @@ test("changes role, clears share when download turns off, and disables another u
   });
 });
 
+test("shows Saving while an account patch is pending and keeps the alert when it fails", async () => {
+  let release: (response: Response) => void = () => {};
+  const calls: Call[] = [];
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url, init });
+      if (url === "/api/users" && method === "GET") {
+        return json([ada, bea]);
+      }
+      if (url === "/api/users/2" && method === "PATCH") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderUsers();
+  await shown();
+  expect(screen.queryByText("Saving")).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Role for Bea" }), {
+    target: { value: "admin" },
+  });
+  expect(await screen.findByText("Saving")).toBeTruthy();
+  const role = screen.getByRole("combobox", { name: "Role for Bea" }) as HTMLSelectElement;
+  const download = screen.getByRole("checkbox", { name: "Download for Bea" }) as HTMLInputElement;
+  const share = screen.getByRole("checkbox", { name: "Share for Bea" }) as HTMLInputElement;
+  const disabled = screen.getByRole("checkbox", { name: "Disabled for Bea" }) as HTMLInputElement;
+  expect(role.disabled).toBe(true);
+  expect(download.disabled).toBe(true);
+  expect(share.disabled).toBe(true);
+  expect(disabled.disabled).toBe(true);
+  expect(role.value).toBe("viewer");
+  const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
+  const remove = screen.getByRole("button", { name: "Delete Bea" }) as HTMLButtonElement;
+  expect(reset.textContent).toBe("Reset password for Bea");
+  expect(remove.textContent).toBe("Delete Bea");
+  const patch = calls.find((call) => call.url === "/api/users/2" && call.init?.method === "PATCH");
+  expect(JSON.parse(String(patch?.init?.body))).toEqual({
+    role: "admin",
+    can_download: false,
+    can_share: false,
+  });
+  expectAuthed(patch as Call);
+  release(json({ message: "The last enabled administrator cannot be removed" }, 400));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "The last enabled administrator cannot be removed",
+  );
+  await waitFor(() => {
+    expect(screen.queryByText("Saving")).toBeNull();
+  });
+  expect(role.value).toBe("viewer");
+  expect(reset.textContent).toBe("Reset password for Bea");
+  expect(remove.textContent).toBe("Delete Bea");
+});
+
 test("turns share off with download and refuses share while download is off", async () => {
   const calls = installApi([ada, { ...bea, can_download: false, can_share: false }]);
   renderUsers();

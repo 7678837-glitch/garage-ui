@@ -329,6 +329,7 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
         />
         Allow create bucket for {id}
       </label>
+      {change.isPending ? <p>Saving</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>
   );

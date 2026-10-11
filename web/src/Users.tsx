@@ -238,6 +238,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
             <option value="admin">admin</option>
             <option value="viewer">viewer</option>
           </select>
+          {patch.isPending ? <span>Saving</span> : null}
         </td>
         <td className="py-2 pr-3">
           <input

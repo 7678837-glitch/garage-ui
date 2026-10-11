@@ -571,6 +571,55 @@ test("shows the API message when the create-bucket switch fails and keeps the pr
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+test("shows Saving while allow-create-bucket is pending and keeps the error when it fails", async () => {
+  let release: (response: Response) => void = () => {};
+  const calls: Call[] = [];
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      calls.push(call);
+      if (call.method === "PATCH") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({
+        items: [{ id: "GK1", name: "photos", permissions: { createBucket: false } }],
+        hasMore: false,
+      });
+    }),
+  );
+  renderKeys(true);
+  const box = (await screen.findByRole("checkbox", {
+    name: "Allow create bucket for GK1",
+  })) as HTMLInputElement;
+  expect(box.checked).toBe(false);
+  expect(box.disabled).toBe(false);
+  expect(screen.queryByText("Saving")).toBeNull();
+  fireEvent.click(box);
+  expect(await screen.findByText("Saving")).toBeTruthy();
+  expect(box.disabled).toBe(true);
+  expect(box.checked).toBe(false);
+  expect(calls.filter((call) => call.method === "PATCH")).toEqual([
+    {
+      url: "/api/keys/GK1",
+      method: "PATCH",
+      credentials: "include",
+      csrf: "csrf-token",
+      confirm: null,
+      body: { createBucket: true },
+    },
+  ]);
+  release(json({ message: "Garage admin API is not configured" }, 502));
+  expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
+  expect(screen.queryByText("Saving")).toBeNull();
+  expect(box.disabled).toBe(false);
+  expect(box.checked).toBe(false);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 test("cancels a key delete without a request, then confirms the encoded delete", async () => {
   document.cookie = "garage_csrf=csrf-token";
   const calls: Call[] = [];
