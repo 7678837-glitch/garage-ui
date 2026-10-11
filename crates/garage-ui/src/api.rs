@@ -253,6 +253,18 @@ async fn setup(
         .map_err(|_| ApiError::internal())?
         > 0
     {
+        record(
+            &app,
+            &body.username,
+            &ip.0,
+            "error",
+            "already_initialized",
+            "POST",
+            "/api/setup",
+            "",
+            409,
+        )
+        .await?;
         return Err(ApiError::conflict(
             "already_initialized",
             "Setup is already complete",
@@ -6924,6 +6936,41 @@ mod tests {
         assert!(!audit_text(row).contains(submitted));
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
+    }
+
+    #[tokio::test]
+    async fn setup_already_initialized_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let username = "Other";
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": username, "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::CONFLICT, "{}", response.body);
+        assert_eq!(code_of(&response.body), "already_initialized");
+        assert!(!response.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, username);
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "already_initialized");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/setup");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 409);
+        assert!(!audit_text(row).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
     }
 
     #[tokio::test]
