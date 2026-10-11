@@ -837,7 +837,16 @@ function orderedBuckets(rows: Bucket[], sort: BucketSort): Bucket[] {
   });
 }
 
-export function Buckets({ canManage = false }: { canManage?: boolean }) {
+// 只传 canManage 的管理员调用仍要看到对象写操作和预览。
+export function Buckets({
+  canManage = false,
+  canWrite = canManage,
+  canTransfer = canManage,
+}: {
+  canManage?: boolean;
+  canWrite?: boolean;
+  canTransfer?: boolean;
+}) {
   const client = useQueryClient();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -946,6 +955,8 @@ export function Buckets({ canManage = false }: { canManage?: boolean }) {
         <Objects
           key={location.bucketId}
           bucketId={location.bucketId}
+          canWrite={canWrite}
+          canTransfer={canTransfer}
           onBack={() => {
             assignHash("#buckets");
           }}

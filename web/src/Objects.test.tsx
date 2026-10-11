@@ -12,14 +12,22 @@ afterEach(() => {
   Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
 });
 
-function renderObjects(bucketId = "bkt-1") {
+function renderObjects(
+  bucketId = "bkt-1",
+  access: { canWrite: boolean; canTransfer: boolean } = { canWrite: true, canTransfer: true },
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const onBack = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <Objects bucketId={bucketId} onBack={onBack} />
+      <Objects
+        bucketId={bucketId}
+        onBack={onBack}
+        canWrite={access.canWrite}
+        canTransfer={access.canTransfer}
+      />
     </QueryClientProvider>,
   );
   return onBack;
@@ -31,7 +39,7 @@ function renderBuckets() {
   });
   render(
     <QueryClientProvider client={client}>
-      <Buckets />
+      <Buckets canWrite={true} canTransfer={true} />
     </QueryClientProvider>,
   );
 }
@@ -818,6 +826,85 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete folder" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+});
+
+test("hides upload, delete, preview, and download when the viewer cannot transfer", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const raw = String(input);
+      if (raw.includes("/objects/a.txt")) {
+        return json({
+          key: "a.txt",
+          size: 1,
+          etag: "abc",
+          lastModified: "2026-10-11T00:00:00Z",
+          contentType: "text/plain",
+        });
+      }
+      return json(
+        page([
+          { kind: "prefix", prefix: "photos/" },
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects("bkt-1", { canWrite: false, canTransfer: false });
+  expect(await screen.findByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  expect(screen.getByLabelText("Search")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+  expect(await screen.findByText("text/plain")).toBeTruthy();
+});
+
+test("shows preview and download for one object without write controls", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json(
+        page([
+          { kind: "prefix", prefix: "photos/" },
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      ),
+    ),
+  );
+  renderObjects("bkt-1", { canWrite: false, canTransfer: true });
+  expect(await screen.findByRole("checkbox", { name: "Select a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  const preview = screen.getByRole("link", { name: "Preview" });
+  const download = screen.getByRole("link", { name: "Download" });
+  expect(preview.getAttribute("href")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+  expect(download.getAttribute("href")).toBe("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
 function rowOrder(): string[] {
