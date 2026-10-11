@@ -29,6 +29,7 @@ type ConfirmFields = {
   consequence: string;
   onCancel: () => void;
   onConfirm: () => void;
+  pending?: boolean;
 };
 
 export type ConfirmDialogProps = ConfirmFields &
@@ -56,7 +57,7 @@ function openDialog(dialog: HTMLDialogElement) {
 }
 
 export function ConfirmDialog(props: ConfirmDialogProps) {
-  const { action, name, consequence, onCancel, onConfirm } = props;
+  const { action, name, consequence, onCancel, onConfirm, pending = false } = props;
   const level = RISK[action];
   const scope = "scope" in props ? props.scope : null;
   const [typed, setTyped] = useState("");
@@ -98,7 +99,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           return;
         }
         event.preventDefault();
-        if (matched) {
+        if (matched && !pending) {
           onConfirm();
         }
       }}
@@ -133,14 +134,14 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
-        disabled={!canConfirm}
+        disabled={!canConfirm || pending}
         onClick={() => {
-          if (canConfirm) {
+          if (canConfirm && !pending) {
             onConfirm();
           }
         }}
       >
-        Confirm
+        {pending ? "Working" : "Confirm"}
       </button>
     </dialog>
   );

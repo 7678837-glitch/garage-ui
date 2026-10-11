@@ -437,12 +437,13 @@ function CreateAccount() {
         Share
       </label>
       {error ? <p role="alert">{error}</p> : null}
+      {create.isSuccess ? <p>User created</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={create.isPending || username.length === 0 || password.length === 0}
       >
-        Create user
+        {create.isPending ? "Creating user" : "Create user"}
       </button>
     </form>
   );

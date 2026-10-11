@@ -62,7 +62,7 @@ function session(role: "admin" | "viewer") {
 function installFetch(
   role: "admin" | "viewer",
   statusResponse: () => Response,
-  connectResponse?: () => Response,
+  connectResponse?: () => Response | Promise<Response>,
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -327,6 +327,9 @@ test("shows the connect API message in a paragraph and keeps the nodes", async (
   fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
   const message = await screen.findByText("Connect: Garage admin API is not reachable");
   expect(message.tagName).toBe("P");
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe(
+    "abcd@127.0.0.1:3901",
+  );
   expect(message.getAttribute("role")).toBeNull();
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("Connected")).toBeNull();
@@ -374,4 +377,35 @@ test("wraps a 64-character node id, hostname, address, and connect result", asyn
   const items = screen.getAllByRole("listitem").map((item) => item.textContent);
   expect(items).toContain(connectResult);
   expect(items).toContain(`${nodeId}${hostname}${address}v2.4.1Up`);
+});
+
+test("shows Connecting while connect is submitting, then Connected when no lines return", async () => {
+  let release: (response: Response) => void = () => {};
+  installFetch(
+    "admin",
+    () => textResponse(listed),
+    () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  const input = screen.getByLabelText("Node address") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "abcd@127.0.0.1:3901" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  const pending = (await screen.findByRole("button", { name: "Connecting" })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Connecting");
+  expect(input.value).toBe("abcd@127.0.0.1:3901");
+  expect(screen.queryByText("Connected")).toBeNull();
+  expect(screen.getByText("node-up")).toBeTruthy();
+  release(json([]));
+  const connected = await screen.findByText("Connected");
+  expect(connected.tagName).toBe("P");
+  expect(input.value).toBe("abcd@127.0.0.1:3901");
+  const idle = screen.getByRole("button", { name: "Connect node" }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Connect node");
+  expect(screen.getByText("node-up")).toBeTruthy();
 });

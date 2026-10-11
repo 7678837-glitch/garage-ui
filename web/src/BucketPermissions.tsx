@@ -240,12 +240,13 @@ function GrantForm({ bucketId }: { bucketId: string }) {
         Write
       </label>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {grant.isSuccess ? <p>Permissions granted</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={!ready || grant.isPending}
       >
-        Grant
+        {grant.isPending ? "Granting" : "Grant"}
       </button>
     </form>
   );

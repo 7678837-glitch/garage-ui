@@ -833,6 +833,7 @@ export function Objects({
         <ConfirmDialog
           action="delete-object"
           name={pendingDelete.name}
+          pending={removeObject.isPending}
           consequence={`This permanently deletes ${pendingDelete.name}.${deleteError ? ` ${deleteError}` : ""}`}
           onCancel={() => {
             setPendingDelete(null);
@@ -850,6 +851,7 @@ export function Objects({
         <ConfirmDialog
           action="batch-delete"
           name={String(pendingDelete.keys.length)}
+          pending={removeMany.isPending}
           scope={`Deletes ${pendingDelete.keys.length} objects, ${pendingDelete.totalSize} bytes.`}
           consequence={`This permanently deletes ${pendingDelete.keys.length} objects.${batchError ? ` ${batchError}` : ""}`}
           onCancel={() => {
@@ -868,6 +870,7 @@ export function Objects({
         <ConfirmDialog
           action="recursive-delete"
           name={pendingDelete.name}
+          pending={removePrefix.isPending}
           scope="This deletes every object under this prefix."
           consequence={`This permanently deletes every object whose key starts with ${pendingDelete.name}.${prefixError ? ` ${prefixError}` : ""}`}
           onCancel={() => {

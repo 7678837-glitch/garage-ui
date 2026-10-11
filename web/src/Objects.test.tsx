@@ -1047,6 +1047,118 @@ test("shows preview and download for one object without write controls", async (
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
+test("shows Working while an object delete is submitting", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "DELETE") {
+        expect(String(input)).toBe("/api/buckets/bkt-1/objects/a.txt");
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  const working = (await within(dialog).findByRole("button", { name: "Working" })) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(working.textContent).toBe("Working");
+  expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(false);
+  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+  release(new Response(null, { status: 204 }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+test("shows Working while a batch delete is submitting", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  const typed = within(dialog).getByRole("textbox") as HTMLInputElement;
+  fireEvent.change(typed, { target: { value: "2" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  const working = (await within(dialog).findByRole("button", { name: "Working" })) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(typed.value).toBe("2");
+  expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
+  expect((within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "b.txt" })).toBeTruthy();
+  release(json({ deleted: ["a.txt", "b.txt"], failed: [] }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+test("shows Working while a prefix delete is submitting", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json(
+        page([{ kind: "prefix", prefix: "photos/" }, objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]),
+      );
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  const dialog = screen.getByRole("dialog");
+  const typed = within(dialog).getByRole("textbox") as HTMLInputElement;
+  fireEvent.change(typed, { target: { value: "photos/" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  const working = (await within(dialog).findByRole("button", { name: "Working" })) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(typed.value).toBe("photos/");
+  expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
+  expect((within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  release(json({ deleted: 1, errors: [] }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 function rowOrder(): string[] {
   return screen
     .getAllByRole("row")

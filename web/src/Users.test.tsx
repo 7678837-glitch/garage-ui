@@ -292,6 +292,10 @@ test("creates a user, deletes one, and resets a password with the csrf header", 
     expectAuthed(post as Call);
   });
   expect(await screen.findByText("Cara")).toBeTruthy();
+  const created = screen.getByRole("form", { name: "Create user" });
+  expect(within(created).getByText("User created")).toBeTruthy();
+  expect((within(created).getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  expect((within(created).getByLabelText("Password") as HTMLInputElement).value).toBe("");
 
   fireEvent.change(screen.getByLabelText("New password for Bea"), {
     target: { value: "brand new secret" },
@@ -347,6 +351,9 @@ test("shows the error text when a request fails", async () => {
   fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "correct horse" } });
   fireEvent.click(within(form).getByRole("button", { name: "Create user" }));
   expect((await within(form).findByRole("alert")).textContent).toBe("Username is already in use");
+  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("Ada");
+  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("correct horse");
+  expect(within(form).queryByText("User created")).toBeNull();
 
   fireEvent.change(screen.getByLabelText("New password for Bea"), { target: { value: "short" } });
   fireEvent.click(screen.getByRole("button", { name: "Reset password for Bea" }));
@@ -527,4 +534,58 @@ test("filters loaded users from the query string and keeps that choice in the ad
   expect((screen.getByLabelText("Filter users") as HTMLInputElement).value).toBe("BEA");
   expect(window.location.hash).toBe("#users/stay");
   expect(calls).toHaveLength(1);
+});
+
+test("shows Creating user while create is submitting, then User created", async () => {
+  let release: (response: Response) => void = () => {};
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/users" && method === "GET") {
+        return json([ada]);
+      }
+      if (url === "/api/users" && method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderUsers();
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  const form = screen.getByRole("form", { name: "Create user" });
+  fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "Cara" } });
+  fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "correct horse" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Create user" }));
+  const pending = (await within(form).findByRole("button", {
+    name: "Creating user",
+  })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Creating user");
+  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("Cara");
+  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("correct horse");
+  expect(within(form).queryByText("User created")).toBeNull();
+  release(
+    json(
+      {
+        id: 2,
+        username: "Cara",
+        role: "viewer",
+        can_download: false,
+        can_share: false,
+        disabled: false,
+      },
+      201,
+    ),
+  );
+  expect(await within(form).findByText("User created")).toBeTruthy();
+  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("");
+  const idle = within(form).getByRole("button", { name: "Create user" }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(true);
+  expect(idle.textContent).toBe("Create user");
 });

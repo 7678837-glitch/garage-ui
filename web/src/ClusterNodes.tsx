@@ -297,10 +297,11 @@ export function ClusterNodes() {
           type="submit"
           disabled={trimmed.length === 0 || connect.isPending}
         >
-          Connect node
+          {connect.isPending ? "Connecting" : "Connect node"}
         </button>
       </form>
       {connect.isError ? <p>{`Connect: ${connectFailure}`}</p> : null}
+      {connect.isSuccess && lines !== null && lines.length === 0 ? <p>Connected</p> : null}
       {lines !== null && lines.length > 0 ? (
         <ul className="min-w-0">
           {lines.map((line, index) => (

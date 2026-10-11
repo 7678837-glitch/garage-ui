@@ -377,6 +377,7 @@ test("grants the trimmed access key and reloads that bucket", async () => {
   expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("");
   expect((screen.getByLabelText("Owner") as HTMLInputElement).checked).toBe(false);
   expect((screen.getByLabelText("Write") as HTMLInputElement).checked).toBe(false);
+  expect(screen.getByText("Permissions granted")).toBeTruthy();
   expect(screen.queryByText("index-secret.html")).toBeNull();
   const post = calls.find((call) => call.method === "POST");
   expect(post).toEqual({
@@ -431,6 +432,7 @@ test("shows the API message when grant fails and keeps the entered values", asyn
   expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("GK9");
   expect((screen.getByLabelText("Read") as HTMLInputElement).checked).toBe(true);
   expect((screen.getByLabelText("Owner") as HTMLInputElement).checked).toBe(false);
+  expect(screen.queryByText("Permissions granted")).toBeNull();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(calls.find((call) => call.method === "POST")?.body).toEqual({
     accessKeyId: "GK9",
@@ -588,4 +590,39 @@ test("a viewer sees the keys and does not call POST or DELETE", async () => {
   expect(screen.queryByLabelText("Owner")).toBeNull();
   expect(calls.some((call) => call.url === "/api/buckets/bkt-1" && call.method === "GET")).toBe(true);
   expect(calls.some((call) => call.method === "POST" || call.method === "DELETE")).toBe(false);
+});
+
+test("shows Granting while the grant is submitting, then Permissions granted", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      if (call.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({ keys: [] });
+    }),
+  );
+  renderPermissions("bkt-1", true);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  fireEvent.change(screen.getByLabelText("Access key"), { target: { value: "GK9" } });
+  fireEvent.click(screen.getByLabelText("Read"));
+  fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+  const pending = (await screen.findByRole("button", { name: "Granting" })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Granting");
+  expect(screen.queryByRole("button", { name: /^Grant$/ })).toBeNull();
+  expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("GK9");
+  expect((screen.getByLabelText("Read") as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByText("Permissions granted")).toBeNull();
+  release(new Response(null, { status: 204 }));
+  expect(await screen.findByText("Permissions granted")).toBeTruthy();
+  expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Read") as HTMLInputElement).checked).toBe(false);
+  const idle = screen.getByRole("button", { name: /^Grant$/ }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(true);
+  expect(idle.textContent).toBe("Grant");
 });

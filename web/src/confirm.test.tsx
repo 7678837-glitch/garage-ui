@@ -115,3 +115,75 @@ test("high confirmation accepts only the typed target name", () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(confirmed).toEqual(["photos", "photos"]);
 });
+
+test("pending confirmation reads Working, stays disabled, and keeps Cancel focused", () => {
+  const confirmed: string[] = [];
+  const cancelled: string[] = [];
+  function Probe() {
+    const [open, setOpen] = useState(true);
+    if (!open) {
+      return null;
+    }
+    return (
+      <ConfirmDialog
+        action="delete-object"
+        name="photos/a.jpg"
+        consequence="This permanently deletes the object."
+        pending
+        onCancel={() => {
+          cancelled.push("cancel");
+          setOpen(false);
+        }}
+        onConfirm={() => {
+          confirmed.push("photos/a.jpg");
+        }}
+      />
+    );
+  }
+  render(<Probe />);
+  const dialog = screen.getByRole("dialog");
+  const working = screen.getByRole("button", { name: "Working" }) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(working.textContent).toBe("Working");
+  expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(working);
+  fireEvent.keyDown(dialog, { key: "Enter" });
+  expect(confirmed).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(cancelled).toEqual(["cancel"]);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(confirmed).toEqual([]);
+});
+
+test("pending high confirmation keeps the typed name and does not confirm", () => {
+  const confirmed: string[] = [];
+  render(
+    <ConfirmDialog
+      action="recursive-delete"
+      name="photos"
+      consequence="This permanently deletes every object under the prefix."
+      scope="4 objects, 12 MB"
+      pending
+      onCancel={() => {
+        confirmed.push("cancel");
+      }}
+      onConfirm={() => {
+        confirmed.push("photos");
+      }}
+    />,
+  );
+  const input = screen.getByRole("textbox") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "photos" } });
+  const working = screen.getByRole("button", { name: "Working" }) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(input.value).toBe("photos");
+  expect(screen.getByText("Type photos to confirm")).toBeTruthy();
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(working);
+  expect(confirmed).toEqual([]);
+  const cancel = screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(false);
+  expect(cancel.textContent).toBe("Cancel");
+  expect(document.activeElement).toBe(cancel);
+});
