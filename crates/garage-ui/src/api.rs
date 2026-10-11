@@ -1602,7 +1602,7 @@ async fn list_bucket_objects(
     Path(id): Path<String>,
     Query(query): Query<ObjectListQuery>,
 ) -> Result<Json<objects::ListPage>, ApiError> {
-    require(&current.user, Op::ReadObjects)?;
+    require(&current.user, Op::ViewObjects)?;
     let page = objects::list(
         &app,
         &id,
@@ -1620,7 +1620,7 @@ async fn search_bucket_objects(
     Path(id): Path<String>,
     Query(query): Query<ObjectSearchQuery>,
 ) -> Result<Json<objects::SearchPage>, ApiError> {
-    require(&current.user, Op::ReadObjects)?;
+    require(&current.user, Op::ViewObjects)?;
     let page = objects::search(
         &app,
         &id,
@@ -1708,13 +1708,14 @@ async fn object_metadata(
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<ObjectViewQuery>,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::ReadObjects)?;
     match object_intent(&query)? {
         ObjectIntent::Meta => {
+            require(&current.user, Op::ViewObjects)?;
             let meta = objects::metadata(&app, &id, &key).await?;
             Ok(Json(meta).into_response())
         }
         ObjectIntent::Transfer(transfer) => {
+            require(&current.user, Op::ReadObjects)?;
             let opened = objects::open(&app, &id, &key).await?;
             stream_object(transfer, &key, opened)
         }
@@ -6670,7 +6671,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn object_routes_require_a_session_and_the_download_bit() {
+    async fn object_routes_require_a_session_and_a_viewer_can_list() {
         let mock = S3Mock::start(|_| list_xml(false, None, &[("a.txt", 1, "abc")], &[])).await;
         let dir = crate::util::temp_dir();
         let app = object_app(&dir, &mock.url, true).await;
@@ -6684,13 +6685,23 @@ mod tests {
 
         let (admin, _) = login(&app).await;
         let viewer = viewer_session(&app, &admin).await;
-        let denied = exchange(
+        let listed_by_viewer = exchange(
             &app,
             request("GET", "/api/buckets/bkt-1/objects", None, Some(&viewer)),
         )
         .await;
-        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
-        assert!(mock.requests().is_empty());
+        assert_eq!(
+            listed_by_viewer.status,
+            StatusCode::OK,
+            "{}",
+            listed_by_viewer.body
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed_by_viewer.body).unwrap()["entries"][0]["key"],
+            "a.txt"
+        );
+        assert_eq!(mock.requests().len(), 1);
+        assert!(request_target(&mock.requests()[0]).contains("delimiter="));
 
         let created = exchange(
             &app,
@@ -6727,8 +6738,184 @@ mod tests {
             serde_json::from_str::<Value>(&listed.body).unwrap()["matches"][0]["key"],
             "a.txt"
         );
-        assert_eq!(bucket_of(&mock.requests()[0]), "bkt-1");
-        assert!(!request_target(&mock.requests()[0]).contains("delimiter="));
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(bucket_of(&seen[1]), "bkt-1");
+        assert!(!request_target(&seen[1]).contains("delimiter="));
+    }
+
+    fn browse_reply(line: &str) -> String {
+        if request_target(line).contains("list-type=") {
+            return list_xml(false, None, &[("note.txt", 11, "abc")], &[]);
+        }
+        object_get_reply(line)
+    }
+
+    #[tokio::test]
+    async fn object_viewer_without_download_lists_metadata_and_blocks_transfer() {
+        let mock = S3Mock::start(browse_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+
+        let listed = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&viewer)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!({
+                "prefix": "",
+                "entries": [
+                    {"kind": "object", "key": "note.txt", "size": 11, "etag": "abc", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "next": null
+            })
+        );
+
+        let found = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/search?q=txt",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&found.body).unwrap(),
+            json!({
+                "matches": [
+                    {"key": "note.txt", "size": 11, "etag": "abc", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "truncated": false,
+                "reason": null
+            })
+        );
+
+        let meta = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(meta.status, StatusCode::OK, "{}", meta.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&meta.body).unwrap(),
+            json!({
+                "key": "note.txt",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z",
+                "contentType": "text/plain"
+            })
+        );
+        let calls_before_transfer = mock.requests().len();
+
+        let preview = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&preview, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+
+        let download = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&download, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(mock.requests().len(), calls_before_transfer);
+    }
+
+    #[tokio::test]
+    async fn object_viewer_preview_succeeds_after_download_is_granted() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Bea",
+                        "password": "viewer horse",
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let user_id = serde_json::from_str::<Value>(&created.body).unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let viewer = sign_in(&app, "Bea", "viewer horse").await;
+        let denied = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert!(mock.requests().is_empty());
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{user_id}"),
+                Some(&json!({ "can_download": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&patched.body).unwrap()["can_download"],
+            true
+        );
+
+        let preview = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+        assert_eq!(preview.body, "hello plain");
     }
 
     #[tokio::test]
