@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
+import { savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type AccessKey = {
   id: string;
@@ -236,21 +237,29 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
 
 function RenameKey({ id, name }: { id: string; name: string | null }) {
   const client = useQueryClient();
-  const [draft, setDraft] = useState(name ?? "");
-  const [note, setNote] = useState<string | null>(null);
+  const currentName = name ?? "";
+  const [baseline, setBaseline] = useState(currentName);
+  const [draft, setDraft] = useState(currentName);
+  const nameDirty = draft !== baseline;
+  useEffect(() => {
+    setFormDirty(`rename:${id}`, nameDirty);
+    return () => setFormDirty(`rename:${id}`, false);
+  }, [id, nameDirty]);
   const rename = useMutation({
     mutationFn: async (next: string) => {
       await api(keyUrl(id), { method: "PATCH", body: JSON.stringify({ name: next }) });
     },
-    onMutate: () => {
-      setNote(null);
-    },
-    onSuccess: async () => {
-      setNote("Key renamed");
+    onSuccess: async (_result, next) => {
+      setBaseline(next);
       await client.invalidateQueries({ queryKey: ["keys"] });
     },
   });
   const error = rename.error instanceof Error ? rename.error.message : null;
+  const renameStatus = saveStatus(
+    savePhase(rename.isPending, rename.isError, rename.isSuccess),
+    nameDirty,
+    "Key renamed",
+  );
   return (
     <form
       className="mt-3 grid max-w-sm gap-2"
@@ -270,7 +279,7 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
         />
       </label>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-      {note ? <p>{note}</p> : null}
+      {renameStatus ? <p>{renameStatus}</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"

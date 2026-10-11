@@ -630,6 +630,87 @@ test("clears both quotas with null and keeps the entered values when save fails"
   expect(objects.value).toBe("");
   expect(bodies).toEqual(['{"maxSize":null,"maxObjects":null}']);
   expect(screen.getByText("1 of 20 objects")).toBeTruthy();
+  expect(screen.getByText("Save failed")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save quotas for bkt-1" })).toBeTruthy();
+});
+
+test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps the hash", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  let releaseSave: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PUT") {
+        return new Promise<Response>((resolve) => {
+          releaseSave = resolve;
+        });
+      }
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 1,
+            bytes: 2,
+            quotas: { maxSize: 10, maxObjects: 20 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
+  const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
+  expect(size.value).toBe("10");
+  expect(objects.value).toBe("20");
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  fireEvent.change(objects, { target: { value: "21" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  fireEvent.change(objects, { target: { value: "20" } });
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  fireEvent.change(objects, { target: { value: "21" } });
+  const uploadGuard = () => "upload";
+  window.onbeforeunload = uploadGuard;
+  const leaving = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(leaving);
+  expect(leaving.defaultPrevented).toBe(true);
+  expect(window.onbeforeunload).toBe(uploadGuard);
+  window.onbeforeunload = null;
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Objects for bkt-1" }));
+  expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  expect(window.location.hash).toBe("");
+  expect(objects.value).toBe("21");
+  window.location.hash = "#buckets/bkt-1";
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+  expect(window.location.hash).toBe("");
+  expect(objects.value).toBe("21");
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+  expect(confirm).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByRole("button", { name: "Save quotas for bkt-1" }));
+  expect(await screen.findByText("Saving")).toBeTruthy();
+  const pending = screen.getByRole("button", { name: "Saving quotas" }) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  const finish = releaseSave;
+  if (!finish) {
+    throw new Error("quota save did not start");
+  }
+  finish(new Response(null, { status: 204 }));
+  expect(await screen.findByText("Saved")).toBeTruthy();
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  expect(screen.queryByText("Saving")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save quotas for bkt-1" })).toBeTruthy();
+  expect(objects.value).toBe("21");
+  expect(size.value).toBe("10");
 });
 
 test("hides the quota editor when the row has no quotas object", async () => {

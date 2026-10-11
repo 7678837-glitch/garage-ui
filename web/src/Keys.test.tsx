@@ -472,11 +472,16 @@ test("renames a key with only the name and does not ask for confirmation", async
     }),
   );
   renderKeys(true);
-  fireEvent.change(await screen.findByLabelText("Name for GK1"), {
-    target: { value: "已有 名称" },
-  });
+  const name = (await screen.findByLabelText("Name for GK1")) as HTMLInputElement;
+  fireEvent.change(name, { target: { value: "已有 名称" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  fireEvent.change(name, { target: { value: "photos" } });
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
+  fireEvent.change(name, { target: { value: "已有 名称" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Rename GK1" }));
   expect(await screen.findByText("Key renamed")).toBeTruthy();
+  expect(screen.queryByText("Unsaved changes")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(pageHolds("PATCHSECRET")).toBe(false);
   expect(pageHolds("LISTSECRET")).toBe(false);
