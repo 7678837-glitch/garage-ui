@@ -68,6 +68,66 @@ function listed(key: string) {
   return page([objectRow(key, 1, "2026-10-11T00:00:00Z")]);
 }
 
+type ListedObject = {
+  key: string;
+  encodedKey: string;
+  contentType: string;
+  size?: number;
+  lastModified?: string;
+};
+
+type FetchCall = {
+  url: string;
+  credentials: RequestCredentials | undefined;
+  range: string | null;
+};
+
+function stubBucketObjects(rows: ListedObject[], previewBody = "preview-body") {
+  const calls: FetchCall[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      calls.push({ url, credentials: init?.credentials, range: headers.get("range") });
+      if (url.includes("preview=1")) {
+        return new Response(previewBody, { status: 200 });
+      }
+      const row = rows.find((item) => url.includes(`/objects/${item.encodedKey}`));
+      if (row) {
+        return json({
+          key: row.key,
+          size: row.size ?? 4,
+          etag: "abc",
+          lastModified: row.lastModified ?? "2026-10-11T00:00:00Z",
+          contentType: row.contentType,
+        });
+      }
+      return json(
+        page(
+          rows.map((item) =>
+            objectRow(item.key, item.size ?? 4, item.lastModified ?? "2026-10-11T00:00:00Z"),
+          ),
+        ),
+      );
+    }),
+  );
+  return calls;
+}
+
+function expectDownload(href: string) {
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  const download = screen.getByRole("link", { name: "Download" });
+  expect(download.getAttribute("href")).toBe(href);
+  expect(download.getAttribute("target")).toBe("_blank");
+  expect(download.getAttribute("rel")).toBe("noopener");
+}
+
+function expectNoViewer() {
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+  expect(document.querySelector("img, pre, iframe, video, audio")).toBeNull();
+}
+
 test("shows the Upload region after opening a bucket", async () => {
   class QuietRequest {
     upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
@@ -638,7 +698,7 @@ test("shows Delete when one or more objects are selected", async () => {
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
-test("shows Preview and Download only for one selected object", async () => {
+test("shows Download only for one selected object and does not offer Preview", async () => {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -656,23 +716,19 @@ test("shows Preview and Download only for one selected object", async () => {
   expect(await screen.findByRole("checkbox", { name: "Select dir/a?b.txt" })).toBeTruthy();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expectNoViewer();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select dir/a?b.txt" }));
-  const preview = screen.getByRole("link", { name: "Preview" });
-  const download = screen.getByRole("link", { name: "Download" });
-  expect(preview.getAttribute("href")).toBe("/api/buckets/b%20k/objects/dir/a%3Fb.txt?preview=1");
-  expect(download.getAttribute("href")).toBe("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
-  expect(preview.getAttribute("target")).toBe("_blank");
-  expect(download.getAttribute("target")).toBe("_blank");
-  expect(preview.getAttribute("rel")).toBe("noopener");
-  expect(download.getAttribute("rel")).toBe("noopener");
+  expectDownload("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
   expect(calls.some((call) => call.includes("preview=1") || call.includes("download=1"))).toBe(
     false,
   );
+  expectNoViewer();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expectNoViewer();
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
@@ -973,6 +1029,9 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const raw = String(input);
+      if (raw.includes("preview=1")) {
+        return new Response("secret bytes", { status: 200 });
+      }
       if (raw.includes("/objects/a.txt")) {
         return json({
           key: "a.txt",
@@ -1005,23 +1064,40 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
   expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByText("secret bytes")).toBeNull();
+  expectNoViewer();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
   expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(screen.queryByText("secret bytes")).toBeNull();
+  expectNoViewer();
 });
 
-test("shows preview and download for one object without write controls", async () => {
+test("shows the text viewer and Download for one object without write controls", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      json(
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("preview=1")) {
+        return new Response("readable note", { status: 200 });
+      }
+      if (url.includes("/objects/a.txt")) {
+        return json({
+          key: "a.txt",
+          size: 1,
+          etag: "abc",
+          lastModified: "2026-10-11T00:00:00Z",
+          contentType: "text/plain",
+        });
+      }
+      return json(
         page([
           { kind: "prefix", prefix: "photos/" },
           objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
           objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
         ]),
-      ),
-    ),
+      );
+    }),
   );
   renderObjects("bkt-1", { canWrite: false, canTransfer: true });
   expect(await screen.findByRole("checkbox", { name: "Select a.txt" })).toBeTruthy();
@@ -1032,10 +1108,9 @@ test("shows preview and download for one object without write controls", async (
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
-  const preview = screen.getByRole("link", { name: "Preview" });
-  const download = screen.getByRole("link", { name: "Download" });
-  expect(preview.getAttribute("href")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
-  expect(download.getAttribute("href")).toBe("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  const note = await screen.findByText("readable note");
+  expect(note.tagName).toBe("PRE");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
@@ -1043,6 +1118,8 @@ test("shows preview and download for one object without write controls", async (
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  expect(screen.queryByText("readable note")).toBeNull();
+  expectNoViewer();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
@@ -1168,3 +1245,186 @@ function rowOrder(): string[] {
       return button?.textContent ?? "";
     });
 }
+
+async function expectFields(contentType: string, size: number) {
+  const details = await screen.findByRole("region", { name: "Object details" });
+  expect(details.textContent).toContain(`Size ${size}`);
+  expect(details.textContent).toContain(`Content type ${contentType}`);
+  expect(details.textContent).toContain("ETag abc");
+  expect(details.textContent).toContain("Last modified 2026-10-11T00:00:00Z");
+  return details;
+}
+
+test("renders one text object inline from the preview URL without truncating it", async () => {
+  const body = `${"n".repeat(200)}\n<script>alert(1)</script>`;
+  const contentType = "Text/Plain; charset=utf-8";
+  const calls = stubBucketObjects(
+    [
+      {
+        key: "dir/a?b.txt",
+        encodedKey: "dir/a%3Fb.txt",
+        contentType,
+        size: 4,
+      },
+    ],
+    body,
+  );
+  renderObjects("b k");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select dir/a?b.txt" }));
+  expectDownload("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
+  const details = await expectFields(contentType, 4);
+  await waitFor(() => {
+    expect(details.querySelector("pre")?.textContent).toBe(body);
+  });
+  const pre = details.querySelector("pre");
+  if (!(pre instanceof HTMLPreElement)) {
+    throw new Error("missing text preview");
+  }
+  expect(pre.textContent).toBe(body);
+  expect(pre.querySelector("script")).toBeNull();
+  const previewUrl = "/api/buckets/b%20k/objects/dir/a%3Fb.txt?preview=1";
+  const metadataUrl = "/api/buckets/b%20k/objects/dir/a%3Fb.txt";
+  const metadataAt = calls.findIndex((call) => call.url === metadataUrl);
+  const previewAt = calls.findIndex((call) => call.url === previewUrl);
+  expect(metadataAt).toBeGreaterThanOrEqual(0);
+  expect(previewAt).toBeGreaterThan(metadataAt);
+  expect(calls.filter((call) => call.url.includes("preview=1"))).toEqual([
+    { url: previewUrl, credentials: "include", range: null },
+  ]);
+  expect(calls.some((call) => call.url.includes("download=1"))).toBe(false);
+});
+
+const imageTypes = [
+  "image/png; charset=binary",
+  "Image/JPEG",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/bmp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+];
+
+for (const contentType of imageTypes) {
+  test(`renders one ${contentType} object in an image`, async () => {
+    const calls = stubBucketObjects([
+      { key: "a.txt", encodedKey: "a.txt", contentType, size: 9 },
+    ]);
+    renderObjects();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    const details = await expectFields(contentType, 9);
+    const image = within(details).getByRole("img", { name: "a.txt" });
+    expect(image.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
+  });
+}
+
+test("renders one PDF in a sandboxed frame that does not grant same origin", async () => {
+  const calls = stubBucketObjects([
+    { key: "a.txt", encodedKey: "a.txt", contentType: "application/pdf", size: 9 },
+  ]);
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  const details = await expectFields("application/pdf", 9);
+  const frame = within(details).getByTitle("a.txt");
+  expect(frame.tagName).toBe("IFRAME");
+  expect(frame.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+  expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+  expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
+});
+
+for (const contentType of ["video/mp4", "video/webm"]) {
+  test(`renders one ${contentType} object in a video with controls`, async () => {
+    const calls = stubBucketObjects([
+      { key: "a.txt", encodedKey: "a.txt", contentType, size: 9 },
+    ]);
+    renderObjects();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    const details = await expectFields(contentType, 9);
+    const video = details.querySelector("video");
+    if (!(video instanceof HTMLVideoElement)) {
+      throw new Error(`missing video for ${contentType}`);
+    }
+    expect(video.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(video.hasAttribute("controls")).toBe(true);
+    expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
+  });
+}
+
+for (const contentType of ["audio/mpeg", "audio/ogg", "audio/wav"]) {
+  test(`renders one ${contentType} object in an audio element with controls`, async () => {
+    const calls = stubBucketObjects([
+      { key: "a.txt", encodedKey: "a.txt", contentType, size: 9 },
+    ]);
+    renderObjects();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    const details = await expectFields(contentType, 9);
+    const audio = details.querySelector("audio");
+    if (!(audio instanceof HTMLAudioElement)) {
+      throw new Error(`missing audio for ${contentType}`);
+    }
+    expect(audio.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(audio.hasAttribute("controls")).toBe(true);
+    expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
+  });
+}
+
+for (const contentType of [
+  "text/html",
+  "text/html; charset=utf-8",
+  "image/svg+xml",
+  "",
+  "application/zip",
+]) {
+  test(`does not preview ${contentType === "" ? "an empty type" : contentType}`, async () => {
+    const calls = stubBucketObjects([
+      { key: "a.txt", encodedKey: "a.txt", contentType, size: 9 },
+    ]);
+    renderObjects();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    const details = await expectFields(contentType, 9);
+    expect(details.querySelector("img, pre, iframe, video, audio")).toBeNull();
+    expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
+  });
+}
+
+test("keeps Download and hides the viewer until object metadata loads", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("preview=1")) {
+        return new Response("loaded body", { status: 200 });
+      }
+      if (url.includes("/objects/a.txt")) {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expect(screen.queryByRole("region", { name: "Object details" })).toBeNull();
+  expectNoViewer();
+  release(
+    json({
+      key: "a.txt",
+      size: 4,
+      etag: "abc",
+      lastModified: "2026-10-11T00:00:00Z",
+      contentType: "text/plain",
+    }),
+  );
+  expect((await screen.findByText("loaded body")).tagName).toBe("PRE");
+  expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
+});
