@@ -1023,6 +1023,39 @@ test("Menu toggles the links", async () => {
   expect(window.location.hash).toBe("#keys");
 });
 
+function stubNavMedia(narrow: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const media: MediaQueryList = {
+      matches: query === "(max-width: 639px)" && narrow,
+      media: query,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent() {
+        return false;
+      },
+    };
+    return media;
+  });
+}
+
+test("a viewport below 640px hides section links until Menu opens them", async () => {
+  stubNavMedia(true);
+  stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByRole("button", { name: "Menu" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Buckets" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+  expect(screen.getByRole("link", { name: "Buckets" })).toBeTruthy();
+
+  cleanup();
+  stubNavMedia(false);
+  renderApp();
+  expect(await screen.findByRole("link", { name: "Buckets" })).toBeTruthy();
+});
+
 function methodOf(call: readonly unknown[]): string {
   const init = call[1];
   if (typeof init !== "object" || init === null || !("method" in init)) {
