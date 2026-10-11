@@ -589,3 +589,134 @@ test("shows Creating user while create is submitting, then User created", async 
   expect(idle.disabled).toBe(true);
   expect(idle.textContent).toBe("Create user");
 });
+
+test("shows Resetting password while reset is submitting, then Password reset", async () => {
+  let release: (response: Response) => void = () => {};
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/users/2/reset-password" && method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      if (url === "/api/users" && method === "GET") {
+        return json([ada, bea]);
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderUsers();
+  await shown();
+  fireEvent.change(screen.getByLabelText("New password for Bea"), {
+    target: { value: "brand new secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Reset password for Bea" }));
+  const pending = (await screen.findByRole("button", {
+    name: "Resetting password",
+  })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Resetting password");
+  expect(screen.queryByRole("button", { name: "Reset password for Bea" })).toBeNull();
+  expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe(
+    "brand new secret",
+  );
+  const deleteBea = screen.getByRole("button", { name: "Delete Bea" }) as HTMLButtonElement;
+  expect(deleteBea.disabled).toBe(true);
+  expect(deleteBea.textContent).toBe("Delete Bea");
+  expect(screen.queryByText("Password reset")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  release(new Response(null, { status: 204 }));
+  expect(await screen.findByText("Password reset")).toBeTruthy();
+  expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe("");
+  const idle = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
+  expect(idle.disabled).toBe(true);
+  expect(idle.textContent).toBe("Reset password for Bea");
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+});
+
+test("keeps the typed password and alert when reset fails", async () => {
+  let release: (response: Response) => void = () => {};
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/users/2/reset-password" && method === "POST") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      if (url === "/api/users" && method === "GET") {
+        return json([ada, bea]);
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderUsers();
+  await shown();
+  fireEvent.change(screen.getByLabelText("New password for Bea"), {
+    target: { value: "brand new secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Reset password for Bea" }));
+  const pending = (await screen.findByRole("button", {
+    name: "Resetting password",
+  })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  release(json({ message: "Password was rejected" }, 400));
+  expect((await screen.findByRole("alert")).textContent).toBe("Password was rejected");
+  expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe(
+    "brand new secret",
+  );
+  expect(screen.queryByText("Password reset")).toBeNull();
+  const idle = (await screen.findByRole("button", {
+    name: "Reset password for Bea",
+  })) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Reset password for Bea");
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+});
+
+test("shows Deleting while delete is submitting and keeps the row when it fails", async () => {
+  let release: (response: Response) => void = () => {};
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "/api/users/2" && method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      if (url === "/api/users" && method === "GET") {
+        return json([ada, bea]);
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderUsers();
+  await shown();
+  fireEvent.click(screen.getByRole("button", { name: "Delete Bea" }));
+  const pending = (await screen.findByRole("button", { name: "Deleting Bea" })) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  expect(pending.textContent).toBe("Deleting Bea");
+  expect(screen.queryByRole("button", { name: "Delete Bea" })).toBeNull();
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
+  expect(reset.disabled).toBe(true);
+  expect(reset.textContent).toBe("Reset password for Bea");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  release(json({ message: "The user still owns a bucket" }, 409));
+  expect((await screen.findByRole("alert")).textContent).toBe("The user still owns a bucket");
+  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  const idle = (await screen.findByRole("button", { name: "Delete Bea" })) as HTMLButtonElement;
+  expect(idle.disabled).toBe(false);
+  expect(idle.textContent).toBe("Delete Bea");
+  expect(screen.queryByRole("dialog")).toBeNull();
+});

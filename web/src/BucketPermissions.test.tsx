@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { BucketPermissions } from "./BucketPermissions";
 import { Buckets } from "./Buckets";
@@ -625,4 +625,56 @@ test("shows Granting while the grant is submitting, then Permissions granted", a
   const idle = screen.getByRole("button", { name: /^Grant$/ }) as HTMLButtonElement;
   expect(idle.disabled).toBe(true);
   expect(idle.textContent).toBe("Grant");
+});
+
+test("shows Working while revoke is submitting and keeps the dialog when it fails", async () => {
+  let release: (response: Response) => void = () => {};
+  document.cookie = "garage_csrf=csrf-token";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      if (call.method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({
+        keys: [
+          {
+            accessKeyId: "GK1",
+            name: "photos",
+            permissions: { owner: true, read: true, write: false },
+          },
+        ],
+      });
+    }),
+  );
+  renderPermissions("bkt-1", true);
+  fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  const opener = (await screen.findByRole("button", { name: "Revoke GK1" })) as HTMLButtonElement;
+  expect(opener.textContent).toBe("Revoke GK1");
+  fireEvent.click(opener);
+  const dialog = screen.getByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  const working = (await within(dialog).findByRole("button", { name: "Working" })) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(working.textContent).toBe("Working");
+  expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
+  const stillOpen = screen.getByRole("button", { name: "Revoke GK1" }) as HTMLButtonElement;
+  expect(stillOpen.disabled).toBe(false);
+  expect(stillOpen.textContent).toBe("Revoke GK1");
+  expect(screen.getByText("photos")).toBeTruthy();
+  release(json({ message: "Cannot revoke" }, 409));
+  expect(await screen.findByText(/Cannot revoke/)).toBeTruthy();
+  const failed = screen.getByRole("dialog");
+  expect(failed.textContent).toContain(
+    "This revokes the current owner, read, and write permissions for GK1.",
+  );
+  expect(failed.textContent).toContain("Cannot revoke");
+  const confirm = within(failed).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(false);
+  expect(confirm.textContent).toBe("Confirm");
+  expect(screen.getByRole("button", { name: "Revoke GK1" })).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
 });

@@ -301,9 +301,10 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               type="submit"
               disabled={self || busy || password.length === 0}
             >
-              Reset password for {account.username}
+              {reset.isPending ? "Resetting password" : `Reset password for ${account.username}`}
             </button>
           </form>
+          {reset.isSuccess ? <p>Password reset</p> : null}
         </td>
         <td className="py-2">
           <button
@@ -318,7 +319,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               remove.mutate();
             }}
           >
-            Delete {account.username}
+            {remove.isPending ? `Deleting ${account.username}` : `Delete ${account.username}`}
           </button>
         </td>
       </tr>
