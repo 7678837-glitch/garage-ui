@@ -1619,6 +1619,18 @@ async fn create_key(
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ChangeKeys)?;
     if !valid_new_key_name(&body.name) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "error",
+            "invalid_key_name",
+            "POST",
+            "/api/keys",
+            &body.name,
+            400,
+        )
+        .await?;
         return Err(ApiError::bad_request(
             "invalid_key_name",
             "Key name is invalid",
@@ -4907,6 +4919,41 @@ mod tests {
             );
         }
         assert_eq!(mock.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn create_key_invalid_name_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let name = "my key";
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(&json!({ "name": name }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_key_name",
+            "Key name is invalid",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_key_name");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, name);
+        assert_eq!(row.status, 400);
     }
 
     #[tokio::test]
