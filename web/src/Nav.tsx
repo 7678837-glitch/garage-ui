@@ -5,6 +5,7 @@ const sections = [
   { id: "buckets", label: "Buckets", adminOnly: false },
   { id: "keys", label: "Keys", adminOnly: false },
   { id: "users", label: "Users", adminOnly: true },
+  { id: "tokens", label: "Admin tokens", adminOnly: true },
 ] as const;
 
 export type SectionId = (typeof sections)[number]["id"];

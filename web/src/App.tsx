@@ -13,6 +13,7 @@ import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { About, garageLine } from "./About";
+import { AdminTokens } from "./AdminTokens";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
@@ -198,6 +199,7 @@ const sectionLabel: Record<SectionId, string> = {
   buckets: "Buckets",
   keys: "Keys",
   users: "Users",
+  tokens: "Admin tokens",
 };
 
 type Crumb =
@@ -465,6 +467,7 @@ function Home({ status }: { status: SessionStatus }) {
         {section === "users" && admin && status.username ? (
           <Users selfUsername={status.username} />
         ) : null}
+        {section === "tokens" && admin ? <AdminTokens /> : null}
       </div>
     </div>
   );
