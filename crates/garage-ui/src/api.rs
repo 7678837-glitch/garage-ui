@@ -1650,8 +1650,25 @@ async fn patch_key(
     Json(body): Json<PatchKeyBody>,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ChangeKeys)?;
-    let bytes =
-        serde_json::to_vec(&key_patch_body(key_patch(body)?)).map_err(|_| ApiError::internal())?;
+    let patch = match key_patch(body) {
+        Ok(patch) => patch,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_key_patch",
+                "PATCH",
+                "/api/keys",
+                &id,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
+    let bytes = serde_json::to_vec(&key_patch_body(patch)).map_err(|_| ApiError::internal())?;
     let query = format!("id={}", percent_encode(&id));
     post_garage(&app, &current, &headers, "UpdateKey", Some(&query), &bytes).await
 }
@@ -4953,6 +4970,35 @@ mod tests {
         assert_eq!(row.method, "POST");
         assert_eq!(row.path, "/api/keys");
         assert_eq!(row.target, name);
+        assert_eq!(row.status, 400);
+    }
+
+    #[tokio::test]
+    async fn patch_key_invalid_body_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request("PATCH", "/api/keys/GK1", Some("{}"), Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_key_patch",
+            "Send a name or createBucket",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_key_patch");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "GK1");
         assert_eq!(row.status, 400);
     }
 
