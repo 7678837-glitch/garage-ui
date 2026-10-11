@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Keys } from "./Keys";
 
@@ -617,6 +617,56 @@ test("cancels a key delete without a request, then confirms the encoded delete",
     confirm: null,
     body: undefined,
   });
+});
+
+test("shows Working while a key delete is submitting and Cancel still closes", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      if (call.method === "DELETE") {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return json({ items: [{ id: "GK1", name: "photos" }], hasMore: false });
+    }),
+  );
+  renderKeys(true);
+  const opener = (await screen.findByRole("button", { name: "Delete GK1" })) as HTMLButtonElement;
+  expect(opener.disabled).toBe(false);
+  expect(opener.textContent).toBe("Delete GK1");
+  fireEvent.click(opener);
+  const dialog = screen.getByRole("dialog");
+  const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(false);
+  expect(confirm.textContent).toBe("Confirm");
+  fireEvent.click(confirm);
+  const working = (await within(dialog).findByRole("button", { name: "Working" })) as HTMLButtonElement;
+  expect(working.disabled).toBe(true);
+  expect(working.textContent).toBe("Working");
+  expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
+  const during = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
+  expect(during.disabled).toBe(false);
+  expect(during.textContent).toBe("Delete GK1");
+  expect(screen.getByText("photos")).toBeTruthy();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(false);
+  fireEvent.click(cancel);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("GK1")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.queryByText("Key deleted")).toBeNull();
+  const after = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
+  expect(after.disabled).toBe(false);
+  expect(after.textContent).toBe("Delete GK1");
+  await act(async () => {
+    release(json({ message: "Key is still in use" }, 409));
+  });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByText("Key deleted")).toBeNull();
+  expect(screen.getByText("GK1")).toBeTruthy();
 });
 
 test("shows the API message when deleting a key fails and keeps the key listed", async () => {

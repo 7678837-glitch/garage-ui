@@ -678,6 +678,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <ConfirmDialog
           action="delete-key"
           name={deleteId}
+          pending={removeKey.isPending}
           consequence={`This permanently deletes key ${deleteId}. Clients that use this key lose access.${deleteError ? ` ${deleteError}` : ""}`}
           onCancel={() => {
             setDeleteId(null);
