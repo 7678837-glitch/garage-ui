@@ -598,8 +598,42 @@ async fn create_user(
         .await?;
         return Err(error);
     }
-    let role = parse_role(&body.role)?;
-    let (download, share) = normalize_bits(role, body.can_download, body.can_share)?;
+    let role = match parse_role(&body.role) {
+        Ok(role) => role,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_role",
+                "POST",
+                "/api/users",
+                &body.username,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
+    let (download, share) = match normalize_bits(role, body.can_download, body.can_share) {
+        Ok(bits) => bits,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "share_requires_download",
+                "POST",
+                "/api/users",
+                &body.username,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
     let _guard = app.write.lock().await;
     let user_id = match db::insert_user(&app.db, &body.username, &hash, role, download, share).await
@@ -7181,6 +7215,101 @@ mod tests {
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(submitted));
         assert!(!sink.contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn create_user_role_rejections_are_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let invalid_role = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "editor"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(
+            invalid_role.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            invalid_role.body
+        );
+        assert_eq!(code_of(&invalid_role.body), "invalid_role");
+        assert!(!invalid_role.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_role");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(PASSWORD));
+
+        let share = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Dana",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": true
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(share.status, StatusCode::BAD_REQUEST, "{}", share.body);
+        assert_eq!(code_of(&share.body), "share_requires_download");
+        assert!(!share.body.contains(PASSWORD));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let newest = &rows[0];
+        assert_eq!(newest.username, "Ada");
+        assert_eq!(newest.result, "error");
+        assert_eq!(newest.reason, "share_requires_download");
+        assert_eq!(newest.method, "POST");
+        assert_eq!(newest.path, "/api/users");
+        assert_eq!(newest.target, "Dana");
+        assert_eq!(newest.status, 400);
+        let earlier = &rows[1];
+        assert_eq!(earlier.username, "Ada");
+        assert_eq!(earlier.result, "error");
+        assert_eq!(earlier.reason, "invalid_role");
+        assert_eq!(earlier.method, "POST");
+        assert_eq!(earlier.path, "/api/users");
+        assert_eq!(earlier.target, "Cara");
+        assert_eq!(earlier.status, 400);
+        assert!(!audit_text(newest).contains(PASSWORD));
+        assert!(!audit_text(earlier).contains(PASSWORD));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(PASSWORD));
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        assert_eq!(users.len(), 1, "{users:?}");
+        assert_eq!(users[0]["username"], "Ada");
     }
 
     #[tokio::test]
