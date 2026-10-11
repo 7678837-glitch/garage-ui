@@ -269,9 +269,10 @@ function Home({ status }: { status: SessionStatus }) {
   const newPassword = form.watch("new_password") ?? "";
   const passwordDirty = currentPassword.length > 0 || newPassword.length > 0;
   useEffect(() => {
-    setFormDirty("password", passwordDirty);
+    // 改密表单只在概览里挂载。这段 effect 挂在 Home 上，离开概览时要自己撤掉脏标记。
+    setFormDirty("password", section === "overview" && passwordDirty);
     return () => setFormDirty("password", false);
-  }, [passwordDirty]);
+  }, [passwordDirty, section]);
   const change = useMutation({
     mutationFn: (input: PasswordChange) =>
       api("/api/auth/change-password", { method: "POST", body: JSON.stringify(input) }),
