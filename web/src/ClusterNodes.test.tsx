@@ -198,6 +198,8 @@ test("shows the Garage banner instead of the cluster status message", async () =
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(nodeErrorLines()).toEqual([]);
+  expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
 });
 
 test("does not show cluster nodes to a viewer or request them", async () => {
@@ -332,7 +334,10 @@ test("shows the connect API message in a paragraph and keeps the nodes", async (
     "abcd@127.0.0.1:3901",
   );
   expect(message.getAttribute("role")).toBeNull();
+  expect(message.textContent).toBe("Connect: Garage admin API is not reachable");
+  expect(nodeErrorLines()).toEqual(["Connect: Garage admin API is not reachable"]);
   expect(screen.queryByText("garage_unavailable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
   expect(screen.queryByText("Connected")).toBeNull();
   expect(screen.getByText("node-up")).toBeTruthy();
   expect(screen.getByText("Down")).toBeTruthy();
@@ -414,6 +419,30 @@ test("shows Connecting while connect is submitting, then Connected when no lines
 function nodeCardText(): string[] {
   return screen.queryAllByRole("listitem").map((item) => item.textContent ?? "");
 }
+
+function nodeErrorLines(): string[] {
+  const section = screen.getByRole("region", { name: "Cluster nodes" });
+  return [...section.children]
+    .filter((node) => node.tagName === "P")
+    .map((node) => node.textContent ?? "");
+}
+
+function callsFor(fetchMock: ReturnType<typeof installFetch>, url: string): number {
+  return fetchMock.mock.calls.filter((call) => String(call[0]) === url).length;
+}
+
+const recoveredNode = {
+  nodes: [
+    {
+      id: "node-back",
+      hostname: "beta",
+      addr: "10.0.0.8:3901",
+      garageVersion: "v2.4.1",
+      isUp: true,
+      draining: false,
+    },
+  ],
+};
 
 test("filters loaded nodes from the query string and keeps that choice in the address", async () => {
   window.history.replaceState(null, "", "/?nodes=APPLE&keep=1#stay");
@@ -546,4 +575,169 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(window.location.search).toContain("keep=1");
   expect(window.location.hash).toBe("#stay");
   expect(statusCalls()).toBe(1);
+});
+
+test("shows the node list code and retries only cluster status", async () => {
+  let recover = false;
+  const fetchMock = installFetch("admin", () => {
+    if (!recover) {
+      return json({ code: "node_list_failed", message: "Cannot list nodes" }, 500);
+    }
+    return json(recoveredNode);
+  });
+  renderApp();
+  const message = await screen.findByText("Cannot list nodes");
+  expect(message.tagName).toBe("P");
+  expect(message.textContent).toBe("Cannot list nodes");
+  expect(screen.getByText("node_list_failed").tagName).toBe("P");
+  expect(screen.getByText("node_list_failed").getAttribute("role")).toBeNull();
+  expect(nodeErrorLines()).toEqual(["Cannot list nodes", "node_list_failed"]);
+  expect(screen.getByRole("button", { name: "Retry nodes" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
+  expect(screen.queryByLabelText("Loading nodes")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "abcd@127.0.0.1:3901" },
+  });
+  const statusSeen = callsFor(fetchMock, "/api/cluster/status");
+  const healthSeen = callsFor(fetchMock, "/api/cluster/health");
+  const statisticsSeen = callsFor(fetchMock, "/api/cluster/statistics");
+  const connectSeen = connectCalls(fetchMock).length;
+  recover = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry nodes" }));
+  expect(await screen.findByText("node-back")).toBeTruthy();
+  expect(screen.getByText("beta")).toBeTruthy();
+  expect(screen.getByText("10.0.0.8:3901")).toBeTruthy();
+  expect(screen.getByText("Up")).toBeTruthy();
+  expect(screen.queryByText("Cannot list nodes")).toBeNull();
+  expect(screen.queryByText("node_list_failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
+  expect(nodeErrorLines()).toEqual([]);
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe(
+    "abcd@127.0.0.1:3901",
+  );
+  expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
+  expect(callsFor(fetchMock, "/api/cluster/status")).toBe(statusSeen + 1);
+  expect(callsFor(fetchMock, "/api/cluster/health")).toBe(healthSeen);
+  expect(callsFor(fetchMock, "/api/cluster/statistics")).toBe(statisticsSeen);
+  expect(connectCalls(fetchMock)).toHaveLength(connectSeen);
+});
+
+test("shows Retry nodes without a code line when the code is missing or empty", async () => {
+  installFetch("admin", () => json({ message: "Cannot list nodes" }, 500));
+  renderApp();
+  const missing = await screen.findByText("Cannot list nodes");
+  expect(missing.tagName).toBe("P");
+  expect(missing.textContent).toBe("Cannot list nodes");
+  expect(nodeErrorLines()).toEqual(["Cannot list nodes"]);
+  expect(screen.getByRole("button", { name: "Retry nodes" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByLabelText("Loading nodes")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  cleanup();
+
+  installFetch("admin", () => json({ code: "", message: "Cannot list nodes" }, 500));
+  renderApp();
+  const empty = await screen.findByText("Cannot list nodes");
+  expect(empty.tagName).toBe("P");
+  expect(empty.textContent).toBe("Cannot list nodes");
+  expect(nodeErrorLines()).toEqual(["Cannot list nodes"]);
+  expect(empty.nextElementSibling).toBe(screen.getByRole("button", { name: "Retry nodes" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("keeps Nodes are unavailable, shows Retry nodes, and adds no code line", async () => {
+  let recover = false;
+  const fetchMock = installFetch("admin", () => {
+    if (!recover) {
+      return json({ nodes: [{ isUp: true, draining: false }] });
+    }
+    return json(recoveredNode);
+  });
+  renderApp();
+  const missing = await screen.findByText("Nodes are unavailable");
+  expect(missing.tagName).toBe("P");
+  expect(missing.textContent).toBe("Nodes are unavailable");
+  expect(missing.getAttribute("role")).toBeNull();
+  expect(nodeErrorLines()).toEqual(["Nodes are unavailable"]);
+  expect(missing.nextElementSibling).toBe(screen.getByRole("button", { name: "Retry nodes" }));
+  expect(screen.queryByText("Up")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "abcd@127.0.0.1:3901" },
+  });
+  const statusSeen = callsFor(fetchMock, "/api/cluster/status");
+  const healthSeen = callsFor(fetchMock, "/api/cluster/health");
+  const statisticsSeen = callsFor(fetchMock, "/api/cluster/statistics");
+  recover = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry nodes" }));
+  expect(await screen.findByText("node-back")).toBeTruthy();
+  expect(screen.queryByText("Nodes are unavailable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe(
+    "abcd@127.0.0.1:3901",
+  );
+  expect(connectCalls(fetchMock)).toHaveLength(0);
+  expect(callsFor(fetchMock, "/api/cluster/status")).toBe(statusSeen + 1);
+  expect(callsFor(fetchMock, "/api/cluster/health")).toBe(healthSeen);
+  expect(callsFor(fetchMock, "/api/cluster/statistics")).toBe(statisticsSeen);
+});
+
+test("keeps the address and connect result when the node list fails and recovers", async () => {
+  let statusHits = 0;
+  const fetchMock = installFetch(
+    "admin",
+    () => {
+      statusHits += 1;
+      if (statusHits === 1) {
+        return textResponse(listed);
+      }
+      if (statusHits === 2) {
+        return json({ code: "status_failed", message: "Status broke" }, 503);
+      }
+      return json(recoveredNode);
+    },
+    () => json([{ success: false, error: "kept line" }]),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Node address"), {
+    target: { value: "  abcd@127.0.0.1:3901  " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect node" }));
+  expect(await screen.findByText("kept line")).toBeTruthy();
+  const broke = await screen.findByText("Status broke");
+  expect(broke.tagName).toBe("P");
+  expect(broke.textContent).toBe("Status broke");
+  expect(nodeErrorLines()).toEqual(["Status broke", "status_failed"]);
+  expect(screen.getByText("status_failed").getAttribute("role")).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry nodes" })).toBeTruthy();
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe(
+    "  abcd@127.0.0.1:3901  ",
+  );
+  expect(screen.getByText("kept line")).toBeTruthy();
+  expect(screen.queryByText("Connected")).toBeNull();
+  expect(connectCalls(fetchMock)).toHaveLength(1);
+  const statusSeen = callsFor(fetchMock, "/api/cluster/status");
+  const healthSeen = callsFor(fetchMock, "/api/cluster/health");
+  const statisticsSeen = callsFor(fetchMock, "/api/cluster/statistics");
+  fireEvent.click(screen.getByRole("button", { name: "Retry nodes" }));
+  expect(await screen.findByText("node-back")).toBeTruthy();
+  expect(screen.getByText("kept line")).toBeTruthy();
+  expect(screen.queryByText("Status broke")).toBeNull();
+  expect(screen.queryByText("status_failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
+  expect(nodeErrorLines()).toEqual([]);
+  expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe(
+    "  abcd@127.0.0.1:3901  ",
+  );
+  expect(screen.getByText("beta")).toBeTruthy();
+  expect(connectCalls(fetchMock)).toHaveLength(1);
+  expect(callsFor(fetchMock, "/api/cluster/status")).toBe(statusSeen + 1);
+  expect(callsFor(fetchMock, "/api/cluster/health")).toBe(healthSeen);
+  expect(callsFor(fetchMock, "/api/cluster/statistics")).toBe(statisticsSeen);
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
 });

@@ -293,6 +293,13 @@ function writeNodeQuery(query: NodeQuery) {
   }
 }
 
+function shownCode(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.code === null || error.code.length === 0) {
+    return null;
+  }
+  return error.code;
+}
+
 function nodeMatches(node: NodeLine, filter: string): boolean {
   if (filter.length === 0) {
     return true;
@@ -356,6 +363,7 @@ export function ClusterNodes() {
     connect.mutate(trimmed);
   }
   const message = nodes.error instanceof Error ? nodes.error.message : UNAVAILABLE;
+  const code = shownCode(nodes.error);
   const connectFailure = connect.error instanceof Error ? connect.error.message : CONNECT_FAILED;
   return (
     <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
@@ -424,7 +432,21 @@ export function ClusterNodes() {
       {nodes.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading nodes" />
       ) : null}
-      {nodes.isError && !isGarageDown(nodes.error) ? <p>{message}</p> : null}
+      {nodes.isError && !isGarageDown(nodes.error) ? (
+        <>
+          <p>{message}</p>
+          {code ? <p>{code}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void nodes.refetch();
+            }}
+          >
+            Retry nodes
+          </button>
+        </>
+      ) : null}
       {nodes.isSuccess && nodes.data.length === 0 ? (
         <p>There are no nodes. Connect the first node.</p>
       ) : null}
