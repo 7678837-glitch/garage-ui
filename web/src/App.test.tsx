@@ -72,7 +72,7 @@ test("shows health status when the session is authenticated", async () => {
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
-  expect(screen.getByText("Garage version is not set")).toBeTruthy();
+  expect(screen.getAllByText("Garage version is not set")).toHaveLength(2);
   expect(setItem).not.toHaveBeenCalled();
 });
 
@@ -655,7 +655,7 @@ test("shows user management for an admin and locks that signed-in row", async ()
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
-  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
   await chooseSection("Users");
   const remove = (await screen.findByRole("button", { name: "Delete Ada" })) as HTMLButtonElement;
   expect(remove.disabled).toBe(true);
@@ -699,7 +699,7 @@ test("hides user management from a viewer", async () => {
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
-  expect(screen.getByText("Garage v2.4.1")).toBeTruthy();
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
@@ -969,6 +969,7 @@ test("loading #keys shows keys", async () => {
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
   expect(screen.getAllByText("Bea · viewer")).toHaveLength(1);
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(1);
 });
 
 test("an admin sees Users and a viewer opening #users sees overview", async () => {

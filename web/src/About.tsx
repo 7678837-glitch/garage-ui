@@ -97,7 +97,7 @@ async function loadCapabilities(): Promise<Capabilities> {
   return parseCapabilities(text);
 }
 
-function garageLine(version: string | null | undefined): string {
+export function garageLine(version: string | null | undefined): string {
   if (typeof version !== "string") {
     return "Garage version is not set";
   }

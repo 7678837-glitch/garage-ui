@@ -12,7 +12,7 @@ import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
-import { About } from "./About";
+import { About, garageLine } from "./About";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
@@ -325,6 +325,7 @@ function Home({ status }: { status: SessionStatus }) {
         <p>
           {status.username} · {status.role}
         </p>
+        <p>{garageLine(status.garage_version)}</p>
         {section === "overview" ? (
           <>
             <div className="grid max-w-sm gap-6">
