@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
 
@@ -11,8 +11,17 @@ afterEach(() => {
   document.cookie = "garage_csrf=; Max-Age=0";
 });
 
+function sectionsNav() {
+  return within(screen.getByRole("navigation", { name: "Sections" }));
+}
+
+async function findSectionLink(name: string) {
+  const nav = within(await screen.findByRole("navigation", { name: "Sections" }));
+  return nav.findByRole("link", { name });
+}
+
 async function chooseSection(name: string) {
-  fireEvent.click(await screen.findByRole("link", { name }));
+  fireEvent.click(await findSectionLink(name));
 }
 
 function renderApp() {
@@ -430,7 +439,7 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
   const leaving = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(leaving);
   expect(leaving.defaultPrevented).toBe(true);
-  fireEvent.click(screen.getByRole("link", { name: "Keys" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Keys" }));
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe("");
   expect(current.value).toBe("current secret");
@@ -460,7 +469,7 @@ test("an accepted leave does not ask again after the password form unmounts", as
   fireEvent.change(current, { target: { value: "current secret" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe("#overview");
@@ -468,12 +477,12 @@ test("an accepted leave does not ask again after the password form unmounts", as
     "current secret",
   );
 
-  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Buckets" }));
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(window.location.hash).toBe("#buckets");
   expect(screen.queryByLabelText("Current password")).toBeNull();
 
-  fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(window.location.hash).toBe("#overview");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
@@ -481,7 +490,7 @@ test("an accepted leave does not ask again after the password form unmounts", as
   );
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Buckets" }));
   expect(confirm).toHaveBeenCalledTimes(3);
   expect(window.location.hash).toBe("#buckets");
 });
@@ -494,13 +503,13 @@ test("a hashchange that arrives after returning to the dirty password form does 
   fireEvent.change(current, { target: { value: "current secret" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Buckets" }));
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe("#buckets");
   expect(screen.queryByLabelText("Current password")).toBeNull();
 
-  fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(window.location.hash).toBe("#overview");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
@@ -515,7 +524,7 @@ test("a hashchange that arrives after returning to the dirty password form does 
     "current secret",
   );
 
-  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Buckets" }));
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe("#buckets");
@@ -833,7 +842,7 @@ test("shows a bucket id to a viewer", async () => {
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
-  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   await chooseSection("Buckets");
   expect(await screen.findByText("bucket-bea")).toBeTruthy();
   expect(screen.getByText("west")).toBeTruthy();
@@ -975,7 +984,7 @@ test("loading #keys shows keys", async () => {
 test("an admin sees Users and a viewer opening #users sees overview", async () => {
   stubSignedIn("admin");
   renderApp();
-  expect(await screen.findByRole("link", { name: "Users" })).toBeTruthy();
+  expect(await findSectionLink("Users")).toBeTruthy();
   cleanup();
 
   window.location.hash = "#users";
@@ -983,7 +992,7 @@ test("an admin sees Users and a viewer opening #users sees overview", async () =
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
-  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
 });
 
@@ -993,7 +1002,7 @@ test("a non-admin #users/x stays on overview and keeps the hash", async () => {
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
-  expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
   expect(window.location.hash).toBe("#users/x");
@@ -1012,13 +1021,13 @@ test("an unknown hash shows overview", async () => {
 test("Menu toggles the links", async () => {
   stubSignedIn("admin");
   renderApp();
-  expect(await screen.findByRole("link", { name: "Overview" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Buckets" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Keys" })).toBeTruthy();
+  expect(await findSectionLink("Overview")).toBeTruthy();
+  expect(sectionsNav().getByRole("link", { name: "Buckets" })).toBeTruthy();
+  expect(sectionsNav().getByRole("link", { name: "Keys" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-  expect(screen.queryByRole("link", { name: "Overview" })).toBeNull();
-  expect(screen.queryByRole("link", { name: "Buckets" })).toBeNull();
-  expect(screen.queryByRole("link", { name: "Keys" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Overview" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Buckets" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Keys" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Menu" }));
   await chooseSection("Keys");
   expect(await screen.findByText("key-ada")).toBeTruthy();
@@ -1048,14 +1057,83 @@ test("a viewport below 640px hides section links until Menu opens them", async (
   stubSignedIn("admin");
   renderApp();
   expect(await screen.findByRole("button", { name: "Menu" })).toBeTruthy();
-  expect(screen.queryByRole("link", { name: "Buckets" })).toBeNull();
+  expect(sectionsNav().queryByRole("link", { name: "Buckets" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-  expect(screen.getByRole("link", { name: "Buckets" })).toBeTruthy();
+  expect(sectionsNav().getByRole("link", { name: "Buckets" })).toBeTruthy();
 
   cleanup();
   stubNavMedia(false);
   renderApp();
-  expect(await screen.findByRole("link", { name: "Buckets" })).toBeTruthy();
+  expect(await findSectionLink("Buckets")).toBeTruthy();
+});
+
+test("a signed-in page shows one breadcrumb built from the section labels", async () => {
+  stubSignedIn("admin");
+  renderApp();
+  const overview = await screen.findByRole("navigation", { name: "Breadcrumb" });
+  expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })).toHaveLength(1);
+  expect(within(overview).queryByRole("link")).toBeNull();
+  expect(
+    within(overview).getByText("Overview", { selector: "[aria-current='page']" }),
+  ).toBeTruthy();
+  const version = screen.getAllByText("Garage v2.4.1")[0];
+  expect(version.nextElementSibling).toBe(overview);
+  expect(
+    overview.compareDocumentPosition(screen.getByRole("heading", { name: "About" })),
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+  cleanup();
+  window.location.hash = "#keys";
+  renderApp();
+  const keys = await screen.findByRole("navigation", { name: "Breadcrumb" });
+  expect(within(keys).getByRole("link", { name: "Overview" })).toBeTruthy();
+  expect(within(keys).queryByRole("link", { name: "Keys" })).toBeNull();
+  expect(within(keys).getByText("Keys", { selector: "[aria-current='page']" })).toBeTruthy();
+  const keysHeading = await screen.findByRole("heading", { name: "Keys" });
+  expect(screen.getByText("Garage v2.4.1").nextElementSibling).toBe(keys);
+  expect(keys.nextElementSibling?.contains(keysHeading)).toBe(true);
+  fireEvent.click(within(keys).getByRole("link", { name: "Overview" }));
+  expect(window.location.hash).toBe("#overview");
+
+  cleanup();
+  window.location.hash = "#buckets";
+  renderApp();
+  const buckets = await screen.findByRole("navigation", { name: "Breadcrumb" });
+  expect(within(buckets).getByRole("link", { name: "Overview" })).toBeTruthy();
+  expect(within(buckets).queryByRole("link", { name: "Buckets" })).toBeNull();
+  expect(within(buckets).getByText("Buckets", { selector: "[aria-current='page']" })).toBeTruthy();
+
+  cleanup();
+  window.location.hash = "#buckets/bucket-ada/photos/2024/";
+  renderApp();
+  const objects = await screen.findByRole("navigation", { name: "Breadcrumb" });
+  expect(within(objects).getByRole("link", { name: "Overview" })).toBeTruthy();
+  expect(within(objects).getByRole("link", { name: "Buckets" })).toBeTruthy();
+  expect(within(objects).queryByRole("link", { name: "Objects" })).toBeNull();
+  expect(within(objects).getByText("Objects", { selector: "[aria-current='page']" })).toBeTruthy();
+  expect(objects.textContent).not.toContain("bucket-ada");
+  expect(objects.textContent).not.toContain("photos");
+  expect(objects.textContent).not.toContain("2024");
+  fireEvent.click(within(objects).getByRole("link", { name: "Buckets" }));
+  expect(window.location.hash).toBe("#buckets");
+
+  cleanup();
+  window.location.hash = "#users";
+  renderApp();
+  const users = await screen.findByRole("navigation", { name: "Breadcrumb" });
+  expect(within(users).getByRole("link", { name: "Overview" })).toBeTruthy();
+  expect(within(users).queryByRole("link", { name: "Users" })).toBeNull();
+  expect(within(users).getByText("Users", { selector: "[aria-current='page']" })).toBeTruthy();
+
+  cleanup();
+  window.location.hash = "#users";
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  const viewer = screen.getByRole("navigation", { name: "Breadcrumb" });
+  expect(within(viewer).queryByRole("link")).toBeNull();
+  expect(within(viewer).getByText("Overview", { selector: "[aria-current='page']" })).toBeTruthy();
+  expect(viewer.textContent).not.toContain("Users");
 });
 
 function methodOf(call: readonly unknown[]): string {

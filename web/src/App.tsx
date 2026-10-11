@@ -17,7 +17,13 @@ import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
 import { Keys } from "./Keys";
-import { Nav, sectionFromHash, useLocationHash, type SectionId } from "./Nav";
+import {
+  Nav,
+  bucketLocationFromHash,
+  sectionFromHash,
+  useLocationHash,
+  type SectionId,
+} from "./Nav";
 import { ThemeChooser } from "./theme";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
@@ -184,7 +190,75 @@ function useHashSection(role: string) {
     }
     assignHash(next);
   };
-  return { section: sectionFromHash(hash, role), select };
+  return { hash, section: sectionFromHash(hash, role), select };
+}
+
+const sectionLabel: Record<SectionId, string> = {
+  overview: "Overview",
+  buckets: "Buckets",
+  keys: "Keys",
+  users: "Users",
+};
+
+type Crumb =
+  | { kind: "link"; id: SectionId; label: string }
+  | { kind: "current"; label: string };
+
+function breadcrumbCrumbs(section: SectionId, hash: string): Crumb[] {
+  const objects = section === "buckets" && bucketLocationFromHash(hash).kind === "objects";
+  if (objects) {
+    return [
+      { kind: "link", id: "overview", label: sectionLabel.overview },
+      { kind: "link", id: "buckets", label: sectionLabel.buckets },
+      { kind: "current", label: "Objects" },
+    ];
+  }
+  if (section === "overview") {
+    return [{ kind: "current", label: sectionLabel.overview }];
+  }
+  return [
+    { kind: "link", id: "overview", label: sectionLabel.overview },
+    { kind: "current", label: sectionLabel[section] },
+  ];
+}
+
+function Breadcrumb({
+  section,
+  hash,
+  onSelect,
+}: {
+  section: SectionId;
+  hash: string;
+  onSelect: (id: SectionId) => void;
+}) {
+  const crumbs = breadcrumbCrumbs(section, hash);
+  return (
+    <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2">
+      {crumbs.map((crumb, index) => (
+        <span
+          key={crumb.kind === "link" ? crumb.id : "current"}
+          className="flex items-center gap-2"
+        >
+          {index > 0 ? <span aria-hidden="true">/</span> : null}
+          {crumb.kind === "link" ? (
+            <a
+              href={`#${crumb.id}`}
+              className="underline"
+              onClick={(event) => {
+                // href 只提供链接角色。点击必须走 select，才能沿用未保存离开确认。
+                event.preventDefault();
+                onSelect(crumb.id);
+              }}
+            >
+              {crumb.label}
+            </a>
+          ) : (
+            <span aria-current="page">{crumb.label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
 }
 
 function queryIsGarageDown(query: Query): boolean {
@@ -266,7 +340,7 @@ function Home({ status }: { status: SessionStatus }) {
     queryKey: ["healthz"],
     queryFn: () => api<Health>("/healthz"),
   });
-  const { section, select } = useHashSection(status.role ?? "");
+  const { hash, section, select } = useHashSection(status.role ?? "");
   // 窄屏只决定初次是否收起。挂上 resize 监听会在用户点开 Menu 之后又把它关掉。
   const [menuOpen, setMenuOpen] = useState(() => {
     if (typeof window.matchMedia !== "function") {
@@ -326,6 +400,7 @@ function Home({ status }: { status: SessionStatus }) {
           {status.username} · {status.role}
         </p>
         <p>{garageLine(status.garage_version)}</p>
+        <Breadcrumb section={section} hash={hash} onSelect={select} />
         {section === "overview" ? (
           <>
             <div className="grid max-w-sm gap-6">
