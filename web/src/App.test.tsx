@@ -284,6 +284,40 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
   window.onbeforeunload = null;
 });
 
+test("an accepted leave does not ask again after the password form unmounts", async () => {
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  stubSignedIn("admin");
+  renderApp();
+  const current = (await screen.findByLabelText("Current password")) as HTMLInputElement;
+  fireEvent.change(current, { target: { value: "current secret" } });
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  expect(window.location.hash).toBe("#overview");
+  expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
+    "current secret",
+  );
+
+  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(window.location.hash).toBe("#buckets");
+  expect(screen.queryByLabelText("Current password")).toBeNull();
+
+  fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(window.location.hash).toBe("#overview");
+  expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
+    "current secret",
+  );
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("link", { name: "Buckets" }));
+  expect(confirm).toHaveBeenCalledTimes(3);
+  expect(window.location.hash).toBe("#buckets");
+});
+
 test("shows why a short new password did not submit", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
