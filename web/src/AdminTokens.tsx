@@ -135,7 +135,7 @@ function sourceLabel(token: AdminToken): string {
 function TokenTable({ rows }: { rows: AdminToken[] }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-left text-sm">
+      <table className="w-full min-w-max border-collapse text-left text-sm">
         <thead>
           <tr>
             <th className="py-2 pr-3 font-medium" scope="col">
