@@ -300,7 +300,13 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           </button>
         </>
       ) : null}
-      {view.empty ? <p>This bucket has no keys.</p> : null}
+      {view.empty ? (
+        <p>
+          {canManage
+            ? "This bucket has no keys. Grant the first key."
+            : "This bucket has no keys."}
+        </p>
+      ) : null}
       {keys.data && keys.data.length > 0 ? (
         <ul className="grid gap-2">
           {keys.data.map((key, index) => (
