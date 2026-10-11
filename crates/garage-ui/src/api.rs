@@ -94,7 +94,9 @@ pub fn routes(app: App) -> Router<App> {
         )
         .route(
             "/api/admin-tokens/{id}",
-            patch(update_admin_token).delete(delete_admin_token),
+            get(get_admin_token)
+                .patch(update_admin_token)
+                .delete(delete_admin_token),
         )
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
@@ -2122,14 +2124,60 @@ fn without_admin_token_secret(bytes: &[u8]) -> Result<Vec<u8>, ApiError> {
     serde_json::to_vec(&value).map_err(|_| ApiError::internal())
 }
 
+fn admin_token_info(bytes: &[u8]) -> Result<AdminTokenListItem, ApiError> {
+    let mut item: AdminTokenListItem =
+        serde_json::from_slice(bytes).map_err(|_| ApiError::internal())?;
+    mark_admin_token_from_config(&mut item);
+    Ok(item)
+}
+
 fn admin_token_list(bytes: &[u8]) -> Result<Vec<AdminTokenListItem>, ApiError> {
     let mut items: Vec<AdminTokenListItem> =
         serde_json::from_slice(bytes).map_err(|_| ApiError::internal())?;
     for item in &mut items {
-        // 配置文件里的 admin_token 和 metrics_token 没有 id。null 表示之后不能改。
-        item.from_config = item.id.is_none();
+        mark_admin_token_from_config(item);
     }
     Ok(items)
+}
+
+fn mark_admin_token_from_config(item: &mut AdminTokenListItem) {
+    // 配置文件里的 admin_token 和 metrics_token 没有 id。null 表示之后不能改。
+    item.from_config = item.id.is_none();
+}
+
+async fn get_admin_token(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let query = format!("id={}", percent_encode(&id));
+    let response = proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetAdminTokenInfo",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(response);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let item = admin_token_info(&bytes)?;
+    let mut out = Json(item).into_response();
+    *out.status_mut() = status;
+    out.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    Ok(out)
 }
 
 async fn list_admin_tokens(
@@ -7718,6 +7766,101 @@ mod tests {
         let sink = app.log_sink.lock().expect("logs").join("\n");
         assert!(!sink.contains(secret));
         assert!(!sink.contains("secretToken"));
+    }
+
+    #[tokio::test]
+    async fn admin_token_get_drops_the_secret() {
+        let token_id = "fixture-get-1";
+        let secret = "fixture-get-secret";
+        let path = format!("/api/admin-tokens/{token_id}?search=nope");
+        let upstream = json!({
+            "secretToken": secret,
+            "id": token_id,
+            "name": "reader",
+            "created": "2026-03-01T00:00:00Z",
+            "expiration": null,
+            "expired": false,
+            "scope": ["GetClusterStatus"],
+            "neverExpires": false
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(upstream.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap().len();
+        let response = exchange(&app, request("GET", &path, None, Some(&admin))).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({
+                "id": token_id,
+                "name": "reader",
+                "created": "2026-03-01T00:00:00Z",
+                "expiration": null,
+                "expired": false,
+                "scope": ["GetClusterStatus"],
+                "fromConfig": false
+            })
+        );
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        assert!(!response.body.contains(secret));
+        assert!(!response.body.contains("secretToken"));
+        let gets: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("GET /v2/GetAdminTokenInfo"))
+            .collect();
+        assert_eq!(
+            gets.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            gets[0].line.contains(&format!("id={token_id}")),
+            "{}",
+            gets[0].line
+        );
+        assert!(!gets[0].line.contains("search"), "{}", gets[0].line);
+        assert_eq!(
+            crate::db::recent_audit(&app.db).await.unwrap().len(),
+            before
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+        assert!(!sink.contains("secretToken"));
+
+        let blocked = Upstream::start(UpstreamReply::Ok(upstream.to_string())).await;
+        let blocked_dir = crate::util::temp_dir();
+        let blocked_app = app_for(&blocked_dir, &blocked.url).await;
+        let (blocked_admin, _) = login(&blocked_app).await;
+        let viewer = viewer_session(&blocked_app, &blocked_admin).await;
+        let denied = exchange(&blocked_app, request("GET", &path, None, Some(&viewer))).await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let denied_rows: Vec<_> = crate::db::recent_audit(&blocked_app.db)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.result == "denied" || row.reason == "forbidden")
+            .collect();
+        assert_eq!(denied_rows.len(), 1);
+        assert_eq!(denied_rows[0].result, "denied");
+        assert_eq!(denied_rows[0].reason, "forbidden");
+        assert!(
+            blocked
+                .calls()
+                .iter()
+                .all(|call| !call.line.contains("GetAdminTokenInfo"))
+        );
+        let blocked_sink = blocked_app.log_sink.lock().expect("logs").join("\n");
+        assert!(!blocked_sink.contains(secret));
+        assert!(!blocked_sink.contains("secretToken"));
     }
 
     fn with_confirm(mut call: Request<Body>) -> Request<Body> {
