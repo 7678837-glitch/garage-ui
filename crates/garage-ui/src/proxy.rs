@@ -142,7 +142,26 @@ pub async fn dispatch(
         }
     }
     let filtered = forwarded_query(name, query);
-    let response = send(app, name, method, &filtered, body).await?;
+    let response = match send(app, name, method, &filtered, body).await {
+        Ok(response) => response,
+        Err(error) => {
+            if endpoint.writes {
+                audit(
+                    app,
+                    user,
+                    ip,
+                    "error",
+                    error.code(),
+                    method.as_str(),
+                    path,
+                    name,
+                    i64::from(error.status_code().as_u16()),
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
     if response.status().is_success()
         && let Some(mutation) = credential_mutation(name, &filtered, body)
     {
