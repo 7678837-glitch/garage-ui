@@ -578,7 +578,7 @@ test("asks to select the paths when the page is not a secure context", async () 
   expect(screen.queryByText("Copied")).toBeNull();
 });
 
-test("shows Delete only when exactly one object is selected", async () => {
+test("shows Delete when one or more objects are selected", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -597,7 +597,7 @@ test("shows Delete only when exactly one object is selected", async () => {
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
@@ -636,7 +636,7 @@ test("shows Preview and Download only for one selected object", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
@@ -714,6 +714,109 @@ test("keeps the object and shows the error when delete is forbidden", async () =
   expect(dialog.textContent).toContain("Not allowed to delete this object");
   expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
   expect(box("Select a.txt").checked).toBe(true);
+});
+
+test("requires the selected count before one batch delete", async () => {
+  const rows = [
+    objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+    objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+  ];
+  const calls: { url: string; method: string; body: string | null }[] = [];
+  let posted = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({
+        url: String(input),
+        method,
+        body: typeof init?.body === "string" ? init.body : null,
+      });
+      if (method === "POST") {
+        posted = true;
+        return json({ deleted: ["a.txt", "b.txt"], failed: [] });
+      }
+      if (posted) {
+        return json(
+          page([
+            objectRow("a.txt", 9, "2026-10-11T00:00:00Z"),
+            objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+          ]),
+        );
+      }
+      return json(page(rows));
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("Deletes 2 objects, 3 bytes.");
+  expect(dialog.textContent).toContain("This permanently deletes 2 objects.");
+  const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "3" } });
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(calls.some((call) => call.method !== "GET")).toBe(false);
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "2" } });
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("9")).toBeTruthy();
+  });
+  expect(box("Select a.txt").checked).toBe(false);
+  expect(box("Select b.txt").checked).toBe(false);
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
+  expect(calls.filter((call) => call.method === "POST")).toEqual([
+    {
+      url: "/api/buckets/bkt-1/objects:delete",
+      method: "POST",
+      body: JSON.stringify({ keys: ["a.txt", "b.txt"] }),
+    },
+  ]);
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+});
+
+test("keeps the batch dialog open when a key fails", async () => {
+  const calls: { url: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url: String(input), method });
+      if (method === "POST") {
+        return json({
+          deleted: ["a.txt"],
+          failed: [{ key: "b.txt", message: "denied by policy" }],
+        });
+      }
+      return json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "2" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByText(/b\.txt: denied by policy/)).toBeTruthy();
+  const open = screen.getByRole("dialog");
+  expect(open.textContent).toContain("This permanently deletes 2 objects.");
+  expect(open.textContent).toContain("b.txt: denied by policy");
+  expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select b.txt").checked).toBe(true);
 });
 
 test("shows Delete folder on a prefix row and not on an object row", async () => {

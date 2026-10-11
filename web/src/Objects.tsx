@@ -65,7 +65,15 @@ type Failure = {
   code: string | null;
 };
 
-type PendingDelete = { kind: "object"; name: string } | { kind: "prefix"; name: string };
+type PendingDelete =
+  | { kind: "object"; name: string }
+  | { kind: "prefix"; name: string }
+  | { kind: "batch"; keys: string[]; totalSize: number };
+
+type DeleteFailure = {
+  key: string;
+  message: string;
+};
 
 const PAGE_LIMIT = "100";
 const UNAVAILABLE = "Objects are unavailable";
@@ -188,6 +196,21 @@ function parseMeta(value: unknown): ObjectMeta {
   };
 }
 
+function parseBatchDelete(value: unknown): DeleteFailure[] {
+  if (!isRecord(value) || !Array.isArray(value.failed)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return value.failed.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(UNAVAILABLE);
+    }
+    return {
+      key: requiredString(item, "key"),
+      message: requiredString(item, "message"),
+    };
+  });
+}
+
 async function readJson(path: string): Promise<unknown> {
   try {
     return await api<unknown>(path);
@@ -288,6 +311,23 @@ function objectKeys(entries: readonly Entry[]): string[] {
     }
   }
   return keys;
+}
+
+function batchSelection(
+  entries: readonly Entry[],
+  picked: readonly string[],
+): { keys: string[]; totalSize: number } {
+  const chosen = new Set(picked);
+  const keys: string[] = [];
+  let totalSize = 0;
+  for (const entry of entries) {
+    if (entry.kind !== "object" || !chosen.has(entry.key)) {
+      continue;
+    }
+    keys.push(entry.key);
+    totalSize += entry.size;
+  }
+  return { keys, totalSize };
 }
 
 // 批量选择只保留当前可见对象键。换页后上一页的键不再留在操作条上。
@@ -418,6 +458,24 @@ export function Objects({
       await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
     },
   });
+  const removeMany = useMutation({
+    mutationFn: async (keys: readonly string[]) => {
+      const body = await api<unknown>(
+        `/api/buckets/${encodeURIComponent(bucketId)}/objects:delete`,
+        { method: "POST", body: JSON.stringify({ keys }) },
+      );
+      const failed = parseBatchDelete(body);
+      if (failed.length > 0) {
+        throw new Error(failed.map((item) => `${item.key}: ${item.message}`).join(" "));
+      }
+    },
+    onSuccess: async () => {
+      setPendingDelete(null);
+      setCopyNote(null);
+      setBrowse((current) => ({ ...current, picked: [], anchor: null }));
+      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+    },
+  });
   if (!searching && list.data && (kept === null || kept.page !== list.data)) {
     setKept({ prefix, page: list.data });
   }
@@ -429,10 +487,9 @@ export function Objects({
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
-  // 批量删除是高风险。选择条只在恰好一个可见对象键时给出中风险删除。
-  const deleteTarget = singleKey;
   const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
   const prefixError = removePrefix.error instanceof Error ? removePrefix.error.message : null;
+  const batchError = removeMany.error instanceof Error ? removeMany.error.message : null;
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
@@ -603,13 +660,20 @@ export function Objects({
           >
             Copy path
           </button>
-          {canWrite && deleteTarget !== null ? (
+          {canWrite ? (
             <button
               className="border border-neutral-900 px-3 py-1 text-left"
               type="button"
               onClick={() => {
-                removeObject.reset();
-                setPendingDelete({ kind: "object", name: deleteTarget });
+                // 一个键仍走 DELETE。两个及以上才 POST objects:delete，单击不能进批量接口。
+                if (shownPicked.length === 1) {
+                  removeObject.reset();
+                  setPendingDelete({ kind: "object", name: shownPicked[0] });
+                  return;
+                }
+                const batch = batchSelection(visible, shownPicked);
+                removeMany.reset();
+                setPendingDelete({ kind: "batch", keys: batch.keys, totalSize: batch.totalSize });
               }}
             >
               Delete
@@ -768,6 +832,24 @@ export function Objects({
               return;
             }
             removeObject.mutate(pendingDelete.name);
+          }}
+        />
+      ) : null}
+      {pendingDelete?.kind === "batch" ? (
+        <ConfirmDialog
+          action="batch-delete"
+          name={String(pendingDelete.keys.length)}
+          scope={`Deletes ${pendingDelete.keys.length} objects, ${pendingDelete.totalSize} bytes.`}
+          consequence={`This permanently deletes ${pendingDelete.keys.length} objects.${batchError ? ` ${batchError}` : ""}`}
+          onCancel={() => {
+            setPendingDelete(null);
+            removeMany.reset();
+          }}
+          onConfirm={() => {
+            if (removeMany.isPending) {
+              return;
+            }
+            removeMany.mutate(pendingDelete.keys);
           }}
         />
       ) : null}
