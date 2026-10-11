@@ -92,7 +92,10 @@ pub fn routes(app: App) -> Router<App> {
             "/api/admin-tokens",
             get(list_admin_tokens).post(create_admin_token),
         )
-        .route("/api/admin-tokens/{id}", patch(update_admin_token))
+        .route(
+            "/api/admin-tokens/{id}",
+            patch(update_admin_token).delete(delete_admin_token),
+        )
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route("/api/objects/thumbnail", get(thumbnail_object))
@@ -2034,6 +2037,63 @@ async fn finish_updated_admin_token(
         "success",
         "ok",
         "PATCH",
+        &format!("/api/admin-tokens/{id}"),
+        id,
+        i64::from(status.as_u16()),
+    )
+    .await?;
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    *out.headers_mut() = headers;
+    Ok(out)
+}
+
+async fn delete_admin_token(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let query = format!("id={}", percent_encode(&id));
+    let response = post_garage(
+        &app,
+        &current,
+        &headers,
+        "DeleteAdminToken",
+        Some(&query),
+        &[],
+    )
+    .await?;
+    finish_deleted_admin_token(&app, &current, &id, response).await
+}
+
+async fn finish_deleted_admin_token(
+    app: &App,
+    current: &Current,
+    id: &str,
+    response: Response,
+) -> Result<Response, ApiError> {
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(response);
+    }
+    let mut headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    // 删除成功时上游仍可能带回 secret。这次之后的响应里不能再有它。
+    let bytes = without_admin_token_secret(&bytes)?;
+    record(
+        app,
+        &current.user.username,
+        &current.ip,
+        "success",
+        "ok",
+        "DELETE",
         &format!("/api/admin-tokens/{id}"),
         id,
         i64::from(status.as_u16()),
@@ -7971,6 +8031,118 @@ mod tests {
                 .calls()
                 .iter()
                 .all(|call| !call.line.contains("UpdateAdminToken"))
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_token_delete_drops_the_secret() {
+        let token_id = "tok-del-1";
+        let secret = "del-fixture-secret";
+        let path = format!("/api/admin-tokens/{token_id}");
+        let upstream = json!({
+            "secretToken": secret,
+            "id": token_id,
+            "name": "gone",
+            "created": "2026-03-01T00:00:00Z",
+            "expiration": null,
+            "expired": false,
+            "scope": ["GetClusterStatus"]
+        });
+        let upstream_body = upstream.to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(upstream_body.clone())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(&app, request("DELETE", &path, None, Some(&admin))).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let mut expected = upstream;
+        expected.as_object_mut().unwrap().remove("secretToken");
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            expected
+        );
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        assert!(!response.body.contains(secret));
+        assert!(!response.body.contains("secretToken"));
+        let deletes: Vec<_> = mock
+            .calls()
+            .into_iter()
+            .filter(|call| call.line.contains("POST /v2/DeleteAdminToken?"))
+            .collect();
+        assert_eq!(
+            deletes.len(),
+            1,
+            "{:?}",
+            mock.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            deletes[0].line.contains(&format!("id={token_id}")),
+            "{}",
+            deletes[0].line
+        );
+        assert!(deletes[0].body.is_empty(), "{}", deletes[0].body);
+        assert!(!deletes[0].body.contains(secret));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        let listed = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{} {} {} {} {} {} {} {}",
+                    row.username,
+                    row.ip,
+                    row.result,
+                    row.reason,
+                    row.method,
+                    row.path,
+                    row.target,
+                    row.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!listed.contains(secret), "{listed}");
+        assert!(rows.iter().any(|row| {
+            row.result == "success"
+                && row.reason == "ok"
+                && row.method == "DELETE"
+                && row.path == path
+                && row.target == token_id
+        }));
+        assert!(
+            rows.iter()
+                .any(|row| row.result == "success" && row.target == "DeleteAdminToken")
+        );
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(secret));
+        assert!(!sink.contains("secretToken"));
+
+        let blocked = Upstream::start(UpstreamReply::Ok(upstream_body)).await;
+        let blocked_dir = crate::util::temp_dir();
+        let blocked_app = app_for(&blocked_dir, &blocked.url).await;
+        let (blocked_admin, _) = login(&blocked_app).await;
+        let viewer = viewer_session(&blocked_app, &blocked_admin).await;
+        let denied = exchange(&blocked_app, request("DELETE", &path, None, Some(&viewer))).await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let denied_rows: Vec<_> = crate::db::recent_audit(&blocked_app.db)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.result == "denied" || row.reason == "forbidden")
+            .collect();
+        assert_eq!(denied_rows.len(), 1);
+        assert_eq!(denied_rows[0].result, "denied");
+        assert_eq!(denied_rows[0].reason, "forbidden");
+        assert!(
+            blocked
+                .calls()
+                .iter()
+                .all(|call| !call.line.contains("DeleteAdminToken"))
         );
     }
 }
