@@ -540,6 +540,27 @@ test("shows the API code and requests the user list again from Retry", async () 
   expect(calls).toBe(2);
 });
 
+test("shows Ada before Zed when the API returns Zed first", async () => {
+  installApi([
+    {
+      id: 9,
+      username: "Zed",
+      role: "viewer",
+      can_download: false,
+      can_share: false,
+      disabled: false,
+    },
+    ada,
+  ]);
+  renderUsers();
+  await screen.findByRole("cell", { name: "Zed" });
+  const names = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+  expect(names).toEqual(["Ada", "Zed"]);
+});
+
 test("filters loaded users from the query string and keeps that choice in the address", async () => {
   window.history.replaceState(null, "", "/?users=bea&keep=1&usersSort=keep-me#users/stay");
   const calls = installApi([ada, bea]);
