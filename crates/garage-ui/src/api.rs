@@ -259,7 +259,21 @@ async fn setup(
         ));
     }
     validate_username(&body.username)?;
-    validate_password(&body.password)?;
+    if let Err(error) = validate_password(&body.password) {
+        record(
+            &app,
+            &body.username,
+            &ip.0,
+            "error",
+            "password_invalid",
+            "POST",
+            "/api/setup",
+            "",
+            400,
+        )
+        .await?;
+        return Err(error);
+    }
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
     let user_id = db::insert_user(&app.db, &body.username, &hash, "admin", false, false)
         .await
@@ -6830,6 +6844,39 @@ mod tests {
             row.target,
             row.status
         )
+    }
+
+    #[tokio::test]
+    async fn setup_invalid_password_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let submitted = "badpass";
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": submitted }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{}", response.body);
+        assert_eq!(code_of(&response.body), "password_invalid");
+        assert!(!response.body.contains(submitted));
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "password_invalid");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/setup");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains(submitted));
+        let sink = app.log_sink.lock().expect("logs").join("\n");
+        assert!(!sink.contains(submitted));
     }
 
     #[tokio::test]
