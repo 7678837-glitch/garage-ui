@@ -111,7 +111,7 @@ impl ApiError {
         self.status
     }
 
-    // 上游正文可能含对象内容。审计原因只用固定码，不抄响应字节。
+    // Upstream bodies can contain object bytes. The audit reason uses the fixed code and does not copy those bytes.
     pub(crate) fn code(&self) -> &'static str {
         match &self.kind {
             Kind::Local { code, .. } => *code,
@@ -126,7 +126,7 @@ struct Body<'a> {
     message: &'a str,
 }
 
-// 规格只要求截断，没有给长度。1024 是约定的字节上限，先切再按 lossy UTF-8 解释。
+// The spec requires truncation and does not name a length. 1024 bytes is the cap. Cut first, then read the slice as lossy UTF-8.
 const UPSTREAM_MESSAGE_BYTES: usize = 1024;
 
 #[derive(Serialize)]
@@ -179,7 +179,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-// 只给缩略图的 HeadObject 失败用。测试里第二次写状态或 body 直接 panic。
+// Thumbnail HeadObject failures only. A second status or body write panics in tests.
 pub(crate) struct SingleWrite {
     status: Option<StatusCode>,
     headers: Option<HeaderMap>,
@@ -270,5 +270,13 @@ mod tests {
             bytes.as_ref(),
             br#"{"code":"forbidden","message":"Not allowed"}"#
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "response body written twice")]
+    fn response_write_once_panics_on_a_second_body_write() {
+        let mut out = SingleWrite::new();
+        out.write_body(br#"{"code":"not_found","message":"Not found"}"#.to_vec());
+        out.write_body(b"{}".to_vec());
     }
 }
