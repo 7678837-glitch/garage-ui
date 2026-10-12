@@ -33,6 +33,18 @@ function readTokenQuery(): TokenQuery {
   };
 }
 
+function readTokenOffset(): number {
+  const raw = new URLSearchParams(window.location.search).get("tokensOffset");
+  if (raw === null || !/^[0-9]+$/.test(raw)) {
+    return 0;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    return 0;
+  }
+  return value;
+}
+
 function replaceListQuery(params: URLSearchParams) {
   const search = params.toString();
   const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
@@ -53,6 +65,16 @@ function writeTokenQuery(query: TokenQuery) {
     params.set("tokensSort", "created");
   } else {
     params.delete("tokensSort");
+  }
+  replaceListQuery(params);
+}
+
+function writeTokenOffset(offset: number) {
+  const params = new URLSearchParams(window.location.search);
+  if (offset > 0) {
+    params.set("tokensOffset", String(offset));
+  } else {
+    params.delete("tokensOffset");
   }
   replaceListQuery(params);
 }
@@ -113,12 +135,24 @@ function adminTokenFrom(value: unknown): AdminToken {
   };
 }
 
-async function loadAdminTokens(): Promise<AdminToken[]> {
-  const body = await api<unknown>("/api/admin-tokens");
-  if (!Array.isArray(body)) {
+type TokenPage = {
+  items: AdminToken[];
+  hasMore: boolean;
+};
+
+async function loadAdminTokens(offset: number): Promise<TokenPage> {
+  const body = await api<unknown>(`/api/admin-tokens?offset=${offset}&limit=100`);
+  if (typeof body !== "object" || body === null) {
     throw new Error("Admin tokens are unavailable");
   }
-  return body.map(adminTokenFrom);
+  const page = body as Record<string, unknown>;
+  if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
+    throw new Error("Admin tokens are unavailable");
+  }
+  return {
+    items: page.items.map(adminTokenFrom),
+    hasMore: page.hasMore,
+  };
 }
 
 async function loadCurrentAdminToken(): Promise<AdminToken> {
@@ -337,7 +371,7 @@ function CreateTokenForm() {
       setDraft(EMPTY_DRAFT);
       // secret 只留在对话框。列表刷新走 loadAdminTokens，不把创建响应写进查询缓存。
       setReveal(secret);
-      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+      await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
     },
   });
   const error = create.error instanceof Error ? create.error.message : null;
@@ -461,7 +495,7 @@ function EditTokenForm({
       });
     },
     onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+      await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
       onClose();
     },
   });
@@ -569,7 +603,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
       });
     },
     onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["admin-tokens"], exact: true });
+      await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
       setRemoving(null);
     },
   });
@@ -699,9 +733,10 @@ function CurrentToken({ token }: { token: AdminToken }) {
 }
 
 export function AdminTokens() {
+  const [offset, setOffset] = useState(readTokenOffset);
   const list = useQuery({
-    queryKey: ["admin-tokens"],
-    queryFn: loadAdminTokens,
+    queryKey: ["admin-tokens", "list", offset],
+    queryFn: () => loadAdminTokens(offset),
   });
   const current = useQuery({
     queryKey: ["admin-tokens", "current"],
@@ -709,12 +744,15 @@ export function AdminTokens() {
   });
   const [query, setQuery] = useState(readTokenQuery);
   useEffect(() => {
-    const sync = () => setQuery(readTokenQuery());
+    const sync = () => {
+      setQuery(readTokenQuery());
+      setOffset(readTokenOffset());
+    };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
   const shown = orderedTokens(
-    (list.data ?? []).filter((token) => tokenMatches(token, query.filter)),
+    (list.data?.items ?? []).filter((token) => tokenMatches(token, query.filter)),
     query.sort,
   );
   const failures = [
@@ -762,6 +800,32 @@ export function AdminTokens() {
           </select>
         </label>
         <p>Default sort is by name.</p>
+        <div className="flex gap-2">
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={offset === 0}
+            onClick={() => {
+              const next = Math.max(0, offset - 100);
+              setOffset(next);
+              writeTokenOffset(next);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={list.data?.hasMore !== true}
+            onClick={() => {
+              const next = offset + 100;
+              setOffset(next);
+              writeTokenOffset(next);
+            }}
+          >
+            Next
+          </button>
+        </div>
       </div>
       {list.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading admin tokens" />

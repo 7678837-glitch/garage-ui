@@ -60,6 +60,18 @@ function readUserSort(): UserSort {
   return userSortFrom(new URLSearchParams(window.location.search).get("usersSort"));
 }
 
+function readUserOffset(): number {
+  const raw = new URLSearchParams(window.location.search).get("usersOffset");
+  if (raw === null || !/^[0-9]+$/.test(raw)) {
+    return 0;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    return 0;
+  }
+  return value;
+}
+
 function replaceAddress(params: URLSearchParams) {
   const search = params.toString();
   const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
@@ -85,6 +97,16 @@ function writeUserSort(sort: UserSort) {
     params.set("usersSort", "created");
   } else {
     params.delete("usersSort");
+  }
+  replaceAddress(params);
+}
+
+function writeUserOffset(offset: number) {
+  const params = new URLSearchParams(window.location.search);
+  if (offset > 0) {
+    params.set("usersOffset", String(offset));
+  } else {
+    params.delete("usersOffset");
   }
   replaceAddress(params);
 }
@@ -165,11 +187,23 @@ function parseAccount(value: unknown): Account {
   };
 }
 
-function parseAccounts(body: unknown): Account[] {
-  if (!Array.isArray(body)) {
+type UserPage = {
+  items: Account[];
+  hasMore: boolean;
+};
+
+function parseUserPage(body: unknown): UserPage {
+  if (typeof body !== "object" || body === null) {
     throw new Error("Users are unavailable");
   }
-  return body.map(parseAccount);
+  const page = body as Record<string, unknown>;
+  if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
+    throw new Error("Users are unavailable");
+  }
+  return {
+    items: page.items.map(parseAccount),
+    hasMore: page.hasMore,
+  };
 }
 
 type UserListFailure = {
@@ -219,15 +253,17 @@ function userListFailure(error: unknown): UserListFailure {
   return { message: "Users are unavailable", code: null };
 }
 
-async function loadUsers(): Promise<Account[]> {
-  const response = await fetch("/api/users", { credentials: "include" });
+async function loadUsers(offset: number): Promise<UserPage> {
+  const response = await fetch(`/api/users?offset=${offset}&limit=100`, {
+    credentials: "include",
+  });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
     noteUnauthenticated(response.status, failure.code);
     throw new UserListError(failure);
   }
-  return parseAccounts(text ? (JSON.parse(text) as unknown) : undefined);
+  return parseUserPage(text ? (JSON.parse(text) as unknown) : undefined);
 }
 
 function AccountRow({ account, self }: { account: Account; self: boolean }) {
@@ -514,17 +550,19 @@ function CreateAccount() {
 }
 
 export function Users({ selfUsername }: { selfUsername: string }) {
+  const [offset, setOffset] = useState(readUserOffset);
   const users = useQuery({
-    queryKey: ["users"],
-    queryFn: loadUsers,
+    queryKey: ["users", offset],
+    queryFn: () => loadUsers(offset),
   });
-  const loaded = users.data ?? [];
+  const loaded = users.data?.items ?? [];
   const [filter, setFilter] = useState(readUserFilter);
   const [sort, setSort] = useState(readUserSort);
   useEffect(() => {
     const sync = () => {
       setFilter(readUserFilter());
       setSort(readUserSort());
+      setOffset(readUserOffset());
     };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
@@ -569,6 +607,32 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           </select>
         </label>
         <p>Default order is Username.</p>
+        <div className="flex gap-2">
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={offset === 0}
+            onClick={() => {
+              const next = Math.max(0, offset - 100);
+              setOffset(next);
+              writeUserOffset(next);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={users.data?.hasMore !== true}
+            onClick={() => {
+              const next = offset + 100;
+              setOffset(next);
+              writeUserOffset(next);
+            }}
+          >
+            Next
+          </button>
+        </div>
       </div>
       {view.busy ? <div className="h-16 border border-line" aria-label="Loading users" /> : null}
       {view.refreshing ? <p>Refreshing users</p> : null}

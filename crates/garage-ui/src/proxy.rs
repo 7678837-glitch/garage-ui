@@ -758,7 +758,8 @@ mod lists {
             ids.push(id);
         }
         let items = fetch_details(app, catalog.detail, ids).await?;
-        let more = items.len() == limit;
+        // 回退路径手里是完整 id 列表。满页而且正好到末尾时，后面没有下一行。
+        let more = start.saturating_add(items.len()) < all.len();
         Ok(Page { items, more })
     }
 
@@ -842,6 +843,14 @@ mod lists {
             .get("id")
             .and_then(|id| id.as_str())
             .map(str::to_string)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[tokio::test]
+        async fn fallback_path_reaches_the_last_bucket_in_twelve_list_calls() {
+            super::super::tests::fallback_path_reaches_the_last_bucket_in_twelve_list_calls().await;
+        }
     }
 }
 
@@ -1614,6 +1623,61 @@ mod tests {
         assert!(mock.auths().iter().all(|kind| *kind == AuthKind::Admin));
     }
 
+    pub(crate) async fn fallback_path_reaches_the_last_bucket_in_twelve_list_calls() {
+        let mock = Mock::start(MockOpts {
+            buckets: 12000,
+            keys: 0,
+            bucket_info: 404,
+            key_info: 404,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        let first = list_buckets(&app, 0, 1000).await.unwrap();
+        assert_eq!(first.items.len(), 1000);
+        assert!(first.more);
+        assert_eq!(first.items[0]["id"], "00000");
+        assert_eq!(first.items[0]["via"], "detail");
+        let marked = mock.lines().len();
+        let last = list_buckets(&app, 11000, 1000).await.unwrap();
+        assert_eq!(last.items.len(), 1000);
+        assert_eq!(last.items[0]["id"], "11000");
+        assert_eq!(last.items[999]["id"], "11999");
+        assert_eq!(last.items[0]["via"], "detail");
+        assert!(!last.more);
+        let detail: Vec<_> = mock.lines()[marked..]
+            .iter()
+            .filter(|line| line.contains("GetBucketInfo"))
+            .cloned()
+            .collect();
+        assert_eq!(detail.len(), 1000);
+        for line in &detail {
+            let id = line
+                .split("id=")
+                .nth(1)
+                .and_then(|value| value.split([' ', '&']).next())
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect(line);
+            assert!((11000..12000).contains(&id), "{line}");
+        }
+
+        let keys = Mock::start(MockOpts {
+            buckets: 0,
+            keys: 3,
+            bucket_info: 404,
+            key_info: 404,
+            hold_details: false,
+            info_failures: 0,
+        })
+        .await;
+        let key_app = app_at(&keys.url).await;
+        let last_key = list_keys(&key_app, 2, 1).await.unwrap();
+        assert_eq!(ids_of(&last_key), ["00002"]);
+        assert_eq!(last_key.items[0]["via"], "detail");
+        assert!(!last_key.more);
+    }
+
     #[tokio::test]
     async fn short_page_has_no_more_and_full_page_does() {
         let mock = Mock::start(MockOpts {
@@ -1788,7 +1852,7 @@ mod tests {
         assert_eq!(keys.items[0]["via"], "detail");
         let keys_again = list_keys(&first_app, 2, 2).await.unwrap();
         assert_eq!(ids_of(&keys_again), ["00002", "00003"]);
-        assert!(keys_again.more);
+        assert!(!keys_again.more);
         let keys_done = list_keys(&first_app, 4, 2).await.unwrap();
         assert!(keys_done.items.is_empty());
         assert!(!keys_done.more);

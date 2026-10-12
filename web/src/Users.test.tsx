@@ -31,6 +31,15 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
 }
 
+function userPage(items: Row[], hasMore = false) {
+  return { items, hasMore };
+}
+
+function isUserList(input: RequestInfo | URL, method: string): boolean {
+  const url = new URL(String(input), "http://ui.local");
+  return method === "GET" && url.pathname === "/api/users";
+}
+
 function renderUsers() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -53,8 +62,8 @@ function installApi(seed: Row[], rejectPatch = false) {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
       calls.push({ url, init });
-      if (url === "/api/users" && method === "GET") {
-        return json(accounts);
+      if (isUserList(input, method)) {
+        return json(userPage(accounts));
       }
       if (url === "/api/users" && method === "POST") {
         const body = JSON.parse(String(init?.body)) as {
@@ -229,8 +238,8 @@ test("shows Saving while an account patch is pending and keeps the alert when it
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
       calls.push({ url, init });
-      if (url === "/api/users" && method === "GET") {
-        return json([ada, bea]);
+      if (isUserList(input, method)) {
+        return json(userPage([ada, bea]));
       }
       if (url === "/api/users/2" && method === "PATCH") {
         return new Promise<Response>((resolve) => {
@@ -447,7 +456,7 @@ test("shows Loading users and marks the users section busy on the first load", a
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.queryByText("Refreshing users")).toBeNull();
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
-  release(json([ada]));
+  release(json(userPage([ada])));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
   expect(screen.queryByLabelText("Loading users")).toBeNull();
@@ -465,7 +474,7 @@ test("keeps a visible username while a later fetch refreshes the list", async ()
       expect(init?.credentials).toBe("include");
       calls += 1;
       if (calls === 1) {
-        return Promise.resolve(json([ada]));
+        return Promise.resolve(json(userPage([ada])));
       }
       return new Promise<Response>((resolve) => {
         releaseNext = resolve;
@@ -482,7 +491,7 @@ test("keeps a visible username while a later fetch refreshes the list", async ()
   expect(screen.queryByText("Loading users")).toBeNull();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
   expect(screen.queryByRole("alert")).toBeNull();
-  releaseNext(json([ada]));
+  releaseNext(json(userPage([ada])));
   await refresh;
   await waitFor(() => {
     expect(screen.queryByText("Refreshing users")).toBeNull();
@@ -521,7 +530,7 @@ test("shows the API code and requests the user list again from Retry", async () 
           502,
         );
       }
-      return json([ada]);
+      return json(userPage([ada]));
     }),
   );
   renderUsers();
@@ -662,8 +671,8 @@ test("shows Creating user while create is submitting, then User created", async 
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      if (url === "/api/users" && method === "GET") {
-        return json([ada]);
+      if (isUserList(input, method)) {
+        return json(userPage([ada]));
       }
       if (url === "/api/users" && method === "POST") {
         return new Promise<Response>((resolve) => {
@@ -721,8 +730,8 @@ test("shows Resetting password while reset is submitting, then Password reset", 
           release = resolve;
         });
       }
-      if (url === "/api/users" && method === "GET") {
-        return json([ada, bea]);
+      if (isUserList(input, method)) {
+        return json(userPage([ada, bea]));
       }
       return json({ message: "unexpected" }, 500);
     }),
@@ -769,8 +778,8 @@ test("keeps the typed password and alert when reset fails", async () => {
           release = resolve;
         });
       }
-      if (url === "/api/users" && method === "GET") {
-        return json([ada, bea]);
+      if (isUserList(input, method)) {
+        return json(userPage([ada, bea]));
       }
       return json({ message: "unexpected" }, 500);
     }),
@@ -812,8 +821,8 @@ test("shows Deleting while delete is submitting and keeps the row when it fails"
           release = resolve;
         });
       }
-      if (url === "/api/users" && method === "GET") {
-        return json([ada, bea]);
+      if (isUserList(input, method)) {
+        return json(userPage([ada, bea]));
       }
       return json({ message: "unexpected" }, 500);
     }),
@@ -837,4 +846,67 @@ test("shows Deleting while delete is submitting and keeps the row when it fails"
   expect(idle.disabled).toBe(false);
   expect(idle.textContent).toBe("Delete Bea");
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("turns user pages by 100 and keeps the filter, sort, and hash", async () => {
+  window.history.replaceState(null, "", "/?users=ada&usersSort=created#users/stay");
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(init?.credentials).toBe("include");
+      calls.push(`${url.pathname}${url.search}`);
+      const offset = Number(url.searchParams.get("offset"));
+      if (offset === 100) {
+        return json(userPage([bea], false));
+      }
+      return json(userPage([ada], true));
+    }),
+  );
+  renderUsers();
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(calls[0]).toBe("/api/users?offset=0&limit=100");
+  expect(window.location.search).toContain("users=ada");
+  expect(window.location.search).toContain("usersSort=created");
+  expect(window.location.search).not.toContain("usersOffset");
+  const previous = screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement;
+  const next = screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  expect(previous.disabled).toBe(true);
+  expect(next.disabled).toBe(false);
+  expect(previous.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+  expect(next.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+  fireEvent.click(next);
+  expect(await screen.findByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
+  expect(calls[1]).toBe("/api/users?offset=100&limit=100");
+  expect(window.location.search).toContain("usersOffset=100");
+  expect(window.location.search).toContain("users=ada");
+  expect(window.location.search).toContain("usersSort=created");
+  expect(window.location.hash).toBe("#users/stay");
+  expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(window.location.search).not.toContain("usersOffset");
+  expect(window.location.search).toContain("users=ada");
+  expect(window.location.hash).toBe("#users/stay");
+});
+
+test("an unrecognized usersOffset stays on the first page and does not rewrite the address", async () => {
+  window.history.replaceState(null, "", "/?usersOffset=nope&users=ada#users/stay");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.search).toBe("?offset=0&limit=100");
+      return json(userPage([ada], false));
+    }),
+  );
+  renderUsers();
+  expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
+  expect(window.location.search).toBe("?usersOffset=nope&users=ada");
+  expect(window.location.hash).toBe("#users/stay");
+  expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
 });

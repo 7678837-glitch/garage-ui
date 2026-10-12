@@ -568,16 +568,19 @@ async fn capabilities(State(app): State<App>, Authed(_current): Authed) -> Json<
 async fn list_users(
     State(app): State<App>,
     Authed(current): Authed,
+    Query(query): Query<PageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::ManageUsers)?;
+    let (offset, limit) = page_bounds(&query)?;
     let users = db::list_users(&app.db)
         .await
         .map_err(|_| ApiError::internal())?;
     let created = db::list_user_created_at(&app.db)
         .await
         .map_err(|_| ApiError::internal())?;
-    let mut listed = Vec::with_capacity(users.len());
-    for user in &users {
+    let (page, more) = page_window(users, offset, limit);
+    let mut listed = Vec::with_capacity(page.len());
+    for user in &page {
         // 对不上库里的创建时间就失败，不编一个时间。
         let created_at = created
             .iter()
@@ -586,7 +589,10 @@ async fn list_users(
             .ok_or_else(ApiError::internal)?;
         listed.push(public_user(user, created_at));
     }
-    Ok(Json(Value::Array(listed)))
+    Ok(Json(json!({
+        "items": listed,
+        "hasMore": more,
+    })))
 }
 
 async fn create_user(
@@ -1716,6 +1722,17 @@ fn page_bounds(query: &PageQuery) -> Result<(u64, usize), ApiError> {
         })?,
     };
     Ok((offset, limit.min(1000)))
+}
+
+fn page_window<T>(items: Vec<T>, offset: u64, limit: usize) -> (Vec<T>, bool) {
+    let total = items.len();
+    let start = usize::try_from(offset).unwrap_or(usize::MAX);
+    if start >= total {
+        return (Vec::new(), false);
+    }
+    let end = start.saturating_add(limit).min(total);
+    let page = items.into_iter().skip(start).take(limit).collect();
+    (page, end < total)
 }
 
 fn page_json(page: proxy::Page) -> Json<Value> {
@@ -2891,8 +2908,15 @@ async fn get_admin_token(
 async fn list_admin_tokens(
     State(app): State<App>,
     Authed(current): Authed,
+    Query(query): Query<PageQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
+    // 没权限时仍交给 dispatch 记拒绝。坏窗口不能抢在这次拒绝前面。
+    let bounds = if access::permits(current.user.actor(), Op::AdminTokens) {
+        Some(page_bounds(&query)?)
+    } else {
+        None
+    };
     let response = proxy::dispatch(
         &app,
         &current.user,
@@ -2908,11 +2932,17 @@ async fn list_admin_tokens(
     if !status.is_success() {
         return Ok(response);
     }
+    let (offset, limit) = bounds.ok_or_else(ApiError::internal)?;
     let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
         .await
         .map_err(|_| ApiError::internal())?;
     let items = admin_token_list(&bytes)?;
-    let mut out = Json(items).into_response();
+    let (page, more) = page_window(items, offset, limit);
+    let mut out = Json(json!({
+        "items": page,
+        "hasMore": more,
+    }))
+    .into_response();
     *out.status_mut() = status;
     Ok(out)
 }
@@ -3388,6 +3418,13 @@ mod tests {
             test_quota(),
         )
         .await
+    }
+
+    fn user_items(body: &str) -> Vec<Value> {
+        serde_json::from_str::<Value>(body).unwrap()["items"]
+            .as_array()
+            .expect("items")
+            .clone()
     }
 
     fn code_of(body: &str) -> String {
@@ -8567,6 +8604,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn user_list_pages_like_buckets() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let ada_created: i64 = sqlx::query_scalar(
+            "SELECT created_at FROM users WHERE username = 'Ada' COLLATE NOCASE",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let mut tx = app.db.begin().await.unwrap();
+        for index in 0..1000 {
+            sqlx::query(
+                "INSERT INTO users (
+                    username, password_hash, role, can_download, can_share, disabled, created_at
+                 ) VALUES (?, 'stored-hash', 'viewer', 0, 0, 0, ?)",
+            )
+            .bind(format!("n{index:04}"))
+            .bind(1_700_000_000 + i64::from(index))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&session))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let page: Value = serde_json::from_str(&listed.body).unwrap();
+        let items = page["items"].as_array().expect("items");
+        assert_eq!(items.len(), 100);
+        assert_eq!(page["hasMore"], true);
+        assert!(!listed.body.contains("password_hash"));
+        assert!(!listed.body.contains("stored-hash"));
+        let ada = items
+            .iter()
+            .find(|user| user["username"] == "Ada")
+            .expect("Ada");
+        assert_eq!(ada["created_at"].as_i64(), Some(ada_created));
+
+        let capped = exchange(
+            &app,
+            request("GET", "/api/users?limit=1001", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(capped.status, StatusCode::OK, "{}", capped.body);
+        let capped_page: Value = serde_json::from_str(&capped.body).unwrap();
+        assert_eq!(capped_page["items"].as_array().expect("items").len(), 1000);
+        assert_eq!(capped_page["hasMore"], true);
+        assert!(!capped.body.contains("password_hash"));
+
+        let last = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/users?offset=1000&limit=1000",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(last.status, StatusCode::OK, "{}", last.body);
+        let last_page: Value = serde_json::from_str(&last.body).unwrap();
+        let last_items = last_page["items"].as_array().expect("items");
+        assert_eq!(last_items.len(), 1);
+        assert_eq!(last_page["hasMore"], false);
+        assert!(!last.body.contains("password_hash"));
+        assert!(!last.body.contains("stored-hash"));
+        let last_user = &last_items[0];
+        assert_eq!(last_user["username"], "n0999");
+        let last_id = last_user["id"].as_i64().expect("id");
+        let stored_last: Option<i64> =
+            sqlx::query_scalar("SELECT created_at FROM users WHERE id = ?")
+                .bind(last_id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        match stored_last {
+            Some(created_at) => assert_eq!(last_user["created_at"].as_i64(), Some(created_at)),
+            None => assert!(last_user.get("created_at").is_none()),
+        }
+
+        let rejected = exchange(
+            &app,
+            request("GET", "/api/users?limit=nope", None, Some(&session)),
+        )
+        .await;
+        assert_error(
+            &rejected,
+            StatusCode::BAD_REQUEST,
+            "invalid_limit",
+            "Limit must be a non-negative integer",
+        );
+    }
+
+    #[tokio::test]
     async fn user_list_reports_created_at() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
@@ -8579,7 +8711,7 @@ mod tests {
         .unwrap();
         let response = exchange(&app, request("GET", "/api/users", None, Some(&session))).await;
         assert_eq!(response.status, StatusCode::OK, "{}", response.body);
-        let users: Vec<Value> = serde_json::from_str(&response.body).unwrap();
+        let users = user_items(&response.body);
         let ada = users
             .iter()
             .find(|user| user["username"] == "Ada")
@@ -8596,7 +8728,7 @@ mod tests {
         let viewer = viewer_session(&app, &admin).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let other_id = users
             .iter()
             .find(|user| user["username"] == "Bea")
@@ -8633,7 +8765,7 @@ mod tests {
         let viewer = viewer_session(&app, &admin).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let other_id = users
             .iter()
             .find(|user| user["username"] != "Ada")
@@ -8699,7 +8831,7 @@ mod tests {
         let second = sign_in(&app, "Cam", PASSWORD).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let other_id = users
             .iter()
             .find(|user| user["username"] == "Cam")
@@ -8734,7 +8866,7 @@ mod tests {
         let viewer = viewer_session(&app, &admin).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let other_id = users
             .iter()
             .find(|user| user["username"] == "Bea")
@@ -8931,7 +9063,7 @@ mod tests {
         assert!(!sink.contains(PASSWORD));
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         assert_eq!(users.len(), 1, "{users:?}");
         assert_eq!(users[0]["username"], "Ada");
     }
@@ -9033,7 +9165,7 @@ mod tests {
 
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let bea = users
             .iter()
             .find(|user| user["username"] == "Bea")
@@ -9084,7 +9216,7 @@ mod tests {
         assert!(!sink.contains(PASSWORD));
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         assert_eq!(users.len(), 1, "{users:?}");
         assert_eq!(users[0]["username"], "Ada");
     }
@@ -9097,7 +9229,7 @@ mod tests {
         viewer_session(&app, &admin).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let id_of = |name: &str| {
             users
                 .iter()
@@ -9175,7 +9307,7 @@ mod tests {
         let (admin, _) = login(&app).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         assert_eq!(users.len(), 1, "{users:?}");
         assert_eq!(users[0]["username"], "Ada");
         let admin_id = users[0]["id"].as_i64().expect("id");
@@ -9264,7 +9396,7 @@ mod tests {
 
         let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(after.status, StatusCode::OK, "{}", after.body);
-        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        let users = user_items(&after.body);
         assert_eq!(users.len(), 1, "{users:?}");
         assert_eq!(users[0]["username"], "Ada");
     }
@@ -9276,7 +9408,7 @@ mod tests {
         let (admin, _) = login(&app).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let id_of = |name: &str| {
             users
                 .iter()
@@ -9359,7 +9491,7 @@ mod tests {
 
         let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(after.status, StatusCode::OK, "{}", after.body);
-        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        let users = user_items(&after.body);
         let admin_user = users
             .iter()
             .find(|user| user["username"] == "Ada")
@@ -9376,7 +9508,7 @@ mod tests {
         let viewer = viewer_session(&app, &admin).await;
         let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
-        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let users = user_items(&listed.body);
         let admin_id = users
             .iter()
             .find(|user| user["username"] == "Ada")
@@ -9492,7 +9624,7 @@ mod tests {
 
         let after = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
         assert_eq!(after.status, StatusCode::OK, "{}", after.body);
-        let users: Vec<Value> = serde_json::from_str(&after.body).unwrap();
+        let users = user_items(&after.body);
         let names: Vec<_> = users
             .iter()
             .map(|user| user["username"].as_str().unwrap())
@@ -10692,26 +10824,29 @@ mod tests {
         assert_eq!(listed.status, StatusCode::OK);
         assert_eq!(
             serde_json::from_str::<Value>(&listed.body).unwrap(),
-            json!([
-                {
-                    "id": null,
-                    "name": "admin_token",
-                    "created": null,
-                    "expiration": null,
-                    "expired": false,
-                    "scope": ["*"],
-                    "fromConfig": true
-                },
-                {
-                    "id": "gk-admin-1",
-                    "name": "reader",
-                    "created": "2026-03-01T00:00:00Z",
-                    "expiration": null,
-                    "expired": false,
-                    "scope": ["GetClusterStatus", "Metrics"],
-                    "fromConfig": false
-                }
-            ])
+            json!({
+                "items": [
+                    {
+                        "id": null,
+                        "name": "admin_token",
+                        "created": null,
+                        "expiration": null,
+                        "expired": false,
+                        "scope": ["*"],
+                        "fromConfig": true
+                    },
+                    {
+                        "id": "gk-admin-1",
+                        "name": "reader",
+                        "created": "2026-03-01T00:00:00Z",
+                        "expiration": null,
+                        "expired": false,
+                        "scope": ["GetClusterStatus", "Metrics"],
+                        "fromConfig": false
+                    }
+                ],
+                "hasMore": false
+            })
         );
         assert!(!listed.body.contains("secretToken"));
         assert!(!listed.body.contains(secret));

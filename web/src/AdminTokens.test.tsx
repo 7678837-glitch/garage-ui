@@ -18,6 +18,15 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
 }
 
+function tokenPage(items: unknown[], hasMore = false) {
+  return { items, hasMore };
+}
+
+function isTokenList(input: RequestInfo | URL, method: string): boolean {
+  const url = new URL(String(input), "http://ui.local");
+  return method === "GET" && url.pathname === "/api/admin-tokens";
+}
+
 function renderTokens() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -32,31 +41,34 @@ function renderTokens() {
 function installApi() {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
       const url = String(input);
-      if (url === "/api/admin-tokens") {
-        return json([
-          {
-            id: null,
-            name: "config-reader",
-            scope: ["GetClusterStatus", "Metrics"],
-            expiration: null,
-            expired: false,
-            fromConfig: true,
-            created: "2026-01-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-          {
-            id: "tok-issued-1a2b",
-            name: "issued-reader",
-            scope: ["ListBuckets"],
-            expiration: "2026-12-01T00:00:00Z",
-            expired: true,
-            fromConfig: false,
-            created: "2026-02-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-        ]);
+      if (isTokenList(input, method)) {
+        return json(
+          tokenPage([
+            {
+              id: null,
+              name: "config-reader",
+              scope: ["GetClusterStatus", "Metrics"],
+              expiration: null,
+              expired: false,
+              fromConfig: true,
+              created: "2026-01-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+            {
+              id: "tok-issued-1a2b",
+              name: "issued-reader",
+              scope: ["ListBuckets"],
+              expiration: "2026-12-01T00:00:00Z",
+              expired: true,
+              fromConfig: false,
+              created: "2026-02-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+          ]),
+        );
       }
       if (url === "/api/admin-tokens/current") {
         return json({
@@ -149,18 +161,20 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
           expired: false,
         });
       }
-      if (url === "/api/admin-tokens") {
-        return json([
-          {
-            id: "tok-issued-1a2b",
-            name: "issued-reader",
-            scope: ["ListBuckets"],
-            expiration: "2026-12-01T00:00:00Z",
-            expired: false,
-            fromConfig: false,
-            created: "2026-02-01T00:00:00Z",
-          },
-        ]);
+      if (isTokenList(input, method)) {
+        return json(
+          tokenPage([
+            {
+              id: "tok-issued-1a2b",
+              name: "issued-reader",
+              scope: ["ListBuckets"],
+              expiration: "2026-12-01T00:00:00Z",
+              expired: false,
+              fromConfig: false,
+              created: "2026-02-01T00:00:00Z",
+            },
+          ]),
+        );
       }
       if (url === "/api/admin-tokens/current") {
         return json({
@@ -237,29 +251,31 @@ test("an admin updates an issued token and the response secret stays off the pag
           secretToken: SECRET,
         });
       }
-      if (url === "/api/admin-tokens") {
-        return json([
-          {
-            id: null,
-            name: "config-reader",
-            scope: ["GetClusterStatus", "Metrics"],
-            expiration: null,
-            expired: false,
-            fromConfig: true,
-            created: "2026-01-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-          {
-            id: issuedId,
-            name: "issued-reader",
-            scope: ["ListBuckets"],
-            expiration: "2026-12-01T00:00:00Z",
-            expired: true,
-            fromConfig: false,
-            created: "2026-02-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-        ]);
+      if (isTokenList(input, method)) {
+        return json(
+          tokenPage([
+            {
+              id: null,
+              name: "config-reader",
+              scope: ["GetClusterStatus", "Metrics"],
+              expiration: null,
+              expired: false,
+              fromConfig: true,
+              created: "2026-01-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+            {
+              id: issuedId,
+              name: "issued-reader",
+              scope: ["ListBuckets"],
+              expiration: "2026-12-01T00:00:00Z",
+              expired: true,
+              fromConfig: false,
+              created: "2026-02-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+          ]),
+        );
       }
       if (url === "/api/admin-tokens/current") {
         return json({
@@ -353,29 +369,31 @@ test("an admin deletes an issued token and the response secret stays off the pag
           secretToken: SECRET,
         });
       }
-      if (url === "/api/admin-tokens") {
-        return json([
-          {
-            id: null,
-            name: "config-reader",
-            scope: ["GetClusterStatus", "Metrics"],
-            expiration: null,
-            expired: false,
-            fromConfig: true,
-            created: "2026-01-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-          {
-            id: issuedId,
-            name: "issued-reader",
-            scope: ["ListBuckets"],
-            expiration: "2026-12-01T00:00:00Z",
-            expired: true,
-            fromConfig: false,
-            created: "2026-02-01T00:00:00Z",
-            secretToken: SECRET,
-          },
-        ]);
+      if (isTokenList(input, method)) {
+        return json(
+          tokenPage([
+            {
+              id: null,
+              name: "config-reader",
+              scope: ["GetClusterStatus", "Metrics"],
+              expiration: null,
+              expired: false,
+              fromConfig: true,
+              created: "2026-01-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+            {
+              id: issuedId,
+              name: "issued-reader",
+              scope: ["ListBuckets"],
+              expiration: "2026-12-01T00:00:00Z",
+              expired: true,
+              fromConfig: false,
+              created: "2026-02-01T00:00:00Z",
+              secretToken: SECRET,
+            },
+          ]),
+        );
       }
       if (url === "/api/admin-tokens/current") {
         return json({
@@ -428,4 +446,122 @@ test("an admin deletes an issued token and the response secret stays off the pag
     expect((node as HTMLInputElement).value).not.toContain(SECRET);
     expect((node as HTMLInputElement).value).not.toContain(issuedId);
   }
+});
+
+test("turns admin token pages by 100 and keeps the filter, sort, and hash", async () => {
+  window.history.replaceState(null, "", "/?tokens=reader&tokensSort=created#tokens/stay");
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/admin-tokens/current") {
+        return json({
+          name: "this-server-reader",
+          scope: ["GetClusterHealth"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+        });
+      }
+      calls.push(`${url.pathname}${url.search}`);
+      const offset = Number(url.searchParams.get("offset"));
+      if (offset === 100) {
+        return json(
+          tokenPage(
+            [
+              {
+                id: "tok-next",
+                name: "later-reader",
+                scope: ["ListKeys"],
+                expiration: null,
+                expired: false,
+                fromConfig: false,
+                created: "2026-04-01T00:00:00Z",
+              },
+            ],
+            false,
+          ),
+        );
+      }
+      return json(
+        tokenPage(
+          [
+            {
+              id: null,
+              name: "config-reader",
+              scope: ["GetClusterStatus"],
+              expiration: null,
+              expired: false,
+              fromConfig: true,
+              created: "2026-01-01T00:00:00Z",
+            },
+          ],
+          true,
+        ),
+      );
+    }),
+  );
+  renderTokens();
+  expect(await screen.findByRole("row", { name: /config-reader/ })).toBeTruthy();
+  expect(calls[0]).toBe("/api/admin-tokens?offset=0&limit=100");
+  expect(window.location.search).not.toContain("tokensOffset");
+  const previous = screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement;
+  const next = screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  expect(previous.disabled).toBe(true);
+  expect(next.disabled).toBe(false);
+  expect(previous.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+  expect(next.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+  fireEvent.click(next);
+  expect(await screen.findByRole("row", { name: /later-reader/ })).toBeTruthy();
+  expect(screen.queryByRole("row", { name: /config-reader/ })).toBeNull();
+  expect(calls[1]).toBe("/api/admin-tokens?offset=100&limit=100");
+  expect(window.location.search).toContain("tokensOffset=100");
+  expect(window.location.search).toContain("tokens=reader");
+  expect(window.location.search).toContain("tokensSort=created");
+  expect(window.location.hash).toBe("#tokens/stay");
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(await screen.findByRole("row", { name: /config-reader/ })).toBeTruthy();
+  expect(window.location.search).not.toContain("tokensOffset");
+  expect(window.location.hash).toBe("#tokens/stay");
+});
+
+test("an unrecognized tokensOffset stays on the first page and does not rewrite the address", async () => {
+  window.history.replaceState(null, "", "/?tokensOffset=nope&tokens=reader#tokens/stay");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/admin-tokens/current") {
+        return json({
+          name: "this-server-reader",
+          scope: ["GetClusterHealth"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+        });
+      }
+      expect(url.pathname).toBe("/api/admin-tokens");
+      expect(url.search).toBe("?offset=0&limit=100");
+      return json(
+        tokenPage([
+          {
+            id: null,
+            name: "config-reader",
+            scope: ["GetClusterStatus"],
+            expiration: null,
+            expired: false,
+            fromConfig: true,
+            created: "2026-01-01T00:00:00Z",
+          },
+        ]),
+      );
+    }),
+  );
+  renderTokens();
+  expect(await screen.findByRole("row", { name: /config-reader/ })).toBeTruthy();
+  expect(window.location.search).toBe("?tokensOffset=nope&tokens=reader");
+  expect(window.location.hash).toBe("#tokens/stay");
 });

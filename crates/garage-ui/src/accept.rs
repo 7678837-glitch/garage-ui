@@ -242,7 +242,8 @@ async fn user_id(app: &App, session: &Session, username: &str) -> i64 {
     let response = exchange(app, request("GET", "/api/users", None, Some(session))).await;
     assert_eq!(response.status, StatusCode::OK, "{}", response.body);
     assert_clean("users", &response.body);
-    let users: Vec<Value> = serde_json::from_str(&response.body).unwrap();
+    let page: Value = serde_json::from_str(&response.body).unwrap();
+    let users = page["items"].as_array().unwrap();
     users
         .iter()
         .find(|user| user["username"] == username)
