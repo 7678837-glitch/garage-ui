@@ -10256,6 +10256,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_search_stops_after_twenty_pages() {
+        let mock = S3Mock::start(|_| {
+            list_xml(true, Some("more"), &[("note.txt", 1, "abc")], &[])
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let found = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/search?q=qx",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&found.body).unwrap(),
+            json!({
+                "matches": [],
+                "truncated": true,
+                "reason": "page_limit"
+            })
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 20, "{seen:?}");
+        for (index, line) in seen.iter().enumerate() {
+            let target = request_target(line);
+            assert!(target.contains("list-type=2"), "{target}");
+            assert_eq!(query_value(target, "max-keys"), Some("1000"), "{target}");
+            assert_eq!(bucket_of(line), "bkt-1");
+            let token = query_value(target, "continuation-token");
+            if index == 0 {
+                assert_eq!(token, None, "{target}");
+            } else {
+                assert_eq!(token, Some("more"), "{target}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn object_metadata_round_trips_odd_keys_and_a_missing_object_is_404() {
         let mock = S3Mock::start(|line| {
             if request_target(line).contains("missing") {
