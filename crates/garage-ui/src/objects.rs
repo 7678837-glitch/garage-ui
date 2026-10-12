@@ -1172,6 +1172,48 @@ async fn abort_multipart(client: &Client, bucket: &str, key: &str, upload_id: &s
         .await;
 }
 
+async fn abort_multipart_upload(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+) -> Result<(), S3Failure> {
+    client
+        .abort_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })
+}
+
+pub async fn abort_incomplete_upload(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    upload_id: &str,
+) -> Result<(), ApiError> {
+    let bucket = bucket_id.to_string();
+    let key = key.to_string();
+    let upload_id = upload_id.to_string();
+    drive(app, bucket.clone(), move |client| {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        let upload_id = upload_id.clone();
+        async move { abort_multipart_upload(&client, &bucket, &key, &upload_id).await }
+    })
+    .await
+}
+
 async fn remove_object(client: &Client, bucket: &str, key: &str) -> Result<(), S3Failure> {
     client
         .delete_object()
