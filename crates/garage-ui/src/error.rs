@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
@@ -177,6 +177,71 @@ impl IntoResponse for ApiError {
             }
         }
     }
+}
+
+// 只给缩略图的 HeadObject 失败用。测试里第二次写状态或 body 直接 panic。
+pub(crate) struct SingleWrite {
+    status: Option<StatusCode>,
+    headers: Option<HeaderMap>,
+    body: Option<Vec<u8>>,
+}
+
+impl SingleWrite {
+    fn new() -> Self {
+        Self {
+            status: None,
+            headers: None,
+            body: None,
+        }
+    }
+
+    fn write_status(&mut self, status: StatusCode) {
+        if self.status.is_some() {
+            if cfg!(test) {
+                panic!("response status written twice");
+            }
+            return;
+        }
+        self.status = Some(status);
+    }
+
+    fn write_headers(&mut self, headers: HeaderMap) {
+        self.headers = Some(headers);
+    }
+
+    fn write_body(&mut self, body: Vec<u8>) {
+        if self.body.is_some() {
+            if cfg!(test) {
+                panic!("response body written twice");
+            }
+            return;
+        }
+        self.body = Some(body);
+    }
+
+    fn finish(self) -> Response {
+        let mut response = Response::new(axum::body::Body::from(self.body.unwrap_or_default()));
+        *response.status_mut() = self.status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        if let Some(headers) = self.headers {
+            *response.headers_mut() = headers;
+        }
+        response
+    }
+}
+
+pub(crate) async fn single_error(error: ApiError) -> Response {
+    let response = error.into_response();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024)
+        .await
+        .map(|bytes| bytes.to_vec())
+        .unwrap_or_else(|_| br#"{"code":"internal","message":"Internal error"}"#.to_vec());
+    let mut out = SingleWrite::new();
+    out.write_status(status);
+    out.write_headers(headers);
+    out.write_body(bytes);
+    out.finish()
 }
 
 impl std::fmt::Display for ApiError {

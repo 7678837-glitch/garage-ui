@@ -1999,3 +1999,127 @@ fn spawn_upstream(listener: Arc<TcpListener>) -> tokio::task::JoinHandle<String>
         String::from_utf8_lossy(&buf).into_owned()
     })
 }
+
+#[tokio::test]
+async fn thumbnail_content_type_matches_png_bytes() {
+    const PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
+        2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
+        0, 0, 3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    const SECRET: &str = "project-secret-value";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut tmp = [0_u8; 4096];
+                let header_end = loop {
+                    let Ok(read) = socket.read(&mut tmp).await else {
+                        return;
+                    };
+                    if read == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&tmp[..read]);
+                    if let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break pos;
+                    }
+                    if buf.len() > 64 * 1024 {
+                        return;
+                    }
+                };
+                let text = String::from_utf8_lossy(&buf[..header_end]);
+                let line = text.lines().next().unwrap_or("");
+                let target = line.split_whitespace().nth(1).unwrap_or("");
+                let path = target.split('?').next().unwrap_or("");
+                if !path.ends_with("/dot.png") {
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nContent-Type: application/xml\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
+                    let _ = socket.shutdown().await;
+                    return;
+                }
+                let mut response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\nETag: \"png-as-jpeg\"\r\nConnection: close\r\n\r\n",
+                    PNG.len()
+                )
+                .into_bytes();
+                if !line.starts_with("HEAD ") {
+                    response.extend_from_slice(PNG);
+                }
+                let _ = socket.write_all(&response).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+    let dir = crate::util::temp_dir();
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("S3_ENDPOINT_URL", endpoint.as_str()),
+            ("S3_REGION", "garage"),
+            ("S3_ACCESS_KEY_ID", "PROJECT"),
+            ("S3_SECRET_ACCESS_KEY", SECRET),
+        ],
+        test_quota(),
+    )
+    .await;
+    let session = setup_admin(&app).await;
+    let response = tokio::time::timeout(
+        Duration::from_secs(10),
+        router(app).oneshot(request(
+            "GET",
+            "/api/buckets/bkt-1/objects/dot.png/thumbnail",
+            None,
+            Some(&session),
+        )),
+    )
+    .await
+    .expect("thumbnail timed out")
+    .unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let header_text = response
+        .headers()
+        .iter()
+        .map(|(name, value)| format!("{name}: {}", value.to_str().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        content_type, "image/png",
+        "status {status} body {}",
+        String::from_utf8_lossy(&bytes[..bytes.len().min(180)])
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "body does not start with a PNG signature"
+    );
+    assert!(
+        !header_text.contains(SECRET),
+        "thumbnail headers leaked the key secret"
+    );
+    assert!(
+        !bytes
+            .windows(SECRET.len())
+            .any(|window| window == SECRET.as_bytes()),
+        "thumbnail body leaked the key secret"
+    );
+    task.abort();
+}

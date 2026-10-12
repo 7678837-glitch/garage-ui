@@ -27,6 +27,9 @@ use crate::state::{self, App};
 use crate::util::{self, hex_encode, random_bytes};
 use crate::version;
 
+#[path = "thumb.rs"]
+mod thumb;
+
 struct Authed(Current);
 
 impl FromRequestParts<App> for Authed {
@@ -2545,6 +2548,14 @@ async fn object_metadata(
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<ObjectViewQuery>,
 ) -> Result<Response, ApiError> {
+    // matchit 不允许 `{*key}` 后再接 `/thumbnail`，会和本路由冲突。
+    // 末段是 thumbnail 时 key 取前面的路径，axum 已按路径段解码。
+    if let Some(object_key) = key.strip_suffix("/thumbnail")
+        && !object_key.is_empty()
+    {
+        require(&current.user, Op::ReadObjects)?;
+        return thumb::deliver(&app, &id, object_key).await;
+    }
     match object_intent(&query)? {
         ObjectIntent::Meta => {
             require(&current.user, Op::ViewObjects)?;
