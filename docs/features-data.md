@@ -1,115 +1,115 @@
-# 数据面：桶、对象与桶设置
+# Data plane: buckets, objects, and bucket settings
 
-角色缩写：A=管理员，V=只读。权限位见 [security.md](security.md) 的 3.19。
+Role abbreviations: A = administrator, V = read-only. Permission bits are in 3.19 of [security.md](security.md).
 
-## 5.1 桶
+## 5.1 Buckets
 
-- 需求：分页列表（名称、别名、对象数、容量、配额使用率）、创建（可选全局别名）、删除（非空时提示）、别名增删（全局/本地）。
-- 接口：`GET /api/buckets?offset&limit`（A/V）；`POST /api/buckets`（A）；`DELETE /api/buckets/{id}`（A）；`POST`/`DELETE /api/buckets/{id}/aliases`（A）。
-- Garage：`ListBucketsInfo` 或 `ListBuckets` + `GetBucketInfo`、`CreateBucket`、`DeleteBucket`、`AddBucketAlias`、`RemoveBucketAlias`。
+- Requirement: A paginated list (name, alias, object count, capacity, quota usage), create (an optional global alias), delete (prompt when the bucket is not empty), and add or remove aliases (global and local).
+- API: `GET /api/buckets?offset&limit` (A/V); `POST /api/buckets` (A); `DELETE /api/buckets/{id}` (A); `POST`/`DELETE /api/buckets/{id}/aliases` (A).
+- Garage: `ListBucketsInfo` or `ListBuckets` + `GetBucketInfo`, `CreateBucket`, `DeleteBucket`, `AddBucketAlias`, `RemoveBucketAlias`.
 
-验收：仅本地别名的桶出现在列表中并可进入；删除非空桶时返回 Garage 的错误且界面提示。
+Acceptance: A bucket with only a local alias appears in the list and can be opened. Deleting a non-empty bucket returns Garage's error, and the UI shows that error.
 
-## 5.2 对象浏览
+## 5.2 Browsing objects
 
-- 需求：按 `/` 分隔的前缀导航与面包屑；分页（默认 100，上限 1000，续页令牌）；S3 列表只按 key 字典序返回、只支持前缀筛选，因此跨页顺序固定为 key 字典序，按大小、时间排序仅对当前已加载的页生效且界面明示「仅当前页」；前缀内子串搜索（至少 2 字符，最多返回 200 条，最多扫描 20 页）；安全预览；对象元数据与 `InspectObject` 诊断（A）。诊断页面本身在阶段 5，最小版不包含诊断入口。
-- 接口：`GET /api/buckets/{id}/objects?prefix&limit&next`；`GET /api/buckets/{id}/objects/{key}`（元数据、view、download）；`GET /api/buckets/{id}/search?q&prefix`；`GET /api/buckets/{id}/inspect/{key}`（A）。
-- Garage：S3 `ListObjectsV2`、`HeadObject`、`GetObject`；Admin `InspectObject`。
+- Requirement: Prefix navigation and breadcrumbs, split on `/`. Pagination (default 100, maximum 1000, continuation token). An S3 list returns keys only in lexicographic order and supports only a prefix filter, so the order across pages is fixed as key lexicographic order. Sort by size or by time applies only to the page already loaded, and the UI states "this page only". Substring search inside a prefix (at least 2 characters, at most 200 hits, at most 20 pages scanned). Safe preview. Object metadata and `InspectObject` diagnostics (A). The diagnostics page itself is in phase 5. The minimum version has no diagnostics entry.
+- API: `GET /api/buckets/{id}/objects?prefix&limit&next`; `GET /api/buckets/{id}/objects/{key}` (metadata, view, download); `GET /api/buckets/{id}/search?q&prefix`; `GET /api/buckets/{id}/inspect/{key}` (A).
+- Garage: S3 `ListObjectsV2`, `HeadObject`, `GetObject`; Admin `InspectObject`.
 
-验收：5000 个对象可翻页浏览；搜索截断时返回原因字段；预览满足 [security.md](security.md) 的 3.3。
+Acceptance: 5000 objects can be browsed page by page. When a search is truncated, the response includes a reason field. Preview meets 3.3 of [security.md](security.md).
 
-## 5.3 上传
+## 5.3 Upload
 
-- 需求：拖拽或选择多文件、文件夹上传（保留相对路径）；上传队列并发 3、可取消、可重试、显示进度；同名提示覆盖确认；大文件自动分片；单文件上限可配置。
-- 接口：`PUT /api/buckets/{id}/objects/{key}`（A）；分片：POST 初始化、PUT 分片、POST 完成、DELETE 中止（A）。
-- Garage：S3 `PutObject`、`CreateMultipartUpload`、`UploadPart`、`CompleteMultipartUpload`、`AbortMultipartUpload`。
+- Requirement: Drag and drop, or pick multiple files. Folder upload keeps relative paths. The upload queue runs 3 at a time, can be cancelled, can be retried, and shows progress. A same-name object prompts for overwrite confirmation. A large file uses multipart upload automatically. The per-file limit is configurable.
+- API: `PUT /api/buckets/{id}/objects/{key}` (A). Multipart: POST to start, PUT for a part, POST to complete, DELETE to abort (A).
+- Garage: S3 `PutObject`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`.
 
-验收：1 GB 文件上传时服务端常驻内存增长不超过 64 MB；取消后分片被中止。
+Acceptance: While a 1 GB file is uploading, server resident memory grows by at most 64 MB. After cancel, the multipart upload is aborted.
 
-## 5.4 删除
+## 5.4 Delete
 
-- 需求：单个删除、多选批量删除（单次最多 1000 个 key）、文件夹递归删除（见 [correctness.md](correctness.md) 的 4.3），均需确认对话框。
-- 接口：`DELETE /api/buckets/{id}/objects/{key}[?recursive=true]`；`POST /api/buckets/{id}/objects:delete`（`keys[]`）（A）。
-- Garage：S3 `DeleteObject`、`DeleteObjects`、`ListObjectsV2`。
+- Requirement: Delete one object, batch-delete a multi-selection (at most 1000 keys per call), and recursively delete a folder (see 4.3 of [correctness.md](correctness.md)). Each one requires a confirmation dialog.
+- API: `DELETE /api/buckets/{id}/objects/{key}[?recursive=true]`; `POST /api/buckets/{id}/objects:delete` (`keys[]`) (A).
+- Garage: S3 `DeleteObject`, `DeleteObjects`, `ListObjectsV2`.
 
-验收：批量 1001 个 key 返回 400；部分失败逐条返回。
+Acceptance: A batch of 1001 keys returns 400. A partial failure is returned object by object.
 
-## 5.5 分享
+## 5.5 Sharing
 
-最小版本不包含。权限见 [security.md](security.md) 的 3.10。
+Not included in the minimum version. Permissions are in 3.10 of [security.md](security.md).
 
-- 需求：生成预签名 GET 链接（1 小时、24 小时、7 天），桶开启网站访问时同时给出公开网站地址。
-- 接口：`POST /api/buckets/{id}/share`（key、expires）（A 或拥有分享权限者）。
-- Garage：S3 预签名（使用公共 S3 地址与区域）；网站地址由配置模板生成（模板必须包含 `{bucket}`）。
+- Requirement: Generate a presigned GET link (1 hour, 24 hours, or 7 days). When the bucket has website access enabled, also give the public website address.
+- API: `POST /api/buckets/{id}/share` (key, expires) (A, or a caller who has the share permission).
+- Garage: S3 presigning (uses the public S3 address and region). The website address is generated from a configuration template (the template must contain `{bucket}`).
 
-验收：生成的链接在有效期内可下载，过期后返回 403；审计中可见记录。
+Acceptance: The generated link can be used to download within its validity period, and returns 403 after it expires. A record is visible in the audit log.
 
-## 5.6 批量下载
+## 5.6 Bulk download
 
-最小版本不包含。
+Not included in the minimum version.
 
-- 需求：多选对象或文件夹打包成 ZIP 流式下载。先换取一次性令牌（60 秒有效、只能用一次、绑定用户与桶），再下载。ZIP 内路径去掉公共前缀、清理路径穿越与盘符、重名加序号；单个对象失败时写入 ZIP 内的错误清单文件。
-- 接口：`POST /api/buckets/{id}/archive-token`（A，或具备下载权限的 V）；`GET /api/buckets/{id}/archive?token=`（同上）。
-- Garage：S3 `GetObject`。
+- Requirement: Pack selected objects, or a folder, into a ZIP and download it as a stream. First exchange a one-time token (valid for 60 seconds, usable only once, bound to the user and the bucket), then download. Inside the ZIP, drop the common prefix, clean path traversal and drive letters, and append a sequence number when names collide. When a single object fails, write an error-list file inside the ZIP.
+- API: `POST /api/buckets/{id}/archive-token` (A, or a V who has the download permission); `GET /api/buckets/{id}/archive?token=` (the same callers).
+- Garage: S3 `GetObject`.
 
-验收：无下载权限的只读用户换取令牌返回 403；令牌第二次使用返回 404；其他用户使用返回 403；包含 `../` 的 key 在 ZIP 中被清理；1000 个对象打包时进程内存峰值增长不超过 64 MB。
+Acceptance: A read-only user without the download permission gets 403 when exchanging a token. A second use of a token returns 404. Another user using the token returns 403. A key that contains `../` is cleaned inside the ZIP. When packing 1000 objects, the process peak memory grows by at most 64 MB.
 
-## 5.14 清理未完成上传
+## 5.14 Clean up incomplete uploads
 
-最小版本不包含。
+Not included in the minimum version.
 
-- 需求：在桶详情中列出未完成分片上传（key、uploadId、开始时间），可中止单个或全部；提供「清理早于 N 小时的未完成上传」。
-- 接口：`GET /api/buckets/{id}/multipart`；`DELETE /api/buckets/{id}/multipart`；`POST /api/buckets/{id}/cleanup-uploads`（`olderThanSecs`）。
-- Garage：S3 `ListMultipartUploads`、`AbortMultipartUpload`；Admin `CleanupIncompleteUploads`。
+- Requirement: On the bucket detail page, list incomplete multipart uploads (key, uploadId, start time). Abort one, or abort all. Provide "clean up incomplete uploads older than N hours".
+- API: `GET /api/buckets/{id}/multipart`; `DELETE /api/buckets/{id}/multipart`; `POST /api/buckets/{id}/cleanup-uploads` (`olderThanSecs`).
+- Garage: S3 `ListMultipartUploads`, `AbortMultipartUpload`; Admin `CleanupIncompleteUploads`.
 
-验收：清理后列表中不再出现超过阈值的条目，返回清理数量。
+Acceptance: After cleanup, entries older than the threshold no longer appear in the list, and the response returns the number cleaned up.
 
-## 5.16 CORS 与生命周期
+## 5.16 CORS and lifecycle
 
-最小版本不包含。
+Not included in the minimum version.
 
-- 需求：在桶设置中编辑 CORS 规则（ID、来源、方法、头、暴露头、缓存秒数）和生命周期规则（ID、启用状态、过期天数或过期日期二选一、前缀与对象大小上下限过滤、中止未完成上传天数）；表单校验；保存前展示差异。
-- 说明：通过 Admin `UpdateBucket` 写入（与 S3 的同名接口作用于同一配置）；`corsRules`、`lifecycleRules` 为整组替换：不传表示不变，传空数组即清空。并发编辑时以保存前重新读取的版本做差异提示。
-- 接口：`GET`/`PUT /api/buckets/{id}/cors`；`GET`/`PUT /api/buckets/{id}/lifecycle`。
-- Garage：`GetBucketInfo`（`corsRules`、`lifecycleRules`）、`UpdateBucket`（`corsRules`、`lifecycleRules`），v2.3.0 起均可用。
+- Requirement: In bucket settings, edit CORS rules (ID, allowed origins, methods, headers, exposed headers, max-age seconds) and lifecycle rules (ID, enabled state, exactly one of expiry days or an expiry date, a prefix filter and lower and upper object-size filters, and the number of days after which an incomplete upload is aborted). Validate the form. Show the diff before saving.
+- Note: Writes go through Admin `UpdateBucket` (the S3 API of the same name acts on the same configuration). `corsRules` and `lifecycleRules` are replaced as a whole set. Omitting a set means no change. Passing an empty array clears it. On a concurrent edit, show the diff against the version read again just before save.
+- API: `GET`/`PUT /api/buckets/{id}/cors`; `GET`/`PUT /api/buckets/{id}/lifecycle`.
+- Garage: `GetBucketInfo` (`corsRules`, `lifecycleRules`) and `UpdateBucket` (`corsRules`, `lifecycleRules`). Both are available from v2.3.0 on.
 
-验收：保存后 `GetBucketInfo` 返回一致；浏览器跨域预检符合配置。本项目自身的 `/api` 不开放跨域，见 [security.md](security.md) 的 3.6。
+Acceptance: After a save, `GetBucketInfo` returns the same values. A browser cross-origin preflight matches the configuration. This project's own `/api` does not allow cross-origin access. See 3.6 of [security.md](security.md).
 
-## 5.17 网站访问
+## 5.17 Website access
 
-- 需求：开关网站访问，设置索引文档与错误文档；开启时确认对话框提示数据将公开；按模板展示公开地址。
-- 接口：`PUT /api/buckets/{id}/website`。
-- Garage：`UpdateBucket.websiteAccess`（`enabled`、`indexDocument`、`errorDocument`；另有 `routingRules`，本轮只读显示，不提供编辑，保存时原样回传）。
+- Requirement: Turn website access on or off. Set the index document and the error document. When turning it on, the confirmation dialog says the data will become public. Show the public address from the template.
+- API: `PUT /api/buckets/{id}/website`.
+- Garage: `UpdateBucket.websiteAccess` (`enabled`, `indexDocument`, `errorDocument`. There is also `routingRules`. This round displays it read-only, does not offer an editor, and sends the original value back unchanged on save).
 
-验收：开启后公开地址可访问；关闭后返回 Garage 的拒绝响应。
+Acceptance: After it is turned on, the public address can be reached. After it is turned off, the response is Garage's denial response.
 
-[scope.md](scope.md) 的 8.1 没有把网站访问列入最小版必含项，8.2 的排除列表也没有点名 5.17。[roadmap.md](roadmap.md) 的阶段表没有单独估算行。本条需求与验收保留，不在拆解时改派到某个阶段。
+8.1 of [scope.md](scope.md) does not list website access as required for the minimum version. The exclusion list in 8.2 does not name 5.17 either. The phase table in [roadmap.md](roadmap.md) has no separate estimate row for it. This requirement and its acceptance stay as written. When the work is broken down, do not assign this item to a phase.
 
-## 5.18 配额
+## 5.18 Quotas
 
-- 需求：设置或清除桶的最大容量（`maxSize`）与最大对象数（`maxObjects`），显示当前使用率。
-- 接口：`PUT /api/buckets/{id}/quotas`。
-- Garage：`UpdateBucket.quotas`。
-- 说明：`UpdateBucket` 的 `quotas` 为整体替换：不传 `quotas` 表示不变；传入时 `maxSize`、`maxObjects` 两项都会被写入，置 null 即清除该项。前端修改一项时必须同时回传另一项的当前值。
+- Requirement: Set or clear the bucket maximum size (`maxSize`) and the maximum object count (`maxObjects`). Show the current usage.
+- API: `PUT /api/buckets/{id}/quotas`.
+- Garage: `UpdateBucket.quotas`.
+- Note: `quotas` on `UpdateBucket` is replaced as a whole. Omitting `quotas` means no change. When `quotas` is sent, both `maxSize` and `maxObjects` are written. Null clears that field. When the frontend changes one field, it must also send the current value of the other field.
 
-验收：只改 `maxSize` 时 `maxObjects` 保持原值；两项都置 null 后配额被清除；容量单位换算无精度损失。
+Acceptance: Changing only `maxSize` leaves `maxObjects` at its original value. Setting both to null clears the quota. Converting capacity units loses no precision.
 
-## 5.19 权限
+## 5.19 Permissions
 
-- 需求：列出桶上的 key 与 read/write/owner 权限；授权、撤销（校验见 [correctness.md](correctness.md) 的 4.6；撤销后凭据缓存失效见 4.2）。
-- 接口：`POST`/`DELETE /api/buckets/{id}/permissions`。
-- Garage：`AllowBucketKey`、`DenyBucketKey`、`GetBucketInfo`。
+- Requirement: List the keys on a bucket and their read/write/owner permissions. Grant and revoke (validation is in 4.6 of [correctness.md](correctness.md); after a revoke, credential-cache invalidation is in 4.2).
+- API: `POST`/`DELETE /api/buckets/{id}/permissions`.
+- Garage: `AllowBucketKey`, `DenyBucketKey`, `GetBucketInfo`.
 
-验收：撤销后界面与 Garage 一致。
+Acceptance: After a revoke, the UI matches Garage.
 
-## 5.24 明确不支持的 S3 特性
+## 5.24 S3 features this project explicitly does not support
 
-以下特性 Garage 不支持（或仅返回固定值），本项目界面不提供入口，相关文档写明：
+Garage does not support the following features, or it returns only a fixed value. This project's UI offers no entry for them, and the related docs say so.
 
-- 对象版本控制（`ListObjectVersions` 返回未实现；仅可读取版本控制状态，恒为未启用）。
-- 对象锁、保留期锁定与法律保留。
-- 桶策略与对象 ACL（权限一律通过 Garage key 授权）。
-- 服务端加密配置（SSE-C 除外，本项目不做管理界面）。
-- 桶复制、请求者付费、对象标签管理、存储类别切换、事件通知。
+- Object versioning (`ListObjectVersions` returns not implemented. Only the versioning state can be read, and it is always disabled).
+- Object Lock, a retention-period lock, and a legal hold.
+- Bucket policies and object ACLs (permissions are granted only through a Garage key).
+- Server-side encryption configuration (SSE-C is the exception. This project does not provide a management UI for it).
+- Bucket replication, requester pays, object-tag management, switching storage class, and event notifications.
 
-验收：界面无上述入口；文档「已知限制」章节列出。
+Acceptance: The UI has none of the entries above. The "Known limitations" section of the docs lists them.
