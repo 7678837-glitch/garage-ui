@@ -350,6 +350,23 @@ struct StatusRole<'a> {
     tags: Option<&'a [u8]>,
 }
 
+pub(crate) async fn preview_layout(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeLayout)?;
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "PreviewClusterLayoutChanges",
+        None,
+        b"",
+    )
+    .await
+}
+
 pub(crate) async fn stage_layout(
     State(app): State<App>,
     Authed(current): Authed,
