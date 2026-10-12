@@ -1,32 +1,32 @@
-# 工作规格
+# Working spec
 
-本目录是仓库根目录 [`DEV-GUIDE.md`](../DEV-GUIDE.md) 的拆解稿，供实现、并行开发和验收使用。原文保留。两边冲突时以本目录为准。
+This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. The original text stays. When the two sides conflict, this directory wins.
 
-Garage 端点名与字段名仍以 Garage 源码中的 Admin API v2 定义为准。本目录不包含实现代码。
+Endpoint names and field names still follow the Admin API v2 definition in the Garage source. This directory contains no implementation code.
 
-## 已吸收的决定
+## Decisions already absorbed
 
-| 决定 | 落地位置 |
+| Decision | Where it landed |
 |---|---|
-| 后端用 Rust 撰写 | [decisions.md](decisions.md)、[engineering.md](engineering.md) |
-| 前端工具链用 Bun | [decisions.md](decisions.md)、[engineering.md](engineering.md) |
-| 允许多 Agent 并行开发 | [decisions.md](decisions.md) |
-| 允许本地容器化运行 Garage 做测试和评估 | [decisions.md](decisions.md)、[engineering.md](engineering.md) |
-| 运行时栈：Rust 1.99.0、axum 0.8.9、SQLx 0.9 捆绑 SQLite，其余见决定文件 | [decisions.md](decisions.md)、[engineering.md](engineering.md) |
-| 管理台自身支持容器化部署（linux/amd64 与 linux/arm64） | [decisions.md](decisions.md)、[engineering.md](engineering.md)、[scope.md](scope.md) |
-| 前端去掉 daisyUI 和 zustand | [decisions.md](decisions.md)、[engineering.md](engineering.md) |
+| The backend is written in Rust | [decisions.md](decisions.md), [engineering.md](engineering.md) |
+| The frontend toolchain is Bun | [decisions.md](decisions.md), [engineering.md](engineering.md) |
+| Multiple agents may develop in parallel | [decisions.md](decisions.md) |
+| Garage may run in a local container for tests and evaluation | [decisions.md](decisions.md), [engineering.md](engineering.md) |
+| Runtime stack: Rust 1.99.0, axum 0.8.9, SQLx 0.9 with bundled SQLite. The rest is in the decisions file | [decisions.md](decisions.md), [engineering.md](engineering.md) |
+| The admin UI itself supports containerized deployment (`linux/amd64` and `linux/arm64`) | [decisions.md](decisions.md), [engineering.md](engineering.md), [scope.md](scope.md) |
+| The frontend drops daisyUI and zustand | [decisions.md](decisions.md), [engineering.md](engineering.md) |
 
-界面库是 React 18、TypeScript、Vite、TanStack Query、react-hook-form、zod、Tailwind。Bun 替换的是 Node / pnpm 这一层工具链，当前钉 1.4.2。
+The UI libraries are React 18, TypeScript, Vite, TanStack Query, react-hook-form, zod, and Tailwind. Bun replaces the Node / pnpm toolchain layer. It is currently pinned at 1.4.2.
 
-## 阅读顺序
+## Reading order
 
-1. [decisions.md](decisions.md) — 相对原稿改了什么
-2. [scope.md](scope.md) — 目标、范围、最小版本
-3. [garage-api.md](garage-api.md) — 版本、能力探测、46 个端点
-4. [security.md](security.md) — 安全要求与角色矩阵
-5. [correctness.md](correctness.md) — 正确性要求
-6. 功能四份：[数据面](features-data.md)、[集群与布局](features-cluster.md)、[身份与审计](features-access.md)、[界面](features-ui.md)
-7. [engineering.md](engineering.md) — 非功能与工程要求（已按 Rust / Bun 改写）
-8. [roadmap.md](roadmap.md) — 阶段、优先级、人日
+1. [decisions.md](decisions.md). What changed relative to the original draft.
+2. [scope.md](scope.md). Goals, scope, and the minimum version.
+3. [garage-api.md](garage-api.md). Versions, the capability probe, and the 46 endpoints.
+4. [security.md](security.md). Security requirements and the role matrix.
+5. [correctness.md](correctness.md). Correctness requirements.
+6. Four feature documents: [data plane](features-data.md), [cluster and layout](features-cluster.md), [identity and audit](features-access.md), [UI](features-ui.md).
+7. [engineering.md](engineering.md). Non-functional and engineering requirements (already rewritten for Rust and Bun).
+8. [roadmap.md](roadmap.md). Phases, priority, and person-days.
 
-章节号沿用原稿，方便对照。例如安全默认鉴权仍是 3.1，桶仍是 5.1。
+Section numbers follow the original draft, so the two can be compared. For example, authentication that is safe by default is still 3.1, and buckets are still 5.1.
