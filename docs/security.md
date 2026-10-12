@@ -1,184 +1,184 @@
-# 安全要求
+# Security requirements
 
-所有条目为 P0，除非另注。角色缩写：A=管理员，V=只读，D=被授予「下载对象内容」的只读用户，S=被授予「分享」的只读用户。
+Every item is P0 unless it is marked otherwise. Role abbreviations: A = administrator, V = read-only, D = a read-only user who has been granted "download object content", S = a read-only user who has been granted "share".
 
-## 3.1 默认鉴权
+## 3.1 Default authentication
 
-- 没有免登录模式。首次启动且用户库为空时，所有页面引导到初始化向导创建第一个管理员；完成后该入口永久关闭。
-- 未完成初始化前，除初始化相关接口和状态查询外，其他接口一律返回 401。
-- 默认监听地址：二进制直接运行时未显式配置则监听 `127.0.0.1`；需要对外暴露时由运维显式设置 `HOST`。容器镜像内默认监听 `0.0.0.0`（容器内只监听回环地址时端口映射无法到达）；compose 示例只把端口映射到宿主机的 `127.0.0.1`，由运维显式改为对外映射。
+- There is no mode that skips login. On the first start, when the user store is empty, every page leads to the setup wizard that creates the first administrator. After that finishes, that entry is closed permanently.
+- Before setup is finished, every API returns 401 except the setup APIs and the status query.
+- Default listen address. When the binary runs directly and nothing is configured explicitly, listen on `127.0.0.1`. When it must be exposed, an operator sets `HOST` explicitly. Inside the container image, listen on `0.0.0.0` by default (if the container listens only on the loopback address, a published port cannot reach it). The compose example maps the port only to the host's `127.0.0.1`. An operator changes that mapping explicitly when it should be reachable from elsewhere.
 
-验收：二进制直接运行且未设置 `HOST` 时只在 `127.0.0.1` 上可连接；容器镜像未设置 `HOST` 时监听 `0.0.0.0`；按 compose 示例启动后，宿主机 `127.0.0.1:3909` 可访问，宿主机其他地址不可访问；全新启动后，未登录请求 `GET /api/keys` 返回 401；初始化后再次提交初始化返回 409。
+Acceptance: When the binary runs directly and `HOST` is not set, it is reachable only on `127.0.0.1`. When the container image does not set `HOST`, it listens on `0.0.0.0`. After a start from the compose example, the host can reach `127.0.0.1:3909`, and other addresses on the host cannot. After a fresh start, an unauthenticated `GET /api/keys` returns 401. Submitting setup again after setup has finished returns 409.
 
-## 3.2 不泄露密钥
+## 3.2 Do not leak secrets
 
-- 配置接口只返回前端需要的非敏感字段（S3 区域、网站根域名、是否启用分享、版本号），用白名单结构体输出。
-- 绝不返回 `rpc_secret`、`admin_token`、`metrics_token`、任何 RPC 地址或管理端监听地址。
-- 日志、错误信息、审计记录中不得出现令牌、`secretAccessKey`、密码或密码哈希。
-- 查看 `secretAccessKey` 只允许管理员，需二次确认，并写入审计。
+- The configuration API returns only the non-sensitive fields the frontend needs (S3 region, website root domain, whether sharing is enabled, version). Emit them from an allowlist struct.
+- Never return `rpc_secret`, `admin_token`, `metrics_token`, any RPC address, or the admin listen address.
+- Logs, error text, and audit records must not contain a token, a `secretAccessKey`, a password, or a password hash.
+- Viewing a `secretAccessKey` is allowed only for an administrator. It requires a second confirmation, and it writes an audit record.
 
-验收：对配置接口响应做字段白名单断言；对日志输出做敏感串扫描测试。
+Acceptance: Assert a field allowlist on the configuration API response. A test scans log output for sensitive strings.
 
-## 3.3 预览 XSS 防护
+## 3.3 Preview XSS protection
 
-- 所有对象响应加 `X-Content-Type-Options: nosniff`。
-- 仅白名单类型允许内联：常见位图（png、jpeg、gif、webp、avif、bmp、ico）、`text/plain`、`application/pdf`、mp4/webm 视频、mpeg/ogg/wav 音频。SVG、HTML、XML、JavaScript 一律不内联。
-- 类型解析忽略参数并小写化，解析失败按不安全处理。
-- 非白名单类型：`Content-Type` 改为 `application/octet-stream`，并加 `Content-Disposition: attachment`，文件名按 RFC 5987 编码。
-- 对象响应加沙箱 CSP（`sandbox; frame-ancestors 'self'`），PDF 可放开脚本但不得授予同源。
-- 全站安全头：严格 CSP（默认仅自身源，禁止 object，`frame-ancestors 'none'`）、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`。
-- 可选（P1）：预览改用独立域名的预签名地址，彻底与管理台隔离。
+- Add `X-Content-Type-Options: nosniff` to every object response.
+- Only allowlisted types may be shown inline: common bitmaps (png, jpeg, gif, webp, avif, bmp, ico), `text/plain`, `application/pdf`, mp4 and webm video, and mpeg, ogg, and wav audio. SVG, HTML, XML, and JavaScript are never shown inline.
+- Parsing a type ignores parameters and lowercases the type. A parse failure is treated as unsafe.
+- For a type outside the allowlist, change `Content-Type` to `application/octet-stream`, add `Content-Disposition: attachment`, and encode the filename with RFC 5987.
+- Add a sandbox CSP to object responses (`sandbox; frame-ancestors 'self'`). A PDF may allow scripts, and it must not be granted same origin.
+- Site-wide security headers: a strict CSP (its own origin only, by default; `object` is forbidden; `frame-ancestors 'none'`), `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`.
+- Optional (P1): serve preview from a presigned address on a separate domain, fully isolated from the admin UI.
 
-验收：上传 `Content-Type` 为 `text/html` 和 `image/svg+xml` 的对象，预览请求返回附件下载与 `octet-stream`；E2E 测试中脚本不执行。
+Acceptance: Upload objects whose `Content-Type` is `text/html` and `image/svg+xml`. The preview request returns an attachment download and `octet-stream`. In the E2E test, the script does not run.
 
-## 3.4 会话与 cookie
+## 3.4 Sessions and cookies
 
-- 登录成功、初始化完成、修改密码、退出时都轮换会话 ID；退出时销毁服务端会话。
-- 会话 cookie：禁止脚本读取、`SameSite=Lax`、`Path` 跟随 `BASE_PATH`；`Secure` 默认开启，仅在显式配置为本地明文部署时关闭。
-- 绝对生命周期默认 24 小时，空闲超时默认 2 小时，均可配置；非法值回退默认值。
-- 每次请求以服务端用户库中的实时角色与禁用状态为准，会话中保存的角色只作显示缓存。
+- Rotate the session ID on a successful login, when setup finishes, when the password is changed, and on logout. On logout, destroy the server session.
+- Session cookie: scripts cannot read it, `SameSite=Lax`, and `Path` follows `BASE_PATH`. `Secure` is on by default. It is turned off only when the deployment is explicitly configured as local cleartext.
+- The absolute lifetime defaults to 24 hours. The idle timeout defaults to 2 hours. Both can be configured. An illegal value falls back to the default.
+- Each request uses the live role and the disabled state from the user store on the server. A role saved in the session is only a display cache.
 
-验收：登录前后会话 ID 不同；退出后旧 cookie 请求返回 401；禁用用户后其下一次请求返回 401。
+Acceptance: The session ID is different before and after login. After logout, a request with the old cookie returns 401. After a user is disabled, that user's next request returns 401.
 
-## 3.5 限流
+## 3.5 Rate limiting
 
-- 通用限流组件，进程内滑动窗口，默认 10 次/分钟：
-  - 登录按「客户端地址 + 小写用户名」计数；
-  - 初始化按客户端地址；
-  - 修改密码按用户名；
-  - 分享链接生成、下载令牌按用户计数（P1）。
-- 客户端地址默认取连接地址；仅当配置了可信代理头时才读取该头的最后一跳。
-- 超限返回 429，带 `Retry-After`。
-- 用户不存在或已禁用时仍执行一次等耗时的哈希比较，错误文案统一，防止枚举。
+- One shared rate-limit component. An in-process sliding window, default 10 times per minute.
+  - Count login by "client address + lowercased username".
+  - Count setup by client address.
+  - Count password change by username.
+  - Count share-link generation and download tokens by user (P1).
+- The client address is the connection address by default. Read the last hop of a trusted proxy header only when that header is configured.
+- Over the limit, return 429, with `Retry-After`.
+- When the user does not exist, or is disabled, still run one hash comparison of equal duration. The error text is the same, so the account cannot be enumerated.
 
-验收：同一 key 第 11 次返回 429；窗口过后恢复；不同用户名计数互不影响。
+Acceptance: The 11th request for the same key returns 429. After the window has passed, requests are accepted again. Counts for different usernames do not affect each other.
 
 ## 3.6 CSRF
 
-- 双提交 cookie：服务端下发随机 token cookie（可被前端脚本读取），所有 POST/PUT/PATCH/DELETE 必须带 `X-CSRF-Token` 头并做常量时间比较。
-- 仅豁免登录和初始化两个接口。
-- 本项目自身的 `/api` 不开放任何跨域访问（与 [features-data.md](features-data.md) 5.16 中为 Garage 桶配置的 CORS 规则无关）。
+- Double-submit cookie. The server sets a random token cookie (a frontend script may read it). Every POST, PUT, PATCH, and DELETE must send an `X-CSRF-Token` header, and the comparison is constant-time.
+- Only two APIs are exempt: login and setup.
+- This project's own `/api` allows no cross-origin access. That is separate from the CORS rules configured on a Garage bucket in 5.16 of [features-data.md](features-data.md).
 
-验收：缺头或不一致返回 403；豁免列表有测试固定。
+Acceptance: A missing header, or a header that does not match, returns 403. A test pins the exemption list.
 
-## 3.7 端点白名单代理
+## 3.7 Endpoint allowlist proxy
 
-- 不允许通配透传 Admin API。后端只暴露一张显式白名单：每条记录包含 Garage 端点名、允许的方法、所需角色、是否写审计。
-- 白名单外的路径一律 404。
-- 敏感端点（`CreateAdminToken`、`UpdateAdminToken`、`PurgeBlocks`、`LaunchRepairOperation`、`SetWorkerVariable`、`ClusterLayoutSkipDeadNodes`、`GetKeyInfo` 带 `showSecretKey`）仅管理员可用，且需二次确认。
-- 后端从不把客户端的查询参数透传给 `GetKeyInfo`：普通查询固定不带 `showSecretKey`；查看 secret 只走本项目的专用接口（[features-access.md](features-access.md) 的 5.7），由后端显式附加 `showSecretKey=true`。
-- 白名单必须覆盖每个功能实际调用的端点：[garage-api.md](garage-api.md) 2.4 的全部端点、能力探测用的 `ListBucketsInfo` 与 `ListKeysInfo`、`/metrics`。CI 中用表驱动测试校验「各功能声明使用的端点 ⊆ 白名单」。
-- 若本项目使用受限管理令牌，其作用域必须包含白名单内所有端点；需要指标面板时还要包含作用域值 `Metrics`（`/metrics` 的端点名）或单独配置 `metrics_token`。`GetCurrentAdminTokenInfo` 对任何有效令牌都可调用，无需列入作用域。
-- 推荐（P1）：本项目使用作用域受限的 Garage 管理令牌（scope 仅列出白名单端点），而非全权 `admin_token`；启动时用 `GetCurrentAdminTokenInfo` 自检并在界面显示令牌作用域与到期时间。
+- Do not pass the Admin API through on a wildcard. The backend exposes one explicit allowlist. Each record contains the Garage endpoint name, the allowed methods, the required role, and whether the call writes an audit record.
+- A path outside the allowlist is always 404.
+- Sensitive endpoints (`CreateAdminToken`, `UpdateAdminToken`, `PurgeBlocks`, `LaunchRepairOperation`, `SetWorkerVariable`, `ClusterLayoutSkipDeadNodes`, and `GetKeyInfo` with `showSecretKey`) are available only to an administrator, and they require a second confirmation.
+- The backend never forwards the client's query parameters to `GetKeyInfo`. An ordinary query is fixed so that it does not send `showSecretKey`. Viewing a secret goes only through this project's dedicated API (5.7 of [features-access.md](features-access.md)). The backend adds `showSecretKey=true` itself.
+- The allowlist must cover every endpoint each feature actually calls: every endpoint in 2.4 of [garage-api.md](garage-api.md), `ListBucketsInfo` and `ListKeysInfo` used by the capability probe, and `/metrics`. In CI, a table-driven test checks that the endpoints each feature declares ⊆ the allowlist.
+- If this project uses a restricted admin token, that token's scope must include every endpoint on the allowlist. When the metrics panel is required, the scope must also include the scope value `Metrics` (the endpoint name of `/metrics`), or `metrics_token` is configured on its own. `GetCurrentAdminTokenInfo` can be called with any valid token. It does not have to be listed in the scope.
+- Recommended (P1): this project uses a scope-restricted Garage admin token (the scope lists only allowlisted endpoints), not a full-authority `admin_token`. At startup, self-check with `GetCurrentAdminTokenInfo`, and show the token's scope and expiration time in the UI.
 
-验收：只读角色调用任何写端点返回 403；调用不在白名单的端点返回 404；有覆盖整张白名单的表驱动测试。
+Acceptance: A read-only role calling any write endpoint returns 403. Calling an endpoint that is not on the allowlist returns 404. A table-driven test covers the whole allowlist.
 
-## 3.8 非 root 容器
+## 3.8 Non-root container
 
-- 运行镜像使用 distroless static 的 nonroot 变体，以非 root 用户运行，根文件系统只读可用。
-- 数据目录 `/data` 为唯一可写卷。
+- The runtime image uses the nonroot variant of distroless static. It runs as a non-root user. The root filesystem can be used read-only.
+- `/data` is the only writable volume.
 
-验收：容器内 id 不为 0；以 `--read-only` 启动可正常工作。
+Acceptance: The id inside the container is not 0. A start with `--read-only` works.
 
-## 3.9 请求体大小限制
+## 3.9 Request body size limit
 
-- 所有 JSON 接口统一上限（默认 1 MiB），在中间件层统一施加。
-- 上传接口单独上限 `MAX_UPLOAD_SIZE_MB`（默认 512，可配置），`Content-Length` 超限时提前返回 413，流式读取过程中超限同样中止并返回 413。
+- Every JSON API shares one upper bound (default 1 MiB), applied in middleware.
+- The upload API has its own bound, `MAX_UPLOAD_SIZE_MB` (default 512, configurable). When `Content-Length` is over the bound, return 413 before reading the body. When a streamed read goes over the bound, abort it the same way and return 413.
 
-验收：2 MiB 的 JSON 请求到任一接口返回 413；上传超限返回 413 且无残留临时文件。
+Acceptance: A 2 MiB JSON request to any API returns 413. An upload over the limit returns 413, and no temporary file is left.
 
-## 3.10 分享链接权限
+## 3.10 Share link permission
 
-- 生成预签名链接默认仅管理员可用；可通过单独的「分享」权限授予只读用户，且该用户必须同时具备「下载对象内容」权限（3.19）。只读角色默认不可生成。
-- 有效期档位 1 小时、24 小时、7 天，服务端强制上限 7 天。
-- 每次生成写审计（用户、桶、key、有效期）。
-- 未配置公共 S3 地址时功能关闭，接口返回 501。
+- Generating a presigned link is available only to an administrator by default. It may be granted to a read-only user through the separate "share" permission, and that user must also have the "download object content" permission (3.19). A read-only role cannot generate a link by default.
+- The validity choices are 1 hour, 24 hours, and 7 days. The server enforces an upper bound of 7 days.
+- Every generation writes an audit record (user, bucket, key, validity).
+- When no public S3 address is configured, the feature is off and the API returns 501.
 
-验收：只读用户请求分享返回 403；有效期超上限被截断为 7 天。
+Acceptance: A read-only user requesting a share returns 403. A validity period above the upper bound is truncated to 7 days.
 
-## 3.11 私有对象不被长时间缓存
+## 3.11 Private objects are not cached for long
 
-- 所有经认证返回的对象内容、元数据、ZIP 下载：`Cache-Control: private, no-store`。
-- 前端静态资源：`index.html` 不缓存，带哈希的资源长期缓存且不可变。
+- For every authenticated response of object content, metadata, or a ZIP download: `Cache-Control: private, no-store`.
+- Frontend static assets: do not cache `index.html`. Cache hashed assets for a long time, and mark them immutable.
 
-验收：对象下载响应头断言 `no-store`。
+Acceptance: Assert `no-store` on the response headers of an object download.
 
-## 3.12 会话持久化及改密后失效
+## 3.12 Persisted sessions, and invalidation after a password change
 
-- 会话存储落库（与用户库同一 SQLite），重启不掉线，可支持多副本共享同一数据库时的一致性（多副本为 P2）。
-- 修改密码、管理员重置密码、禁用、删除用户、降级角色时，立即删除该用户的全部其他会话（修改密码时保留当前会话并轮换 ID）。
+- Store sessions in the database (the same SQLite database as the user store). A restart does not drop the login. The store can keep sessions consistent when several replicas share that database (several replicas are P2).
+- When the password is changed, an administrator resets the password, the user is disabled, the user is deleted, or the role is demoted, delete every other session of that user immediately. When the password is changed, keep the current session and rotate its ID.
 
-验收：A、B 两个浏览器登录同一账号，A 改密码后 B 的下一次请求返回 401；重启进程后未过期会话仍有效。
+Acceptance: Browsers A and B log in as the same account. After A changes the password, B's next request returns 401. After the process restarts, a session that has not expired is still valid.
 
-## 3.13 登录审计与 IP
+## 3.13 Login audit and IP
 
-- 登录成功、失败、限流命中、退出、初始化、改密均写入审计，包含时间（UTC）、用户名、客户端 IP、结果、原因代码。
-- 审计不包含密码或请求体。
+- Write an audit record for a successful login, a failed login, a rate-limit hit, logout, setup, and a password change. Include the time (UTC), the username, the client IP, the result, and a reason code.
+- An audit record does not contain the password or the request body.
 
-验收：一次失败登录后，审计表新增一条带 IP 的记录。
+Acceptance: After one failed login, the audit table has one new record, and that record includes the IP.
 
-## 3.14 示例与镜像中不含任何密钥
+## 3.14 Examples and images contain no secrets
 
-- 仓库、镜像、compose 示例、Helm values、文档中不得出现任何真实或「示例」私钥、签名密钥、会话密钥、密码、S3 凭据；示例一律用占位符并说明如何生成。
-- 会话签名/加密密钥未配置时，首次启动在数据目录随机生成并以仅属主可读权限保存；不得使用编译进二进制的默认值。
-- 启动时检查已配置的密钥：长度不足或与文档占位符相同则拒绝启动。
-- CI 对全部提交历史跑密钥扫描，命中即失败（测试夹具需显式白名单并注明为测试值）。
+- The repository, images, the compose example, Helm values, and the docs must not contain any real or "example" private key, signing key, session key, password, or S3 credential. Examples use placeholders only, and they say how to generate the real value.
+- When the session signing key, or the session encryption key, is not configured, the first start generates one at random in the data directory and saves it so that only the owner can read it. Do not use a default that was compiled into the binary.
+- At startup, check secrets that are already configured. If the length is too short, or the value is the same as a placeholder in the docs, refuse to start.
+- CI runs a secret scan over the whole commit history. A hit fails the check. A test fixture needs an explicit allowlist entry, and that entry must say it is a test value.
 
-验收：密钥扫描结果为 0；删除数据目录后重启生成新密钥，旧会话全部失效。
+Acceptance: The secret-scan result is 0. After the data directory is deleted and the process is started again, a new secret is generated, and every old session is invalid.
 
-## 3.15 浏览器不接触 Garage 管理令牌
+## 3.15 The browser does not touch the Garage admin token
 
-- Garage admin token、`metrics_token` 只存在于服务端；前端所有 Garage 调用都经本项目后端白名单代理。
-- 前端不在 `localStorage`、`sessionStorage`、`IndexedDB` 中保存任何令牌或会话凭据；会话只用禁止脚本读取的 cookie。
+- The Garage admin token and `metrics_token` exist only on the server. Every Garage call from the frontend goes through this project's backend allowlist proxy.
+- The frontend does not store a token or a session credential in `localStorage`, `sessionStorage`, or `IndexedDB`. The session uses only a cookie that scripts cannot read.
 
-验收：E2E 中检查浏览器存储与所有响应体，不出现 admin token 或会话 ID。
+Acceptance: E2E checks browser storage and every response body. An admin token does not appear, and a session ID does not appear.
 
-## 3.16 不存在「全关放行」
+## 3.16 No switch that turns checks off and allows every request
 
-- 不提供关闭鉴权的配置项；任何鉴权配置错误都导致启动失败，而不是放行。
+- There is no configuration item that turns authentication off. Any error in the authentication configuration fails startup. It does not let the request through.
 
-验收：配置缺失/非法的表驱动测试均以非零码退出。
+Acceptance: Table-driven tests for a missing configuration and for an illegal configuration all exit with a non-zero status.
 
-## 3.17 外部 TLS（P1）
+## 3.17 External TLS (P1)
 
-- 连接 Garage 与（远期）身份源时默认校验证书；支持自定义 CA 文件；「跳过校验」只能显式开启，启动日志与界面持续告警。
+- When connecting to Garage, and when connecting to an identity source (that source is later), verify the certificate by default. A custom CA file is supported. "Skip verification" can be turned on only by an explicit setting. The startup log and the UI keep showing a warning.
 
-## 3.18 其他加固（P1）
+## 3.18 Other hardening (P1)
 
-- 密码：bcrypt，最少 10 个字符，最多 72 字节，不能全为空白。
-- 离线 CLI 重置密码，从终端或标准输入读取密码，不通过命令行参数传入；不提供任何网络侧重置入口。
-- 自签证书：支持自定义 CA 文件；「跳过证书校验」仅作为显式开关并在界面告警。
+- Passwords use bcrypt. A password is at least 10 characters, at most 72 bytes, and not entirely whitespace.
+- The offline CLI resets a password by reading it from the terminal or from standard input. The password is not passed as a command-line argument. There is no reset entry on the network.
+- Self-signed certificates: a custom CA file is supported. "Skip certificate verification" exists only as an explicit switch, and the UI shows a warning.
 
-## 3.19 角色与操作矩阵
+## 3.19 Role and operation matrix
 
-D、S 是叠加在 V 上的独立权限，默认都关闭；授予 S 时必须同时具备 D（分享链接本质上也是把内容带出管理台），界面与后端都强制这一约束。「—」表示不可用且界面不显示入口；后端一律以此表为准做授权。
+D and S are independent permissions added on top of V. Both default to off. Granting S requires that the user also has D, because a share link also takes the content out of the admin UI. The UI and the backend both enforce that constraint. "—" means the operation is unavailable, and the UI does not show an entry for it. The backend authorizes from this table and from no other rule.
 
-| 操作 | A | V | V+D | V+D+S |
+| Operation | A | V | V+D | V+D+S |
 |---|---|---|---|---|
-| 查看集群健康、状态、节点、布局、历史 | ✔ | ✔ | ✔ | ✔ |
-| 查看集群与节点统计 | ✔ | ✔ | ✔ | ✔ |
-| 查看 Prometheus 指标面板（汇总指标，不含凭据） | ✔ | ✔ | ✔ | ✔ |
-| 修改布局、连接节点、跳过死节点 | ✔ | — | — | — |
-| 查看桶列表与详情（别名、配额、网站、CORS、生命周期） | ✔ | ✔ | ✔ | ✔ |
-| 创建、删除桶，改别名、配额、网站、CORS、生命周期 | ✔ | — | — | — |
-| 查看桶上的密钥与权限（不含 secret） | ✔ | ✔ | ✔ | ✔ |
-| 授予、撤销桶权限 | ✔ | — | — | — |
-| 查看密钥列表与详情（不含 secret） | ✔ | ✔ | ✔ | ✔ |
-| 查看 S3 secret | ✔（二次确认，审计） | — | — | — |
-| 创建、导入、修改、删除密钥 | ✔ | — | — | — |
-| 浏览对象列表、元数据、搜索 | ✔ | ✔ | ✔ | ✔ |
-| 预览、下载对象、ZIP 打包下载、缩略图 | ✔ | — | ✔ | ✔ |
-| 上传、删除对象，清理未完成上传 | ✔ | — | — | — |
-| 生成分享链接 | ✔ | — | — | ✔ |
-| `InspectObject` 诊断 | ✔ | — | — | — |
-| Worker、修复、块错误、元数据快照（查看） | ✔ | — | — | — |
-| Worker 变量、修复、重试、清除块、快照（执行） | ✔ | — | — | — |
-| 管理令牌（查看与管理） | ✔ | — | — | — |
-| 审计日志（查看、导出） | ✔ | — | — | — |
-| 用户管理 | ✔ | — | — | — |
-| 修改自己的密码、主题 | ✔ | ✔ | ✔ | ✔ |
+| View cluster health, status, nodes, layout, and history | ✔ | ✔ | ✔ | ✔ |
+| View cluster statistics and node statistics | ✔ | ✔ | ✔ | ✔ |
+| View the Prometheus metrics panel (summary metrics, with no credentials) | ✔ | ✔ | ✔ | ✔ |
+| Change the layout, connect nodes, skip dead nodes | ✔ | — | — | — |
+| View the bucket list and bucket detail (aliases, quotas, website, CORS, lifecycle) | ✔ | ✔ | ✔ | ✔ |
+| Create and delete buckets, and change aliases, quotas, website, CORS, and lifecycle | ✔ | — | — | — |
+| View the keys and permissions on a bucket (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
+| Grant and revoke bucket permissions | ✔ | — | — | — |
+| View the key list and key detail (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
+| View the S3 secret | ✔ (a second confirmation, and an audit record) | — | — | — |
+| Create, import, change, and delete keys | ✔ | — | — | — |
+| Browse the object list, metadata, and search | ✔ | ✔ | ✔ | ✔ |
+| Preview and download an object, download a ZIP, and view thumbnails | ✔ | — | ✔ | ✔ |
+| Upload and delete objects, and clean up incomplete uploads | ✔ | — | — | — |
+| Generate a share link | ✔ | — | — | ✔ |
+| `InspectObject` diagnostics | ✔ | — | — | — |
+| Workers, repair, block errors, and metadata snapshots (view) | ✔ | — | — | — |
+| Worker variables, repair, retry, purge blocks, and snapshots (run) | ✔ | — | — | — |
+| Admin tokens (view and manage) | ✔ | — | — | — |
+| Audit log (view and export) | ✔ | — | — | — |
+| User management | ✔ | — | — | — |
+| Change your own password, and the theme | ✔ | ✔ | ✔ | ✔ |
 
-- 运维页面（Worker、块错误与块信息、元数据快照、修复）对只读角色不开放查看，仅管理员可用。这些页面是内部诊断信息：块信息含桶 ID、对象 key 与内部版本 ID，块错误反映磁盘与数据损坏细节，Worker 变量与错误包含内部调优参数和节点路径。只读用户看到后没有可执行的后续操作。只读角色需要的健康信息已由集群健康、状态、统计页面提供。
-- 数据模型：用户记录包含角色（`admin` 或 `viewer`）与权限集合（`download`、`share` 两个布尔位，默认 false）；对 admin 两位无意义且忽略；保存时校验「`share` 为真则 `download` 必须为真」。会话不缓存权限，每次请求按 3.4 从用户库实时读取。授予或撤销权限写审计。
+- Operations pages (Workers, block errors and block information, metadata snapshots, and repair) are not open to a read-only role for viewing. Only an administrator can use them. These pages are internal diagnostic information. Block information includes the bucket ID, the object key, and the internal version ID. Block errors show disk and data-corruption detail. Worker variables and errors include internal tuning parameters and node paths. A read-only user has no follow-up action they can take after seeing that information. The health information a read-only role needs is already on the cluster health, status, and statistics pages.
+- Data model. A user record contains a role (`admin` or `viewer`) and a permission set (two boolean bits, `download` and `share`, default false). For an admin, the two bits mean nothing and are ignored. On save, check that if `share` is true, then `download` must be true. The session does not cache permissions. Each request reads them live from the user store, as 3.4 says. Granting or revoking a permission writes an audit record.
 
-验收：表驱动测试逐行覆盖本表四列；V 请求对象预览、下载、缩略图、ZIP 令牌均返回 403，授予 D 后返回成功；只授予 S 不授予 D 的保存请求返回 400；撤销 D 后该用户已换取但未使用的 ZIP 令牌失效；V 访问任一运维接口返回 403。
+Acceptance: A table-driven test covers every row of this table, across all four columns. A request from V for object preview, download, a thumbnail, or a ZIP token returns 403. After D is granted, those requests succeed. A save that grants S and does not grant D returns 400. After D is revoked, a ZIP token that this user has already exchanged and has not yet used becomes invalid. A request from V to any operations API returns 403.
