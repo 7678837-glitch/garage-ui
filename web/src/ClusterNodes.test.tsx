@@ -173,6 +173,31 @@ test("says there are no nodes when the list is empty", async () => {
   expect(screen.queryByText("Down")).toBeNull();
 });
 
+test("shows Loading nodes and marks the nodes section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  installFetch(
+    "admin",
+    () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+  );
+  renderApp();
+  const section = await screen.findByRole("region", { name: "Cluster nodes" });
+  const loading = screen.getByLabelText("Loading nodes");
+  expect(section.contains(loading)).toBe(true);
+  expect(loading.getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading nodes")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+  release(json({ layoutVersion: 3, nodes: [] }));
+  const message = await screen.findByText("There are no nodes. Connect the first node.");
+  expect(message.tagName).toBe("P");
+  expect(screen.getByRole("region", { name: "Cluster nodes" }).contains(message)).toBe(true);
+  expect(screen.queryByLabelText("Loading nodes")).toBeNull();
+  expect(screen.queryByText("Loading nodes")).toBeNull();
+});
+
 test("says nodes are unavailable when an id is missing or empty", async () => {
   installFetch("admin", () => json({ nodes: [{ isUp: true, draining: false }] }));
   renderApp();
