@@ -18,6 +18,49 @@ const HIDDEN = new Set([
 
 const UNAVAILABLE = "Nodes are unavailable";
 const CONNECT_FAILED = "Connection failed";
+const PREVIEW_FAILED = "Layout preview failed";
+
+type LayoutPreview = { phase: "idle" } | { phase: "ready" } | { phase: "failed"; message: string };
+
+function csrfToken(): string {
+  const found = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("garage_csrf="));
+  if (!found) {
+    return "";
+  }
+  return decodeURIComponent(found.slice("garage_csrf=".length));
+}
+
+async function previewFailureMessage(response: Response): Promise<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await response.text()) as unknown;
+  } catch {
+    return PREVIEW_FAILED;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return PREVIEW_FAILED;
+  }
+  const message = (parsed as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return PREVIEW_FAILED;
+  }
+  return message;
+}
+
+async function previewLayout(): Promise<LayoutPreview> {
+  const response = await fetch("/api/layout/preview", {
+    method: "POST",
+    credentials: "include",
+    headers: { "x-csrf-token": csrfToken() },
+  });
+  if (response.ok) {
+    return { phase: "ready" };
+  }
+  return { phase: "failed", message: await previewFailureMessage(response) };
+}
 
 type NodeLine = {
   id: string;
@@ -496,6 +539,7 @@ export function ClusterNodes() {
     },
   });
   const [query, setQuery] = useState(readNodeQuery);
+  const [layoutPreview, setLayoutPreview] = useState<LayoutPreview>({ phase: "idle" });
   useEffect(() => {
     const sync = () => setQuery(readNodeQuery());
     window.addEventListener("popstate", sync);
@@ -522,6 +566,25 @@ export function ClusterNodes() {
   return (
     <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
       <h2 className="text-lg font-semibold">Nodes</h2>
+      <div className="grid gap-2">
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          onClick={() => {
+            void previewLayout().then(setLayoutPreview);
+          }}
+        >
+          Preview layout
+        </button>
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          disabled={layoutPreview.phase !== "ready"}
+        >
+          Apply layout
+        </button>
+        {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
+      </div>
       <form className="grid gap-3" onSubmit={submit}>
         <label className="block">
           <span className="text-sm">Node address</span>

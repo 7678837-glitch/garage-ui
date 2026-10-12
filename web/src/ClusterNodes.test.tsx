@@ -64,6 +64,7 @@ function installFetch(
   role: "admin" | "viewer",
   statusResponse: () => Response,
   connectResponse?: () => Response | Promise<Response>,
+  previewResponse?: () => Response | Promise<Response>,
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -97,6 +98,9 @@ function installFetch(
     }
     if (url.includes("/api/users")) {
       return json([]);
+    }
+    if (url === "/api/layout/preview") {
+      return previewResponse ? previewResponse() : new Response("no", { status: 500 });
     }
     return new Response("no", { status: 500 });
   });
@@ -833,4 +837,86 @@ test("purge asks for the block hash before it sends", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("heading", { name: "Confirm abc" })).toBeNull();
   expect(purgePosts()).toHaveLength(1);
+});
+
+test("apply stays disabled until preview succeeds", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  const staged = "staged layout is hidden";
+  const stale = "layout version changed";
+  const responses = [
+    json({ message: staged }),
+    json({ message: stale }, 400),
+    new Response("not-json", { status: 500 }),
+  ];
+  const fetchMock = installFetch("admin", () => textResponse(listed), undefined, () => {
+    const next = responses.shift();
+    return next ?? new Response("no", { status: 500 });
+  });
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+
+  const previewPosts = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/preview");
+  const applyPosts = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/apply");
+  const applyButton = () =>
+    screen.getByRole("button", { name: "Apply layout" }) as HTMLButtonElement;
+
+  const preview = screen.getByRole("button", { name: "Preview layout" });
+  expect(preview.closest("li")).toBeNull();
+  expect(preview.getAttribute("type")).toBe("button");
+  expect(applyButton().closest("li")).toBeNull();
+  expect(applyButton().getAttribute("type")).toBe("button");
+  expect(applyButton().disabled).toBe(true);
+  expect(previewPosts()).toHaveLength(0);
+  expect(applyPosts()).toHaveLength(0);
+  expect(screen.queryByText(staged)).toBeNull();
+
+  fireEvent.click(applyButton());
+  await act(async () => {});
+  expect(applyPosts()).toHaveLength(0);
+  expect(previewPosts()).toHaveLength(0);
+
+  await act(async () => {
+    fireEvent.click(preview);
+  });
+  expect(previewPosts()).toHaveLength(1);
+  const init = previewPosts()[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("POST");
+  expect(init?.body ?? null).toBeNull();
+  expect(init?.credentials).toBe("include");
+  expect(new Headers(init?.headers).get("x-csrf-token")).toBe("csrf-token");
+  expect(applyButton().disabled).toBe(false);
+  expect(screen.queryByText(staged)).toBeNull();
+  expect(applyPosts()).toHaveLength(0);
+
+  fireEvent.click(applyButton());
+  await act(async () => {});
+  expect(applyPosts()).toHaveLength(0);
+  expect(previewPosts()).toHaveLength(1);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/layout/apply"))).toBe(
+    false,
+  );
+
+  await act(async () => {
+    fireEvent.click(preview);
+  });
+  expect(previewPosts()).toHaveLength(2);
+  expect(applyButton().disabled).toBe(true);
+  expect(screen.getByText(stale)).toBeTruthy();
+  expect(screen.queryByText(staged)).toBeNull();
+  expect(applyPosts()).toHaveLength(0);
+
+  await act(async () => {
+    fireEvent.click(preview);
+  });
+  expect(previewPosts()).toHaveLength(3);
+  expect(applyButton().disabled).toBe(true);
+  expect(screen.getByText("Layout preview failed")).toBeTruthy();
+  expect(screen.queryByText(stale)).toBeNull();
+  expect(screen.queryByText(staged)).toBeNull();
+  expect(applyPosts()).toHaveLength(0);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/layout/apply"))).toBe(
+    false,
+  );
 });
