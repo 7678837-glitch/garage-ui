@@ -6,6 +6,8 @@ Each item states the requirement, then the acceptance criteria. The default prio
 
 - Requirement: Every bucket API (detail, browse, upload, delete, share, permissions) addresses the bucket by its Garage bucket ID. An alias is for display only. A bucket that has only a local alias, or no global alias at all, must still support the full set of operations.
 
+Garage rejects creating an alias that contains `&` or `=` with 400 InvalidBucketName.
+
 Acceptance: Create a bucket that has only a local alias. Browse, upload, and delete succeed. An alias that contains `&` or `=` does not affect the operation.
 
 ## 4.2 Credential cache and permission revocation take effect promptly
