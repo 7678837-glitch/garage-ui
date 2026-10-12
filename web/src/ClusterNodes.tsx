@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
+import { CapacityField } from "./CapacityField";
 import { isGarageDown } from "./garageDown";
 
 const HIDDEN = new Set([
@@ -24,6 +25,7 @@ type NodeLine = {
   garageVersion: string | null;
   isUp: boolean;
   draining: boolean;
+  capacity: string | null;
 };
 
 function endOfString(text: string, start: number): number {
@@ -158,7 +160,95 @@ function optionalText(value: unknown): string | null {
   return value;
 }
 
-function parseNode(value: unknown): NodeLine {
+function objectEntries(
+  text: string,
+  open: number,
+): { key: string; start: number; end: number }[] {
+  if (text[open] !== "{") {
+    return [];
+  }
+  const close = endOfContainer(text, open, "{", "}");
+  const entries = [];
+  let index = open + 1;
+  while (index < close - 1) {
+    index = skipWs(text, index);
+    if (index >= close - 1 || text[index] === "}") {
+      break;
+    }
+    if (text[index] !== '"') {
+      return [];
+    }
+    const keyEnd = endOfString(text, index);
+    const key = stringKey(text.slice(index, keyEnd));
+    const colon = skipWs(text, keyEnd);
+    if (key === null || text[colon] !== ":") {
+      return [];
+    }
+    const valueStart = skipWs(text, colon + 1);
+    const valueEnd = endOfValue(text, valueStart);
+    entries.push({ key, start: valueStart, end: valueEnd });
+    index = skipWs(text, valueEnd);
+    if (text[index] === ",") {
+      index += 1;
+    }
+  }
+  return entries;
+}
+
+function arrayElements(text: string, open: number): { start: number; end: number }[] {
+  if (text[open] !== "[") {
+    return [];
+  }
+  const close = endOfContainer(text, open, "[", "]");
+  const items = [];
+  let index = open + 1;
+  while (index < close - 1) {
+    index = skipWs(text, index);
+    if (index >= close - 1 || text[index] === "]") {
+      break;
+    }
+    const valueEnd = endOfValue(text, index);
+    items.push({ start: index, end: valueEnd });
+    index = skipWs(text, valueEnd);
+    if (text[index] === ",") {
+      index += 1;
+    }
+  }
+  return items;
+}
+
+// 容量数字不进 JSON.parse，只作为 CapacityField 的字节串。
+function roleCapacityById(text: string): Map<string, string> {
+  const found = new Map<string, string>();
+  const root = skipWs(text, 0);
+  const nodes = objectEntries(text, root).find((entry) => entry.key === "nodes");
+  if (!nodes || text[nodes.start] !== "[") {
+    return found;
+  }
+  for (const item of arrayElements(text, nodes.start)) {
+    if (text[item.start] !== "{") {
+      continue;
+    }
+    const fields = objectEntries(text, item.start);
+    const idField = fields.find((entry) => entry.key === "id");
+    const roleField = fields.find((entry) => entry.key === "role");
+    if (!idField || !roleField || text[roleField.start] !== "{") {
+      continue;
+    }
+    const id = stringKey(text.slice(idField.start, idField.end));
+    const capacity = objectEntries(text, roleField.start).find((entry) => entry.key === "capacity");
+    if (id === null || id.length === 0 || !capacity) {
+      continue;
+    }
+    const digits = text.slice(capacity.start, capacity.end);
+    if (/^[0-9]+$/.test(digits)) {
+      found.set(id, digits);
+    }
+  }
+  return found;
+}
+
+function parseNode(value: unknown): Omit<NodeLine, "capacity"> {
   if (typeof value !== "object" || value === null) {
     throw new Error(UNAVAILABLE);
   }
@@ -180,6 +270,7 @@ function parseNode(value: unknown): NodeLine {
 }
 
 function parseNodes(text: string): NodeLine[] {
+  const capacities = roleCapacityById(text);
   let parsed: unknown;
   try {
     parsed = JSON.parse(omitHiddenNumbers(text)) as unknown;
@@ -193,7 +284,17 @@ function parseNodes(text: string): NodeLine[] {
   if (!Array.isArray(nodes)) {
     throw new Error(UNAVAILABLE);
   }
-  return nodes.map(parseNode);
+  return nodes.map((value) => {
+    const node = parseNode(value);
+    return { ...node, capacity: capacities.get(node.id) ?? null };
+  });
+}
+
+function stageCapacity(id: string, capacity: string): Promise<unknown> {
+  return api("/api/layout/stage", {
+    method: "POST",
+    body: JSON.stringify({ id, capacity }),
+  });
 }
 
 function failureFrom(text: string, status: number): { message: string; code: string | null } {
@@ -335,6 +436,9 @@ export function ClusterNodes() {
     queryKey: ["cluster", "status"],
     queryFn: loadNodes,
   });
+  const stage = useMutation({
+    mutationFn: ({ id, capacity }: { id: string; capacity: string }) => stageCapacity(id, capacity),
+  });
   const connect = useMutation({
     mutationFn: connectNode,
     onSuccess: async (next) => {
@@ -461,6 +565,14 @@ export function ClusterNodes() {
               {node.garageVersion !== null ? <p>{node.garageVersion}</p> : null}
               <p>{node.isUp ? "Up" : "Down"}</p>
               {node.draining ? <p>Draining</p> : null}
+              {node.capacity !== null ? (
+                <CapacityField
+                  bytes={node.capacity}
+                  submit={(capacity) => {
+                    stage.mutate({ id: node.id, capacity });
+                  }}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

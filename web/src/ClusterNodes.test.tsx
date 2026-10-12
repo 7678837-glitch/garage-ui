@@ -148,7 +148,12 @@ test("shows an up node with a hostname and a down draining node", async () => {
   expect(screen.getByText("Draining")).toBeTruthy();
   const up = screen.getByText("node-up").closest("li");
   const down = screen.getByText("node-down").closest("li");
-  expect(up?.textContent).toBe("node-upalpha10.0.0.1:3901v2.4.1Up");
+  expect(up?.textContent).toContain("node-up");
+  expect(up?.textContent).toContain("alpha");
+  expect(up?.textContent).toContain("10.0.0.1:3901");
+  expect(up?.textContent).toContain("v2.4.1");
+  expect(up?.textContent).toContain("Up");
+  expect(up?.querySelector("form")?.getAttribute("aria-label")).toBe("Node capacity");
   expect(down?.textContent).toBe("node-downDownDraining");
   const page = document.body.textContent ?? "";
   expect(page).not.toContain("9007199254740993");
