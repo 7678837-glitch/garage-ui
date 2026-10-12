@@ -757,10 +757,39 @@ mod lists {
             };
             ids.push(id);
         }
-        let items = fetch_details(app, catalog.detail, ids).await?;
+        let mut items = fetch_details(app, catalog.detail, ids).await?;
+        if catalog.ids == BUCKETS.ids {
+            // v2.3 的 GetBucketInfo 没有 localAliases，别名只在 ListBuckets 行上。
+            keep_list_local_aliases(&all, &mut items);
+        }
         // 回退路径手里是完整 id 列表。满页而且正好到末尾时，后面没有下一行。
         let more = start.saturating_add(items.len()) < all.len();
         Ok(Page { items, more })
+    }
+
+    fn keep_list_local_aliases(list_rows: &[Value], details: &mut [Value]) {
+        for detail in details {
+            let Some(id) = item_id(detail) else {
+                continue;
+            };
+            let Some(row) = list_rows
+                .iter()
+                .find(|row| item_id(row).as_deref() == Some(id.as_str()))
+            else {
+                continue;
+            };
+            let Some(from_list) = row.get("localAliases").and_then(Value::as_array) else {
+                continue;
+            };
+            let replace = match detail.get("localAliases").and_then(Value::as_array) {
+                Some(existing) if !existing.is_empty() => false,
+                Some(_) => !from_list.is_empty(),
+                None => true,
+            };
+            if replace {
+                detail["localAliases"] = Value::Array(from_list.clone());
+            }
+        }
     }
 
     async fn fetch_details(
@@ -850,6 +879,11 @@ mod lists {
         #[tokio::test]
         async fn fallback_path_reaches_the_last_bucket_in_twelve_list_calls() {
             super::super::tests::fallback_path_reaches_the_last_bucket_in_twelve_list_calls().await;
+        }
+
+        #[tokio::test]
+        async fn fallback_bucket_keeps_the_list_local_alias() {
+            super::super::tests::fallback_bucket_keeps_the_list_local_alias().await;
         }
     }
 }
@@ -1330,6 +1364,7 @@ mod tests {
         key_info: u16,
         hold_details: bool,
         info_failures: usize,
+        local_alias: Option<String>,
     }
 
     struct Mock {
@@ -1438,8 +1473,11 @@ mod tests {
             "/v2/GetNodeInfo" => ("200 OK", r#"{"garageVersion":"v2.4.1"}"#.to_string()),
             "/v2/ListBucketsInfo" => info_page(inner.opts.bucket_info, inner.opts.buckets, target),
             "/v2/ListKeysInfo" => info_page(inner.opts.key_info, inner.opts.keys, target),
-            "/v2/ListBuckets" => ("200 OK", id_page(inner.opts.buckets)),
-            "/v2/ListKeys" => ("200 OK", id_page(inner.opts.keys)),
+            "/v2/ListBuckets" => (
+                "200 OK",
+                id_page(inner.opts.buckets, inner.opts.local_alias.as_deref()),
+            ),
+            "/v2/ListKeys" => ("200 OK", id_page(inner.opts.keys, None)),
             "/v2/GetBucketInfo" | "/v2/GetKeyInfo" => {
                 inner.details.fetch_add(1, Ordering::SeqCst);
                 if inner.opts.hold_details {
@@ -1491,9 +1529,18 @@ mod tests {
         ("200 OK", serde_json::to_string(&items).unwrap())
     }
 
-    fn id_page(count: usize) -> String {
+    fn id_page(count: usize, local_alias: Option<&str>) -> String {
         let items: Vec<_> = (0..count)
-            .map(|index| json!({"id": row_id(index), "via": "ids"}))
+            .map(|index| {
+                let mut row = json!({"id": row_id(index), "via": "ids"});
+                if let Some(alias) = local_alias {
+                    row["localAliases"] = json!([{
+                        "accessKeyId": "GK-list",
+                        "alias": alias,
+                    }]);
+                }
+                row
+            })
             .collect();
         serde_json::to_string(&items).unwrap()
     }
@@ -1588,6 +1635,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -1631,6 +1679,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -1669,6 +1718,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let key_app = app_at(&keys.url).await;
@@ -1676,6 +1726,30 @@ mod tests {
         assert_eq!(ids_of(&last_key), ["00002"]);
         assert_eq!(last_key.items[0]["via"], "detail");
         assert!(!last_key.more);
+    }
+
+    pub(crate) async fn fallback_bucket_keeps_the_list_local_alias() {
+        let mock = Mock::start(MockOpts {
+            buckets: 2,
+            keys: 0,
+            bucket_info: 404,
+            key_info: 404,
+            hold_details: false,
+            info_failures: 0,
+            local_alias: Some("a&b=c".to_string()),
+        })
+        .await;
+        let app = app_at(&mock.url).await;
+        let page = list_buckets(&app, 0, 10).await.unwrap();
+        assert_eq!(page.items[0]["id"], "00000");
+        assert_eq!(page.items[0]["via"], "detail");
+        assert_eq!(
+            page.items[0]["localAliases"],
+            json!([{
+                "accessKeyId": "GK-list",
+                "alias": "a&b=c"
+            }])
+        );
     }
 
     #[tokio::test]
@@ -1687,6 +1761,7 @@ mod tests {
             key_info: 200,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -1714,6 +1789,7 @@ mod tests {
             key_info: 404,
             hold_details: true,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -1775,6 +1851,7 @@ mod tests {
             key_info: 404,
             hold_details: true,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let dir = crate::util::temp_dir();
@@ -1828,6 +1905,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let second = Mock::start(MockOpts {
@@ -1837,6 +1915,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let first_app = app_at(&first.url).await;
@@ -1898,6 +1977,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 1,
+            local_alias: None,
         })
         .await;
         let flaky_app = app_at(&flaky.url).await;
@@ -1929,6 +2009,7 @@ mod tests {
             key_info: 400,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -1993,6 +2074,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
@@ -2021,6 +2103,7 @@ mod tests {
             key_info: 404,
             hold_details: false,
             info_failures: 0,
+            local_alias: None,
         })
         .await;
         let app = app_at(&mock.url).await;
