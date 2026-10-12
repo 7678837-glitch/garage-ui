@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::retry::RetryConfig;
@@ -567,11 +568,83 @@ async fn fetch_object(client: &Client, bucket: &str, key: &str) -> Result<Object
                 error.to_string(),
             )
         })?;
-    // 不把对象读进 Vec。SdkBody 直接成为响应体，大文件按块流出。
+    // 不把对象读进 Vec。外层仍按块流出，提前丢弃才会取消上游读取。
     Ok(ObjectStream {
         content_type: output.content_type().unwrap_or("").to_string(),
-        body: output.body.into_inner(),
+        body: cancel_when_dropped(output.body.into_inner()),
     })
+}
+
+struct DownloadBody {
+    inner: Pin<Box<SdkBody>>,
+    // 已知长度时，响应端读满字节后可能不再 poll 出结束帧。
+    remaining: Option<u64>,
+    finished: bool,
+}
+
+fn cancel_when_dropped(body: SdkBody) -> SdkBody {
+    let hint = HttpBody::size_hint(&body);
+    let remaining = hint.upper().filter(|upper| *upper == hint.lower());
+    let finished = remaining == Some(0) || HttpBody::is_end_stream(&body);
+    SdkBody::from_body_1_x(DownloadBody {
+        inner: Box::pin(body),
+        remaining,
+        finished,
+    })
+}
+
+impl DownloadBody {
+    fn note(&mut self, len: u64) {
+        let Some(remaining) = self.remaining.as_mut() else {
+            return;
+        };
+        *remaining = remaining.saturating_sub(len);
+        if *remaining == 0 {
+            self.finished = true;
+        }
+    }
+}
+
+impl HttpBody for DownloadBody {
+    type Data = <SdkBody as HttpBody>::Data;
+    type Error = <SdkBody as HttpBody>::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        match this.inner.as_mut().poll_frame(cx) {
+            Poll::Ready(None) => {
+                this.finished = true;
+                Poll::Ready(None)
+            }
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(len) = frame.data_ref().map(|data| data.len() as u64) {
+                    this.note(len);
+                }
+                Poll::Ready(Some(Ok(frame)))
+            }
+            other => other,
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.finished || HttpBody::is_end_stream(&*self.inner)
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        HttpBody::size_hint(&*self.inner)
+    }
+}
+
+impl Drop for DownloadBody {
+    fn drop(&mut self) {
+        if self.finished || HttpBody::is_end_stream(&*self.inner) {
+            return;
+        }
+        tracing::info!("download cancelled");
+    }
 }
 
 async fn head(client: &Client, bucket: &str, key: &str) -> Result<ObjectMeta, S3Failure> {

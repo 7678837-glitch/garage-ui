@@ -1261,6 +1261,7 @@ dependencies = [
  "bcrypt",
  "clap",
  "governor",
+ "http-body 1.1.0",
  "reqwest",
  "rust-embed",
  "serde",

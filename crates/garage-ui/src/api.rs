@@ -3120,6 +3120,7 @@ async fn record(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -9512,6 +9513,134 @@ mod tests {
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert!(seen[0].starts_with("GET "), "{}", seen[0]);
         assert_eq!(object_key_of(&seen[0]), "photos/note.txt");
+    }
+
+    struct DownloadLog(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for DownloadLog {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("download log").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn download_drop_cancels_the_s3_get_within_one_second() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let closed = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let closed_task = Arc::clone(&closed);
+        let wake_task = Arc::clone(&wake);
+        let mock = tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut tmp = [0_u8; 4096];
+            let header_end = loop {
+                let Ok(read) = socket.read(&mut tmp).await else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&tmp[..read]);
+                if let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break pos;
+                }
+                if buf.len() > 64 * 1024 {
+                    return;
+                }
+            };
+            let text = String::from_utf8_lossy(&buf[..header_end]);
+            let length = header_value(&text, "content-length")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0);
+            let mut request_body = buf[header_end + 4..].to_vec();
+            while request_body.len() < length {
+                let Ok(read) = socket.read(&mut tmp).await else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                request_body.extend_from_slice(&tmp[..read]);
+            }
+            drop(request_body);
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/plain\r\n",
+                "Content-Length: 1048576\r\n",
+                "ETag: \"abc\"\r\n",
+                "\r\n",
+                "partial"
+            );
+            if socket.write_all(response.as_bytes()).await.is_err() {
+                return;
+            }
+            let _ = socket.flush().await;
+            loop {
+                match socket.read(&mut tmp).await {
+                    Ok(0) | Err(_) => {
+                        closed_task.store(true, Ordering::SeqCst);
+                        wake_task.notify_waiters();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            }
+        });
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &format!("http://127.0.0.1:{port}"), true).await;
+        let (session, _) = login(&app).await;
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            router(app).oneshot(request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photos/note.txt?download=1",
+                None,
+                Some(&session),
+            )),
+        )
+        .await
+        .expect("download headers")
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            !closed.load(Ordering::SeqCst),
+            "s3 socket closed before the download body was dropped"
+        );
+        let logs = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = Arc::clone(&logs);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(move || DownloadLog(Arc::clone(&sink)))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || drop(response));
+        let observed = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let notified = wake.notified();
+                if closed.load(Ordering::SeqCst) {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await;
+        mock.abort();
+        assert!(
+            observed.is_ok(),
+            "s3 socket still open one second after the download body was dropped"
+        );
+        let text = String::from_utf8(logs.lock().expect("download log").clone()).unwrap();
+        assert_eq!(text.matches("download cancelled").count(), 1);
+        assert!(!text.contains("partial"));
     }
 
     #[tokio::test]
