@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "garage-ui.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "garage-ui.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 3909
+      targetPort: http
+      protocol: TCP

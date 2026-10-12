@@ -1,0 +1,100 @@
+{{- $accessKey := .Values.secrets.s3AccessKeyId }}
+{{- $secretKey := .Values.secrets.s3SecretAccessKey }}
+{{- if or $accessKey $secretKey }}
+{{- if or (not $accessKey) (not $secretKey) }}
+{{- fail "Set both secrets.s3AccessKeyId and secrets.s3SecretAccessKey, or leave both empty." }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "garage-ui.labels" . | nindent 4 }}
+spec:
+  # SQLite allows one writer. Recreate so a second pod never mounts the volume.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "garage-ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "garage-ui.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: garage-ui
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3909
+              protocol: TCP
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: DATA_DIR
+              value: /data
+            {{- with .Values.garageAdminUrl }}
+            - name: GARAGE_ADMIN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.secrets.garageAdminToken }}
+            - name: GARAGE_ADMIN_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.secrets.metricsToken }}
+            - name: GARAGE_METRICS_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.secrets.s3AccessKeyId }}
+            - name: S3_ACCESS_KEY_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.secrets.s3SecretAccessKey }}
+            - name: S3_SECRET_ACCESS_KEY
+              value: {{ . | quote }}
+            {{- end }}
+          readinessProbe:
+            exec:
+              command: ["/garage-ui", "-health"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["/garage-ui", "-health"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+        - name: tmp
+          emptyDir: {}
