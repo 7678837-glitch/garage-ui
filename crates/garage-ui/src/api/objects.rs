@@ -1,5 +1,9 @@
+use std::io::Write;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use axum::Json;
-use axum::body::{Body, Bytes};
+use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -169,16 +173,14 @@ pub(crate) async fn download_archive(
         return Err(ApiError::not_found());
     }
     let planned = crate::zip::archive_names(&keys);
-    let mut files = Vec::new();
-    let mut errors = Vec::new();
-    for entry in planned {
-        match objects::read_all(&app, &id, &entry.key).await {
-            Ok(bytes) => files.push((entry.name, bytes)),
-            Err(_) => errors.push(entry.key),
-        }
-    }
-    let bytes = crate::zip::pack_zip(&files, &errors)?;
-    let mut response = Response::new(Body::from(bytes));
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let bucket = id.clone();
+    let app = app.clone();
+    // The handler returns this response before the task opens the next object.
+    tokio::spawn(async move {
+        let _ = write_archive(app, bucket, planned, tx).await;
+    });
+    let mut response = Response::new(Body::new(ZipChunks { rx }));
     let headers = response.headers_mut();
     headers.insert(
         "content-type",
@@ -192,6 +194,75 @@ pub(crate) async fn download_archive(
     let value = HeaderValue::from_str(&disposition).map_err(|_| ApiError::internal())?;
     headers.insert("content-disposition", value);
     Ok(response)
+}
+
+async fn write_archive(
+    app: App,
+    bucket: String,
+    planned: Vec<crate::zip::PlannedFile>,
+    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
+) -> Result<(), ApiError> {
+    let mut archive = crate::zip::ArchiveSink::new(ChunkWriter { tx });
+    let mut errors = Vec::new();
+    for entry in planned {
+        match objects::open(&app, &bucket, &entry.key).await {
+            Ok(opened) => {
+                archive.begin_file(&entry.name)?;
+                let mut object_body = std::pin::pin!(opened.body);
+                while let Some(next) =
+                    std::future::poll_fn(|cx| HttpBody::poll_frame(object_body.as_mut(), cx)).await
+                {
+                    let frame = next.map_err(|_| ApiError::internal())?;
+                    let Ok(chunk) = frame.into_data() else {
+                        continue;
+                    };
+                    archive.write_bytes(&chunk)?;
+                }
+            }
+            Err(_) => errors.push(entry.key),
+        }
+    }
+    archive.finish(&errors)
+}
+
+struct ZipChunks {
+    rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
+}
+
+impl HttpBody for ZipChunks {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        match self.get_mut().rx.poll_recv(cx) {
+            Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(http_body::Frame::data(bytes)))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+struct ChunkWriter {
+    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
+}
+
+impl Write for ChunkWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        self.tx.send(Bytes::copy_from_slice(buf)).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "archive client closed")
+        })?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn archive_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
@@ -263,7 +334,7 @@ pub(crate) async fn share(
             "Public S3 address is not configured",
         ));
     }
-    // 超过 7 天的秒数在签名前截断，审计记截断后的值。
+    // Seconds beyond 7 days are truncated before signing. The audit row stores the truncated value.
     let ttl = access::cap_share_ttl(body.ttl_seconds);
     let url = objects::presign_get(&app, &body.bucket, &body.key, ttl).await?;
     let website_url = share_website(&app, &current, &body.bucket).await;
@@ -290,7 +361,7 @@ pub(crate) async fn share(
 
 async fn share_website(app: &App, current: &Current, bucket_id: &str) -> Option<String> {
     let template = app.settings.website_root_domain.as_str();
-    // 没有 {bucket} 的根域名不是网站模板，不把它当成公开地址。
+    // A root domain without {bucket} is not a website template and is not a public address.
     if !template.contains("{bucket}") {
         return None;
     }
@@ -370,7 +441,7 @@ pub(crate) async fn upload_object(
     ))
 }
 
-// 参数就是审计表的列。和 record 一样不另做结构，reason 保持 'static。
+// The arguments are the audit table columns. Like record, this does not add a struct, and reason stays 'static.
 #[allow(clippy::too_many_arguments)]
 async fn audit_object(
     app: &App,
@@ -464,7 +535,7 @@ pub(crate) async fn put_object(
     body: Body,
     plan: objects::PartPlan,
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
-    // 权限和长度失败停在 put_bucket_object，这里才计入在途上传。
+    // Permission and length failures return from put_bucket_object. The in-flight upload count starts here.
     let _in_flight = app.begin_upload();
     let stored = objects::put(app, id, key, size, content_type, body, plan).await?;
     Ok((StatusCode::CREATED, Json(stored)))
@@ -620,8 +691,8 @@ pub(crate) async fn object_metadata(
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<ObjectViewQuery>,
 ) -> Result<Response, ApiError> {
-    // matchit 不允许 `{*key}` 后再接 `/thumbnail`，会和本路由冲突。
-    // 末段是 thumbnail 时 key 取前面的路径，axum 已按路径段解码。
+    // matchit does not allow `{*key}` followed by `/thumbnail`. That pattern conflicts with this route.
+    // When the last segment is thumbnail, the key is the path before it. axum has already decoded the segments.
     if let Some(object_key) = key.strip_suffix("/thumbnail")
         && !object_key.is_empty()
     {

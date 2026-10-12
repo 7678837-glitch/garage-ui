@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::io::{Cursor, Write};
+use std::io::Write;
 
 use crate::error::ApiError;
 
@@ -26,27 +26,38 @@ pub(crate) fn archive_names(keys: &[String]) -> Vec<PlannedFile> {
         .collect()
 }
 
-pub(crate) fn pack_zip(files: &[(String, Vec<u8>)], errors: &[String]) -> Result<Vec<u8>, ApiError> {
-    let mut cursor = Cursor::new(Vec::new());
-    let mut writer = zip::ZipWriter::new(&mut cursor);
-    let options = stored_options();
-    for (name, bytes) in files {
-        writer
-            .start_file(name.as_str(), options)
-            .map_err(|_| ApiError::internal())?;
-        writer.write_all(bytes).map_err(|_| ApiError::internal())?;
+pub(crate) struct ArchiveSink<W: Write> {
+    writer: zip::ZipWriter<zip::write::StreamWriter<W>>,
+}
+
+impl<W: Write> ArchiveSink<W> {
+    pub(crate) fn new(inner: W) -> Self {
+        Self {
+            writer: zip::ZipWriter::new_stream(inner),
+        }
     }
-    if !errors.is_empty() {
-        writer
-            .start_file("_errors.txt", options)
-            .map_err(|_| ApiError::internal())?;
-        writer
-            .write_all(errors.join("\n").as_bytes())
-            .map_err(|_| ApiError::internal())?;
-        writer.write_all(b"\n").map_err(|_| ApiError::internal())?;
+
+    pub(crate) fn begin_file(&mut self, name: &str) -> Result<(), ApiError> {
+        self.writer
+            .start_file(name, stored_options())
+            .map_err(|_| ApiError::internal())
     }
-    writer.finish().map_err(|_| ApiError::internal())?;
-    Ok(cursor.into_inner())
+
+    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), ApiError> {
+        self.writer
+            .write_all(bytes)
+            .map_err(|_| ApiError::internal())
+    }
+
+    pub(crate) fn finish(mut self, errors: &[String]) -> Result<(), ApiError> {
+        if !errors.is_empty() {
+            self.begin_file("_errors.txt")?;
+            self.write_bytes(errors.join("\n").as_bytes())?;
+            self.write_bytes(b"\n")?;
+        }
+        self.writer.finish().map_err(|_| ApiError::internal())?;
+        Ok(())
+    }
 }
 
 fn stored_options() -> zip::write::SimpleFileOptions {
