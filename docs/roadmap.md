@@ -1,115 +1,115 @@
-# 分阶段交付
+# Phased delivery
 
-工作量按一名熟悉 Rust 与 React 的开发者计（人日）。数字沿用原稿，未因后端改为 Rust、前端工具链改为 Bun 而重算。阶段按依赖顺序排列，后一阶段只依赖前面阶段的产出。
+Effort is counted for one developer who knows Rust and React (person-days). The numbers follow the original draft. They were not recomputed because the backend changed to Rust or because the frontend toolchain changed to Bun. Phases are ordered by dependency. A later phase depends only on the output of the phases before it.
 
-各阶段末以本章引用的验收标准全部通过为完成条件。本地容器化的 Garage v2.3.x 与 v2.4.1 可以用来验证。
+A phase is complete when every acceptance criterion this chapter cites has passed. Garage v2.3.x and v2.4.1 in local containers may be used to verify that.
 
-并行开发见 [decisions.md](decisions.md)：按本章的项拆开，改同一批文件的项不并行；全量测试和提交由主会话收口。
+Parallel development is described in [decisions.md](decisions.md). Split work by the items in this chapter. Items that change the same set of files do not run in parallel. The main session closes full-suite tests and commits.
 
-## 阶段 0：可构建与基线（P0，约 4 人日）
+## Phase 0: Buildable, and a baseline (P0, about 4 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| 固定 Rust toolchain、Bun 版本，镜像构建 | 0.5 |
-| 非 root distroless 镜像、内置 `-health` | 0.5 |
-| CI 骨架（构建、lint、测试、`cargo audit`、`bun audit`） | 1 |
-| OpenAPI 类型生成（[engineering.md](engineering.md) 的 7.8；白名单与作用域选择器依赖） | 1 |
-| 测试数据生成命令（6.6；最小版性能门槛依赖；不打进运行镜像） | 1 |
+| Pin the Rust toolchain and the Bun version, and build the image | 0.5 |
+| Non-root distroless image, with built-in `-health` | 0.5 |
+| CI skeleton (build, lint, test, `cargo audit`, `bun audit`) | 1 |
+| OpenAPI type generation (7.8 of [engineering.md](engineering.md); the allowlist and the scope picker depend on it) | 1 |
+| Test-data generation command (6.6; the minimum-version performance bar depends on it; it is not built into the runtime image) | 1 |
 
-运行时栈和容器化部署已经写在 [decisions.md](decisions.md)。本阶段按那个决定钉 `rust-toolchain.toml` 与 Bun 1.4.2，做出 `linux/amd64`、`linux/arm64` 运行镜像和 CI。服务进程从阶段 1 开始写。
+The runtime stack and containerized deployment are already written in [decisions.md](decisions.md). This phase pins `rust-toolchain.toml` and Bun 1.4.2 from that decision, and produces the `linux/amd64` and `linux/arm64` runtime images and CI. The service process is written starting in phase 1.
 
-## 阶段 1：安全（P0，约 7.5 人日）
+## Phase 1: Security (P0, about 7.5 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| 用户库、初始化向导、默认鉴权、默认本地监听（3.1） | 1.5 |
-| 配置去敏、日志脱敏、示例无密钥与密钥自生成（3.2、3.14–3.16） | 1 |
-| 预览防护与安全头、对象 no-store（3.3、3.11） | 0.5 |
-| 会话落库、轮换、改密失效、cookie 属性（3.4、3.12） | 1.5 |
-| 限流、CSRF、请求体上限（3.5、3.6、3.9） | 1 |
-| 端点白名单代理与角色矩阵（3.7、3.19） | 1.5 |
-| 登录审计与审计表（3.13，5.21 基础部分） | 0.5 |
+| User store, setup wizard, default authentication, default local listen (3.1) | 1.5 |
+| Config redaction, log redaction, examples with no secrets, and self-generated secrets (3.2, 3.14 through 3.16) | 1 |
+| Preview protection and security headers, object `no-store` (3.3, 3.11) | 0.5 |
+| Persist sessions, rotate them, invalidate them on password change, cookie attributes (3.4, 3.12) | 1.5 |
+| Rate limiting, CSRF, request-body limit (3.5, 3.6, 3.9) | 1 |
+| Endpoint allowlist proxy and the role matrix (3.7, 3.19) | 1.5 |
+| Login audit and the audit table (3.13, the basic part of 5.21) | 0.5 |
 
-## 阶段 2：正确性与兼容（P0/P1，约 7 人日）
+## Phase 2: Correctness and compatibility (P0 and P1, about 7 person-days)
 
-| 项 | 优先级 | 估算 |
+| Item | Priority | Estimate |
 |---|---|---|
-| 按桶 ID 访问、递归删除分页、容量精度（4.1、4.3、4.4） | P0 | 1.5 |
-| 凭据缓存与失效、key 编码、授权校验（4.2、4.5、4.6） | P1 | 1.5 |
-| 错误响应与状态码、尾斜杠、`BASE_PATH`、密钥文件、更新源（4.7–4.9、4.12–4.15） | P1 | 1.5 |
-| 版本自检与 v2.4 字段探测（2.1、2.2） | P0 | 0.5 |
-| 列表接口能力探测（`ListBucketsInfo`、`ListKeysInfo`）（2.3、5.22） | P0 | 1 |
-| 并发上限、超时与取消（4.11、6.3） | P1 | 1 |
+| Address by bucket ID, paged recursive delete, capacity precision (4.1, 4.3, 4.4) | P0 | 1.5 |
+| Credential cache and invalidation, key encoding, grant validation (4.2, 4.5, 4.6) | P1 | 1.5 |
+| Error responses and status codes, trailing slash, `BASE_PATH`, secret files, update source (4.7 through 4.9, 4.12 through 4.15) | P1 | 1.5 |
+| Version self-check and v2.4 field probe (2.1, 2.2) | P0 | 0.5 |
+| List-API capability probe (`ListBucketsInfo`, `ListKeysInfo`) (2.3, 5.22) | P0 | 1 |
+| Concurrency cap, timeouts, and cancellation (4.11, 6.3) | P1 | 1 |
 
-## 阶段 2B：基础管理页面（P0，约 5.5 人日）
+## Phase 2B: Basic management pages (P0, about 5.5 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| 桶列表、创建、删除、别名（5.1） | 1 |
-| 配额与权限（5.18、5.19） | 1 |
-| 密钥列表、创建、导入、删除、`UpdateKey`（改名、过期、允许建桶）、查看 secret（5.7） | 1 |
-| 集群健康、状态与统计卡片（5.9、5.10 不含指标面板） | 1 |
-| 用户管理基础：增删、禁用、改角色、重置密码与防锁死（5.20 核心部分） | 1 |
-| 下载与分享权限位：数据模型、授权检查、界面开关与测试（3.19） | 0.5 |
+| Bucket list, create, delete, aliases (5.1) | 1 |
+| Quotas and permissions (5.18, 5.19) | 1 |
+| Key list, create, import, delete, `UpdateKey` (rename, expiration, allow bucket creation), view the secret (5.7) | 1 |
+| Cluster health, status, and statistics cards (5.9, and 5.10 without the metrics panel) | 1 |
+| Basic user management: create and delete, disable, change role, reset password, and lockout protection (the core part of 5.20) | 1 |
+| Download and share permission bits: data model, authorization check, UI switch, and tests (3.19) | 0.5 |
 
-## 阶段 3：对象体验（P1，约 8 人日）
+## Phase 3: Object experience (P1, about 8 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| 分页浏览、搜索、排序（5.2、5.22 对象部分） | 1.5 |
-| 流式上传、分片、上传队列、临时文件处理、流式下载与字节区间读取（5.3、4.10、6.2、5.32 后端部分） | 2.5 |
-| 批量删除与批量下载 ZIP（5.4、5.6） | 1.5 |
-| 分享与权限（5.5、3.10） | 1 |
-| 未完成上传清理（5.14） | 0.5 |
-| 有界缩略图（6.2） | 1 |
+| Paginated browse, search, and sort (5.2, the object part of 5.22) | 1.5 |
+| Streamed upload, multipart, upload queue, temporary-file handling, streamed download, and byte-range reads (5.3, 4.10, 6.2, the backend part of 5.32) | 2.5 |
+| Batch delete and bulk ZIP download (5.4, 5.6) | 1.5 |
+| Sharing and permissions (5.5, 3.10) | 1 |
+| Cleanup of incomplete uploads (5.14) | 0.5 |
+| Bounded thumbnails (6.2) | 1 |
 
-## 阶段 3A：界面与交互（P0/P1，约 6 人日）
+## Phase 3A: UI and interaction (P0 and P1, about 6 person-days)
 
-| 项 | 优先级 | 估算 |
+| Item | Priority | Estimate |
 |---|---|---|
-| 导航与页面结构、统一交互状态、确认分级（5.25–5.27） | P0 | 2 |
-| 列表筛选排序与多选、凭据复制、上传面板（5.30、5.31、5.33） | P0 | 1 |
-| 主题与无障碍、版本与能力提示（5.35、5.36） | P1 | 1 |
-| 布局变更流程与跟踪、概览可视化与自动刷新（5.28、5.29） | P1 | 1.5 |
-| 管理令牌作用域选择器、预览查看器增强（5.34、5.32） | P1 | 0.5 |
+| Navigation and page structure, shared interaction states, graded confirmation (5.25 through 5.27) | P0 | 2 |
+| List filtering, sorting, and multi-select, copying a credential, upload panel (5.30, 5.31, 5.33) | P0 | 1 |
+| Theme and accessibility, version and capability notice (5.35, 5.36) | P1 | 1 |
+| Layout change flow and tracking, overview visualization and auto-refresh (5.28, 5.29) | P1 | 1.5 |
+| Admin-token scope picker, preview-viewer enhancements (5.34, 5.32) | P1 | 0.5 |
 
-## 阶段 4：Garage v2.3/v2.4 管理能力（P1，约 6.5 人日）
+## Phase 4: Garage v2.3 and v2.4 management capabilities (P1, about 6.5 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| CORS 与生命周期（5.16） | 2 |
-| 指标面板（5.10） | 1 |
-| 布局预览、历史、跳过死节点（5.8） | 1.5 |
-| 受限管理令牌与本项目令牌自检（5.15、3.7 推荐项） | 2 |
+| CORS and lifecycle (5.16) | 2 |
+| Metrics panel (5.10) | 1 |
+| Layout preview, history, skip dead nodes (5.8) | 1.5 |
+| Restricted admin tokens, and a self-check of this project's token (5.15, the recommended item in 3.7) | 2 |
 
-## 阶段 5：运维能力（P2，约 6 人日）
+## Phase 5: Operations capabilities (P2, about 6 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| Worker 与修复任务（5.11） | 2 |
-| 块错误、元数据快照（5.12、5.13） | 1.5 |
-| 审计日志页面、筛选导出、保留期（5.21） | 1.5 |
-| `InspectObject` 诊断（5.2） | 1 |
+| Workers and repair tasks (5.11) | 2 |
+| Block errors and metadata snapshots (5.12, 5.13) | 1.5 |
+| Audit log page, filter and export, retention (5.21) | 1.5 |
+| `InspectObject` diagnostics (5.2) | 1 |
 
-## 阶段 6：扩展与分发（P2，约 6 人日）
+## Phase 6: Extensions and distribution (P2, about 6 person-days)
 
-| 项 | 估算 |
+| Item | Estimate |
 |---|---|
-| 用户管理完善、离线 CLI（5.20） | 1.5 |
-| 签名发布、SBOM、多架构（7.9） | 1.5 |
-| i18n（6.7） | 1.5 |
-| Helm Chart、自签证书选项 | 1.5 |
+| Complete user management, and the offline CLI (5.20) | 1.5 |
+| Signed releases, SBOM, multi-arch (7.9) | 1.5 |
+| i18n (6.7) | 1.5 |
+| Helm Chart, and the self-signed certificate option | 1.5 |
 
-阶段 3A 中依赖后续阶段的项（5.28 依赖阶段 4 的布局接口，5.34 依赖 5.15，5.29 的审计小部件依赖 5.21）在依赖项交付后接入，接入工作已含在各自估算中。
+Items in phase 3A that depend on a later phase (5.28 depends on the layout API from phase 4, 5.34 depends on 5.15, and the audit widget in 5.29 depends on 5.21) are wired in after that dependency is delivered. The wiring work is already included in the estimates for those items.
 
-原稿 5.17 网站访问有需求和验收，8.1、8.2 和上面的阶段表都没有给它单独的行。拆解时不把它改派进某一阶段。
+Section 5.17, website access, has a requirement and acceptance in the original draft. 8.1, 8.2, and the phase table above do not give it a row of its own. When the work is broken down, do not assign it to a phase.
 
-## 远期
+## Later
 
-不在本轮：OIDC 登录（含按身份源角色映射与单点登出）、按团队的桶级授权、多集群管理、unix socket 监听与连接、多副本部署、跟踪 Garage Admin API 下一主版本。
+Not in this round: OIDC login (including mapping roles from the identity source, and single logout), bucket-level authorization by team, multi-cluster management, listening on a unix socket and connecting to one, multi-replica deployment, and tracking the next major version of the Garage Admin API.
 
-## 合计
+## Total
 
-P0 23 人日，P1 21.5 人日，P2 12 人日，总计 56.5 人日（不含远期）。
+P0 is 23 person-days. P1 is 21.5 person-days. P2 is 12 person-days. The total is 56.5 person-days (the later work is not included).
 
-最小版估算 32.75 人日：阶段 0、1、2、2B 全部 24 人日；阶段 3 中浏览 1.5、上传与下载 2.5、批量删除按「批量删除与 ZIP」一项的一半计 0.75；阶段 3A 的两项 P0 共 3，加上主题与关于页 1。范围以 [scope.md](scope.md) 的 8.1 为准。
+The minimum-version estimate is 32.75 person-days. Phases 0, 1, 2, and 2B are 24 person-days in full. From phase 3, browse is 1.5, upload and download are 2.5, and batch delete is counted as half of the "batch delete and ZIP" item, which is 0.75. The two P0 items in phase 3A total 3, plus 1 for the theme and the About page. The scope follows 8.1 of [scope.md](scope.md).
