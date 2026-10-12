@@ -1,0 +1,27 @@
+# Admin UI only. Point garageAdminUrl at a Garage admin API this chart does not install.
+# The image is built from deploy/Dockerfile. It listens on 0.0.0.0:3909, runs as uid 65532, and has no shell.
+# The process writes its generated session key under /data when no session key file is configured.
+
+image:
+  repository: garage-ui
+  tag: "20261010.1"
+  pullPolicy: IfNotPresent
+
+# Garage admin API base URL. Leave empty until that URL is known.
+garageAdminUrl: ""
+
+persistence:
+  size: 1Gi
+
+# Secret values stay empty in git. Set them at install time from outside the repository.
+# Do not commit a token, password, private key, or S3 secret, and do not paste one into this file.
+# Store the value outside git, then pass it with --set. For the admin token:
+#   helm upgrade --install garage-ui deploy/helm/garage-ui --set secrets.garageAdminToken="$(cat /path/outside/git/admin-token)"
+# Use the same form for the other keys. An empty value is omitted from the pod.
+# Set s3AccessKeyId and s3SecretAccessKey together, or leave both empty.
+# The process rejects a configured secret that is too short or that matches a documented placeholder.
+secrets:
+  garageAdminToken: ""
+  metricsToken: ""
+  s3AccessKeyId: ""
+  s3SecretAccessKey: ""
