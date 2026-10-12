@@ -855,6 +855,427 @@ function CorsForm({ bucketId }: { bucketId: string }) {
   );
 }
 
+type LifecycleDraft = {
+  id: string;
+  status: string;
+  prefix: string;
+  greaterThan: string;
+  lessThan: string;
+  days: string;
+  date: string;
+  abortDays: string;
+  extra: Record<string, unknown>;
+  filterExtra: Record<string, unknown>;
+  expirationExtra: Record<string, unknown>;
+  abortExtra: Record<string, unknown>;
+  preserved: unknown;
+};
+
+const LIFECYCLE_FIELDS = [
+  ["id", "ID"],
+  ["status", "Status"],
+  ["prefix", "Filter.Prefix"],
+  ["greaterThan", "Filter.ObjectSizeGreaterThan"],
+  ["lessThan", "Filter.ObjectSizeLessThan"],
+  ["days", "Expiration.Days"],
+  ["date", "Expiration.Date"],
+  ["abortDays", "AbortIncompleteMultipartUpload.DaysAfterInitiation"],
+] as const;
+
+function emptyLifecycleDraft(): LifecycleDraft {
+  return {
+    id: "",
+    status: "",
+    prefix: "",
+    greaterThan: "",
+    lessThan: "",
+    days: "",
+    date: "",
+    abortDays: "",
+    extra: {},
+    filterExtra: {},
+    expirationExtra: {},
+    abortExtra: {},
+    preserved: undefined,
+  };
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function omitKeys(record: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (!keys.includes(key)) {
+      extra[key] = item;
+    }
+  }
+  return extra;
+}
+
+function textField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function integerText(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return "invalid";
+}
+
+function draftFromLifecycleRule(value: unknown): LifecycleDraft {
+  const record = objectRecord(value);
+  if (record === null) {
+    return { ...emptyLifecycleDraft(), preserved: value };
+  }
+  const filter = objectRecord(record.Filter);
+  const expiration = objectRecord(record.Expiration);
+  const abort = objectRecord(record.AbortIncompleteMultipartUpload);
+  if (
+    (record.Filter !== undefined && record.Filter !== null && filter === null) ||
+    (record.Expiration !== undefined && record.Expiration !== null && expiration === null) ||
+    (record.AbortIncompleteMultipartUpload !== undefined &&
+      record.AbortIncompleteMultipartUpload !== null &&
+      abort === null)
+  ) {
+    return { ...emptyLifecycleDraft(), preserved: value };
+  }
+  return {
+    id: typeof record.ID === "string" ? record.ID : "",
+    status: typeof record.Status === "string" ? record.Status : "",
+    prefix: filter ? textField(filter.Prefix) : "",
+    greaterThan: filter ? integerText(filter.ObjectSizeGreaterThan) : "",
+    lessThan: filter ? integerText(filter.ObjectSizeLessThan) : "",
+    days: expiration ? integerText(expiration.Days) : "",
+    date: expiration ? textField(expiration.Date) : "",
+    abortDays: abort ? integerText(abort.DaysAfterInitiation) : "",
+    extra: omitKeys(record, ["ID", "Status", "Filter", "Expiration", "AbortIncompleteMultipartUpload"]),
+    filterExtra: filter ? omitKeys(filter, ["Prefix", "ObjectSizeGreaterThan", "ObjectSizeLessThan"]) : {},
+    expirationExtra: expiration ? omitKeys(expiration, ["Days", "Date"]) : {},
+    abortExtra: abort ? omitKeys(abort, ["DaysAfterInitiation"]) : {},
+    preserved: undefined,
+  };
+}
+
+function draftsFromLifecycle(payload: unknown): LifecycleDraft[] {
+  const record = objectRecord(payload);
+  if (record === null || !Array.isArray(record.lifecycleRules)) {
+    return [];
+  }
+  return record.lifecycleRules.map(draftFromLifecycleRule);
+}
+
+function integerFieldReady(value: string): boolean {
+  const text = value.trim();
+  return text.length === 0 || /^[0-9]+$/.test(text);
+}
+
+function digitLess(left: string, right: string): boolean {
+  const a = left.replace(/^0+/, "") || "0";
+  const b = right.replace(/^0+/, "") || "0";
+  if (a.length !== b.length) {
+    return a.length < b.length;
+  }
+  return a < b;
+}
+
+function lifecycleReady(rule: LifecycleDraft): boolean {
+  if (rule.preserved !== undefined) {
+    return true;
+  }
+  if (rule.days.trim().length > 0 && rule.date.trim().length > 0) {
+    return false;
+  }
+  const greater = rule.greaterThan.trim();
+  const less = rule.lessThan.trim();
+  const bounds = !/^[0-9]+$/.test(greater) || !/^[0-9]+$/.test(less) || digitLess(greater, less);
+  return (
+    rule.id.trim().length > 0 &&
+    (rule.status.trim() === "Enabled" || rule.status.trim() === "Disabled") &&
+    integerFieldReady(rule.greaterThan) &&
+    integerFieldReady(rule.lessThan) &&
+    integerFieldReady(rule.days) &&
+    integerFieldReady(rule.abortDays) &&
+    bounds
+  );
+}
+
+function digitLiteral(text: string): string | null {
+  const trimmed = text.trim();
+  if (/^[0-9]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+function jsonObject(entries: Array<[string, string]>): string {
+  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${value}`).join(",")}}`;
+}
+
+function rawEntries(record: Record<string, unknown>): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(record)) {
+    const encoded = JSON.stringify(value);
+    if (encoded !== undefined) {
+      entries.push([key, encoded]);
+    }
+  }
+  return entries;
+}
+
+function encodeFilter(rule: LifecycleDraft): string | null {
+  const entries = rawEntries(rule.filterExtra);
+  if (rule.prefix.trim().length > 0) {
+    entries.push(["Prefix", JSON.stringify(rule.prefix)]);
+  }
+  const greater = digitLiteral(rule.greaterThan);
+  if (greater !== null) {
+    entries.push(["ObjectSizeGreaterThan", greater]);
+  }
+  const less = digitLiteral(rule.lessThan);
+  if (less !== null) {
+    entries.push(["ObjectSizeLessThan", less]);
+  }
+  if (entries.length === 0) {
+    return null;
+  }
+  return jsonObject(entries);
+}
+
+function encodeExpiration(rule: LifecycleDraft): string | null {
+  const entries = rawEntries(rule.expirationExtra);
+  const days = digitLiteral(rule.days);
+  if (days !== null) {
+    entries.push(["Days", days]);
+  }
+  if (rule.date.trim().length > 0) {
+    entries.push(["Date", JSON.stringify(rule.date.trim())]);
+  }
+  if (entries.length === 0) {
+    return null;
+  }
+  return jsonObject(entries);
+}
+
+function encodeAbort(rule: LifecycleDraft): string | null {
+  const entries = rawEntries(rule.abortExtra);
+  const days = digitLiteral(rule.abortDays);
+  if (days !== null) {
+    entries.push(["DaysAfterInitiation", days]);
+  }
+  if (entries.length === 0) {
+    return null;
+  }
+  return jsonObject(entries);
+}
+
+function encodeLifecycleRule(rule: LifecycleDraft): string {
+  if (rule.preserved !== undefined) {
+    return JSON.stringify(rule.preserved);
+  }
+  const entries = rawEntries(rule.extra);
+  entries.push(["ID", JSON.stringify(rule.id.trim())]);
+  entries.push(["Status", JSON.stringify(rule.status.trim())]);
+  const filter = encodeFilter(rule);
+  if (filter !== null) {
+    entries.push(["Filter", filter]);
+  }
+  const expiration = encodeExpiration(rule);
+  if (expiration !== null) {
+    entries.push(["Expiration", expiration]);
+  }
+  const abort = encodeAbort(rule);
+  if (abort !== null) {
+    entries.push(["AbortIncompleteMultipartUpload", abort]);
+  }
+  return jsonObject(entries);
+}
+
+function lifecycleBody(rules: LifecycleDraft[]): string {
+  return `{"lifecycleRules":[${rules.map(encodeLifecycleRule).join(",")}]}`;
+}
+
+function nextLifecycleText(rules: LifecycleDraft[]): string {
+  return `[${rules.map(encodeLifecycleRule).join(",")}]`;
+}
+
+function LifecycleSummary({ bucketId }: { bucketId: string }) {
+  const query = useQuery({
+    queryKey: ["bucket-lifecycle", bucketId, "view"],
+    queryFn: () => api<unknown>(`${bucketUrl(bucketId)}/lifecycle`),
+    refetchOnWindowFocus: false,
+  });
+  if (!query.isSuccess) {
+    return null;
+  }
+  return (
+    <div>
+      {draftsFromLifecycle(query.data).map((rule, index) =>
+        rule.preserved !== undefined ? (
+          <p key={index}>{JSON.stringify(rule.preserved)}</p>
+        ) : (
+          <p key={index}>
+            <span>{rule.id}</span>
+            <span>{rule.status}</span>
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
+function LifecycleEditor({ bucketId }: { bucketId: string }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        Edit lifecycle
+      </button>
+    );
+  }
+  return <LifecycleForm bucketId={bucketId} />;
+}
+
+function LifecycleForm({ bucketId }: { bucketId: string }) {
+  const query = useQuery({
+    queryKey: ["bucket-lifecycle", bucketId],
+    queryFn: () => api<unknown>(`${bucketUrl(bucketId)}/lifecycle`),
+    refetchOnWindowFocus: false,
+  });
+  const [drafts, setDrafts] = useState<LifecycleDraft[] | null>(null);
+  const [current, setCurrent] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  useEffect(() => {
+    if (query.isSuccess && drafts === null) {
+      setDrafts(draftsFromLifecycle(query.data));
+    }
+  }, [query.isSuccess, query.data, drafts]);
+  const save = useMutation({
+    mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/lifecycle`, { method: "PUT", body }),
+  });
+  if (query.isError) {
+    return (
+      <p>{query.error instanceof Error ? query.error.message : "Lifecycle rules are unavailable"}</p>
+    );
+  }
+  if (drafts === null) {
+    return null;
+  }
+  const ready = drafts.every(lifecycleReady);
+  const replaceRule = (index: number, rule: LifecycleDraft) => {
+    setDrafts(drafts.map((item, itemIndex) => (itemIndex === index ? rule : item)));
+  };
+  return (
+    <div className="mt-3 grid max-w-sm gap-2">
+      {drafts.map((rule, index) => (
+        <div key={index} className="grid gap-2">
+          {rule.preserved !== undefined ? (
+            <p>{JSON.stringify(rule.preserved)}</p>
+          ) : (
+            LIFECYCLE_FIELDS.map(([key, label]) => (
+              <label key={label} className="block text-sm">
+                {label}
+                <input
+                  className="mt-1 w-full border border-neutral-300 px-2 py-1"
+                  value={rule[key]}
+                  onChange={(event) => {
+                    replaceRule(index, { ...rule, [key]: event.target.value });
+                  }}
+                />
+              </label>
+            ))
+          )}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
+            }}
+          >
+            Remove lifecycle rule
+          </button>
+        </div>
+      ))}
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setDrafts([...drafts, emptyLifecycleDraft()]);
+        }}
+      >
+        Add lifecycle rule
+      </button>
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        disabled={!ready}
+        onClick={() => {
+          setReviewError(null);
+          void api<unknown>(`${bucketUrl(bucketId)}/lifecycle`)
+            .then((fresh) => {
+              setCurrent(JSON.stringify(fresh));
+            })
+            .catch((error: unknown) => {
+              setCurrent(null);
+              setReviewError(
+                error instanceof Error ? error.message : "Lifecycle rules are unavailable",
+              );
+            });
+        }}
+      >
+        Review lifecycle
+      </button>
+      {reviewError ? <p>{reviewError}</p> : null}
+      {current !== null ? (
+        <>
+          <pre aria-label="Current">{current}</pre>
+          <pre aria-label="Next">{nextLifecycleText(drafts)}</pre>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              setCurrent(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={save.isPending || !ready}
+            onClick={() => {
+              save.mutate(lifecycleBody(drafts));
+            }}
+          >
+            Save lifecycle
+          </button>
+          {save.error instanceof Error ? <p>{save.error.message}</p> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function CreateBucketForm() {
   const client = useQueryClient();
   const [globalAlias, setGlobalAlias] = useState("");
@@ -1389,6 +1810,11 @@ export function Buckets({
                       />
                     ) : null}
                     {canManage ? <CorsEditor bucketId={bucket.id} /> : <CorsSummary bucketId={bucket.id} />}
+                    {canManage ? (
+                      <LifecycleEditor bucketId={bucket.id} />
+                    ) : (
+                      <LifecycleSummary bucketId={bucket.id} />
+                    )}
                   </td>
                   <td className="py-2 align-top">
                     {bucket.aliases.map((alias, aliasIndex) => (

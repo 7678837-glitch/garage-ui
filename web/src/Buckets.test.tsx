@@ -56,6 +56,9 @@ test("shows the bucket id and string aliases without letting an alias hide the i
       if (url.endsWith("/cors")) {
         return json({ corsRules: [] });
       }
+      if (url.endsWith("/lifecycle")) {
+        return json({ lifecycleRules: [] });
+      }
       expect(url).toContain("/api/buckets?");
       expect(init?.credentials).toBe("include");
       return json({
@@ -92,6 +95,9 @@ test("loads the next page at the offset after the rows already shown", async () 
       const url = new URL(String(input), "http://ui.local");
       if (url.pathname.endsWith("/cors")) {
         return json({ corsRules: [] });
+      }
+      if (url.pathname.endsWith("/lifecycle")) {
+        return json({ lifecycleRules: [] });
       }
       calls.push(`${url.pathname}?${url.searchParams.toString()}`);
       const offset = url.searchParams.get("offset");
@@ -175,6 +181,9 @@ test("keeps a visible bucket id while a later fetch refreshes the list", async (
       if (url.pathname.endsWith("/cors")) {
         return Promise.resolve(json({ corsRules: [] }));
       }
+      if (url.pathname.endsWith("/lifecycle")) {
+        return Promise.resolve(json({ lifecycleRules: [] }));
+      }
       expect(url.pathname).toBe("/api/buckets");
       expect(init?.credentials).toBe("include");
       calls += 1;
@@ -216,6 +225,9 @@ test("shows the API code and requests the bucket list again from Retry", async (
       const url = new URL(String(input), "http://ui.local");
       if (url.pathname.endsWith("/cors")) {
         return json({ corsRules: [] });
+      }
+      if (url.pathname.endsWith("/lifecycle")) {
+        return json({ lifecycleRules: [] });
       }
       expect(url.pathname).toBe("/api/buckets");
       expect(url.searchParams.get("offset")).toBe("0");
@@ -362,7 +374,9 @@ test("a viewer sees the empty list and does not call bucket write routes", async
     calls.every(
       (call) =>
         call.method === "GET" &&
-        (call.url.startsWith("/api/buckets?") || call.url.endsWith("/cors")),
+        (call.url.startsWith("/api/buckets?") ||
+          call.url.endsWith("/cors") ||
+          call.url.endsWith("/lifecycle")),
     ),
   ).toBe(true);
 });
@@ -812,9 +826,12 @@ test("loads permissions for an encoded bucket id only after the row button is cl
   );
   renderBuckets();
   expect(await screen.findByRole("button", { name: "Permissions for a&b=c" })).toBeTruthy();
-  expect(calls.some((call) => call.startsWith("/api/buckets/") && !call.endsWith("/cors"))).toBe(
-    false,
-  );
+  expect(
+    calls.some(
+      (call) =>
+        call.startsWith("/api/buckets/") && !call.endsWith("/cors") && !call.endsWith("/lifecycle"),
+    ),
+  ).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
@@ -825,7 +842,12 @@ test("loads permissions for an encoded bucket id only after the row button is cl
   expect(screen.queryByText("index-secret.html")).toBeNull();
   expect(screen.queryByText("cors-secret.example")).toBeNull();
   expect(screen.queryByText("life-secret")).toBeNull();
-  expect(calls.filter((call) => call.startsWith("/api/buckets/") && !call.endsWith("/cors"))).toEqual([
+  expect(
+    calls.filter(
+      (call) =>
+        call.startsWith("/api/buckets/") && !call.endsWith("/cors") && !call.endsWith("/lifecycle"),
+    ),
+  ).toEqual([
     "/api/buckets/a%26b%3Dc",
   ]);
 });
@@ -885,6 +907,9 @@ test("filters loaded buckets from the query string and keeps that choice in the 
     vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/cors")) {
         return json({ corsRules: [] });
+      }
+      if (String(input).endsWith("/lifecycle")) {
+        return json({ lifecycleRules: [] });
       }
       calls += 1;
       return json({
@@ -1061,4 +1086,96 @@ test("saves a bucket CORS rule after showing the diff", async () => {
   expect(screen.getByText("https://old.example")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit CORS" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Save CORS" })).toBeNull();
+});
+
+test("saves a bucket lifecycle rule after showing the diff", async () => {
+  const calls: Call[] = [];
+  const lifecycle = {
+    lifecycleRules: [
+      {
+        ID: "logs",
+        Status: "Enabled",
+        Filter: {
+          Prefix: "logs/",
+          ObjectSizeGreaterThan: 10,
+          ObjectSizeLessThan: 100,
+        },
+        Expiration: { Days: 30 },
+        AbortIncompleteMultipartUpload: { DaysAfterInitiation: 7 },
+      },
+    ],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      calls.push(call);
+      if (call.url === "/api/buckets/bkt-1/lifecycle") {
+        return json(lifecycle);
+      }
+      if (call.url.endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 4,
+            bytes: 1000,
+            quotas: { maxSize: 5000, maxObjects: 12 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByRole("button", { name: "Edit lifecycle" })).toBeTruthy();
+  const lifecycleGets = () =>
+    calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/lifecycle");
+  expect(lifecycleGets()).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Edit lifecycle" }));
+  const days = (await screen.findByLabelText("Expiration.Days")) as HTMLInputElement;
+  expect(days.value).toBe("30");
+  expect(lifecycleGets()).toHaveLength(1);
+  fireEvent.change(days, { target: { value: "7" } });
+  fireEvent.click(screen.getByRole("button", { name: "Review lifecycle" }));
+  const current = await screen.findByLabelText("Current");
+  const next = screen.getByLabelText("Next");
+  expect(current.tagName).toBe("PRE");
+  expect(next.tagName).toBe("PRE");
+  expect(current.textContent).toContain("30");
+  expect(next.textContent).toContain("7");
+  expect(next.textContent).not.toContain("30");
+  expect(lifecycleGets()).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Save lifecycle" }));
+  await waitFor(() => {
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  });
+  const put = calls.find((call) => call.method === "PUT");
+  expect(put?.url).toBe("/api/buckets/bkt-1/lifecycle");
+  expect(put?.body).toEqual({
+    lifecycleRules: [
+      {
+        ID: "logs",
+        Status: "Enabled",
+        Filter: {
+          Prefix: "logs/",
+          ObjectSizeGreaterThan: 10,
+          ObjectSizeLessThan: 100,
+        },
+        Expiration: { Days: 7 },
+        AbortIncompleteMultipartUpload: { DaysAfterInitiation: 7 },
+      },
+    ],
+  });
+  expect(JSON.stringify(put?.body)).not.toContain("corsRules");
+  expect(lifecycleGets()).toHaveLength(2);
+  cleanup();
+  calls.length = 0;
+  renderBuckets(false);
+  expect(await screen.findByText("logs")).toBeTruthy();
+  expect(screen.getByText("Enabled")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit lifecycle" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save lifecycle" })).toBeNull();
 });

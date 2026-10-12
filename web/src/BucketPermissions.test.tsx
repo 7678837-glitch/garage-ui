@@ -581,7 +581,9 @@ test("a viewer sees the keys and does not call POST or DELETE", async () => {
     calls.every(
       (call) =>
         call.method === "GET" &&
-        (call.url.startsWith("/api/buckets?") || call.url.endsWith("/cors")),
+        (call.url.startsWith("/api/buckets?") ||
+          call.url.endsWith("/cors") ||
+          call.url.endsWith("/lifecycle")),
     ),
   ).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
