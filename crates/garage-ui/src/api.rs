@@ -10305,6 +10305,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_search_stays_inside_the_prefix() {
+        let mock = S3Mock::start(|line| {
+            let raw = query_value(request_target(line), "prefix").unwrap_or("");
+            if percent_decode(raw) == "photos/" {
+                list_xml(false, None, &[("photos/ab.txt", 1, "abc")], &[])
+            } else {
+                list_xml(false, None, &[("other/ab.txt", 1, "abc")], &[])
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let found = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/search?q=ab&prefix=photos/",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(found.status, StatusCode::OK);
+        let body: Value = serde_json::from_str(&found.body).unwrap();
+        let matches = body["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["key"], "photos/ab.txt");
+        assert_eq!(body["truncated"], false);
+        assert_eq!(body["reason"], Value::Null);
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1);
+        let target = request_target(&seen[0]);
+        assert!(target.contains("list-type=2"), "{target}");
+        assert_eq!(query_value(target, "max-keys"), Some("1000"), "{target}");
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(
+            percent_decode(query_value(target, "prefix").unwrap_or("")),
+            "photos/"
+        );
+        assert!(query_value(target, "delimiter").is_none(), "{target}");
+    }
+
+    #[tokio::test]
     async fn object_metadata_round_trips_odd_keys_and_a_missing_object_is_404() {
         let mock = S3Mock::start(|line| {
             if request_target(line).contains("missing") {
