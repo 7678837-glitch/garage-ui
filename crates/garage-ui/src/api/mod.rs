@@ -68,6 +68,7 @@ pub(crate) use cluster::node_statistics;
 pub(crate) use cluster::post_purge_blocks;
 pub(crate) use cluster::post_repair;
 pub(crate) use cluster::put_worker_variable;
+pub(crate) use cluster::layout_history;
 pub(crate) use cluster::preview_layout;
 pub(crate) use cluster::stage_layout;
 pub(crate) use keys::create_key;
@@ -208,6 +209,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
         .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
+        .route("/api/layout/history", get(layout_history))
         .route("/api/layout/preview", post(preview_layout))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
@@ -4950,6 +4952,70 @@ mod tests {
         assert_eq!(
             crate::db::recent_audit(&app.db).await.unwrap().len(),
             rows_before.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn layout_history_returns_the_garage_body() {
+        let body = r#"{ "versions" : [ { "version" : 4 } ] }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/layout/history", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        let history = cluster_calls(&mock, "GetClusterLayoutHistory");
+        assert_cluster_get(&history, "/v2/GetClusterLayoutHistory");
+        assert!(
+            history[0]
+                .line
+                .starts_with("GET /v2/GetClusterLayoutHistory "),
+            "{}",
+            history[0].line
+        );
+
+        let failed = r#"{"message":"layout history failed"}"#.to_string();
+        let failed_mock =
+            Upstream::start(UpstreamReply::Fixed("409 Conflict", failed.clone())).await;
+        let failed_dir = crate::util::temp_dir();
+        let failed_app = app_for(&failed_dir, &failed_mock.url).await;
+        let (failed_admin, _) = login(&failed_app).await;
+        let conflict = exchange(
+            &failed_app,
+            request("GET", "/api/layout/history", None, Some(&failed_admin)),
+        )
+        .await;
+        assert_eq!(conflict.status, StatusCode::CONFLICT, "{}", conflict.body);
+        assert_eq!(conflict.body, failed);
+        let failed_calls = cluster_calls(&failed_mock, "GetClusterLayoutHistory");
+        assert_cluster_get(&failed_calls, "/v2/GetClusterLayoutHistory");
+        assert!(
+            failed_calls[0]
+                .line
+                .starts_with("GET /v2/GetClusterLayoutHistory "),
+            "{}",
+            failed_calls[0].line
+        );
+
+        let anonymous = exchange(
+            &app,
+            request("GET", "/api/layout/history", None, None),
+        )
+        .await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+        assert_eq!(
+            cluster_calls(&mock, "GetClusterLayoutHistory").len(),
+            history.len()
         );
     }
 
