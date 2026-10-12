@@ -382,6 +382,65 @@ async fn failed_login_is_audited_without_the_password() {
     assert!(!logs(&app).contains("not-a-secret-but-query"));
 }
 
+fn failed_login_from(peer: [u8; 4], forwarded: &str) -> Request<Body> {
+    let mut request = request(
+        "POST",
+        "/api/auth/login",
+        Some(&json!({ "username": "Ada", "password": "wrong horse" }).to_string()),
+        None,
+    );
+    request
+        .headers_mut()
+        .insert("x-forwarded-for", forwarded.parse().unwrap());
+    with_peer(request, peer)
+}
+
+#[tokio::test]
+async fn trusted_proxy_uses_the_last_forwarded_hop() {
+    let peer = [192, 0, 2, 8];
+    let forwarded = "198.51.100.10, 203.0.113.55, ";
+    let dir = crate::util::temp_dir();
+
+    let plain = state::test_app(&dir).await;
+    setup_admin(&plain).await;
+    let plain_failed = exchange(&plain, failed_login_from(peer, forwarded)).await;
+    assert_eq!(plain_failed.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(code_of(&plain_failed.body), "invalid_credentials");
+    assert!(!plain_failed.body.contains("wrong horse"));
+    let plain_audit = audit_text(&plain).await;
+    assert!(
+        plain_audit.contains("Ada 192.0.2.8 failure invalid_credentials"),
+        "unset proxy did not record the connection address",
+    );
+    assert!(
+        !plain_audit.contains("198.51.100.10") && !plain_audit.contains("203.0.113.55"),
+        "unset proxy recorded a forwarded hop",
+    );
+    assert_clean("plain audit", &plain_audit);
+
+    let trusted = state::test_app_with(
+        &dir.join("trusted"),
+        &[("TRUSTED_PROXY", "true")],
+        test_quota(),
+    )
+    .await;
+    setup_admin(&trusted).await;
+    let trusted_failed = exchange(&trusted, failed_login_from(peer, forwarded)).await;
+    assert_eq!(trusted_failed.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(code_of(&trusted_failed.body), "invalid_credentials");
+    assert!(!trusted_failed.body.contains("wrong horse"));
+    let trusted_audit = audit_text(&trusted).await;
+    assert!(
+        trusted_audit.contains("Ada 203.0.113.55 failure invalid_credentials"),
+        "trusted proxy did not record the last forwarded hop",
+    );
+    assert!(
+        !trusted_audit.contains("192.0.2.8") && !trusted_audit.contains("198.51.100.10"),
+        "trusted proxy recorded the peer or an earlier hop",
+    );
+    assert_clean("trusted audit", &trusted_audit);
+}
+
 #[tokio::test]
 async fn login_rate_limit_is_per_username_and_writes_audit() {
     let dir = crate::util::temp_dir();
