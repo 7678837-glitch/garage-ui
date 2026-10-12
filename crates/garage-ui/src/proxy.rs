@@ -185,6 +185,13 @@ pub async fn dispatch(
     Ok(response)
 }
 
+// 收到任意 HTTP 响应即视为已应答。不读版本，避免把旧 Garage 当成未就绪。
+pub(crate) async fn garage_answered(app: &App) -> bool {
+    exchange(app, "GetNodeInfo", &Method::GET, "node=self", &[])
+        .await
+        .is_ok()
+}
+
 pub async fn ensure_garage_link(app: &App) -> GarageLink {
     let Some(url) = app.settings.garage_admin_url.clone() else {
         return GarageLink::unknown();

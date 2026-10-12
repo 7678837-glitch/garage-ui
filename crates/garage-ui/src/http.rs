@@ -23,6 +23,13 @@ struct HealthBody<'a> {
     build_time: &'a str,
 }
 
+#[derive(Serialize)]
+struct ReadyBody {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+}
+
 pub fn router(app: App) -> Router {
     crate::config::maybe_check_updates(app.settings.update_url.as_deref());
     let base = app.settings.base_path.clone();
@@ -30,7 +37,9 @@ pub fn router(app: App) -> Router {
     let site = Router::<App>::new()
         .fallback(get(assets::asset))
         .merge(api::routes(app.clone()));
-    let root = Router::new().route("/healthz", get(healthz));
+    let root = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz));
     let root = if base.is_empty() {
         root.merge(site)
     } else {
@@ -56,6 +65,36 @@ async fn healthz() -> axum::Json<HealthBody<'static>> {
         commit: commit(),
         build_time: build_time(),
     })
+}
+
+async fn readyz(
+    axum::extract::State(app): axum::extract::State<App>,
+) -> (StatusCode, axum::Json<ReadyBody>) {
+    if sqlx::query("SELECT 1").execute(&app.db).await.is_err() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(ReadyBody {
+                status: "unavailable",
+                reason: Some("database"),
+            }),
+        );
+    }
+    if crate::proxy::garage_answered(&app).await {
+        return (
+            StatusCode::OK,
+            axum::Json(ReadyBody {
+                status: "ready",
+                reason: None,
+            }),
+        );
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(ReadyBody {
+            status: "unavailable",
+            reason: Some("garage"),
+        }),
+    )
 }
 
 async fn request_log(
@@ -172,6 +211,101 @@ mod tests {
         assert_eq!(body["version"], version());
         assert_eq!(body["commit"], commit());
         assert_eq!(body["build_time"], build_time());
+    }
+
+    #[tokio::test]
+    async fn readyz_requires_database_and_garage() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let (status, body) = readyz(&app).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body,
+            serde_json::json!({"status": "unavailable", "reason": "garage"})
+        );
+
+        let down_dir = crate::util::temp_dir();
+        let down = crate::state::test_app_with(
+            &down_dir,
+            &[
+                ("GARAGE_ADMIN_URL", "http://127.0.0.1:9"),
+                ("GARAGE_ADMIN_TOKEN", "test-token-value1"),
+            ],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let (status, body) = readyz(&down).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body,
+            serde_json::json!({"status": "unavailable", "reason": "garage"})
+        );
+
+        down.db.close().await;
+        let (status, body) = readyz(&down).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body,
+            serde_json::json!({"status": "unavailable", "reason": "database"})
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0_u8; 1024];
+            loop {
+                let read = socket.read(&mut tmp).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..read]);
+                if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let payload = b"nope";
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.write_all(payload).await.unwrap();
+        });
+        let url = format!("http://127.0.0.1:{port}");
+        let live_dir = crate::util::temp_dir();
+        let live = crate::state::test_app_with(
+            &live_dir,
+            &[
+                ("GARAGE_ADMIN_URL", url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", "test-token-value1"),
+            ],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let (status, body) = readyz(&live).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"status": "ready"}));
+    }
+
+    async fn readyz(app: &App) -> (StatusCode, serde_json::Value) {
+        let response = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, body)
     }
 
     #[tokio::test]
