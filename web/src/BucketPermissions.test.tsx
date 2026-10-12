@@ -577,7 +577,13 @@ test("a viewer sees the keys and does not call POST or DELETE", async () => {
   );
   renderBuckets(false);
   expect(await screen.findByRole("button", { name: "Permissions for bkt-1" })).toBeTruthy();
-  expect(calls.every((call) => call.method === "GET" && call.url.startsWith("/api/buckets?"))).toBe(true);
+  expect(
+    calls.every(
+      (call) =>
+        call.method === "GET" &&
+        (call.url.startsWith("/api/buckets?") || call.url.endsWith("/cors")),
+    ),
+  ).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
