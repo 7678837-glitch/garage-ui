@@ -402,6 +402,31 @@ pub async fn insert_audit(pool: &SqlitePool, event: AuditEvent<'_>) -> Result<()
     Ok(())
 }
 
+pub(crate) fn retention_days() -> i64 {
+    const DEFAULT_DAYS: i64 = 90;
+    let Ok(raw) = std::env::var("AUDIT_RETENTION_DAYS") else {
+        return DEFAULT_DAYS;
+    };
+    match raw.parse::<i64>() {
+        Ok(days) if days >= 1 => days,
+        _ => DEFAULT_DAYS,
+    }
+}
+
+pub(crate) async fn delete_expired_audit(
+    pool: &SqlitePool,
+    now_secs: i64,
+    retention_days: i64,
+) -> Result<u64, sqlx::Error> {
+    // Retention has no upper bound, so the window can exceed i64::MAX.
+    let cutoff = now_secs.saturating_sub(retention_days.saturating_mul(86_400));
+    let result = sqlx::query("DELETE FROM audit WHERE at < ?")
+        .bind(cutoff)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 pub async fn recent_audit(pool: &SqlitePool) -> Result<Vec<AuditRow>, sqlx::Error> {
     let rows = sqlx::query(
