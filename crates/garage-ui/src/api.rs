@@ -7450,6 +7450,52 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn failed_upload_leaves_no_spool_file() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/note.txt",
+                b"note",
+                Some("4"),
+                &session,
+            ),
+        )
+        .await;
+        assert_ne!(response.status, StatusCode::CREATED);
+        let seen = mock.requests();
+        assert!(
+            seen.iter().any(|line| line.starts_with("PUT ")),
+            "mock saw no PUT"
+        );
+        let mut leftovers = Vec::new();
+        let mut pending = vec![dir.clone()];
+        while let Some(current) = pending.pop() {
+            for entry in std::fs::read_dir(&current).expect("read data dir") {
+                let entry = entry.expect("data dir entry");
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with(".put-") {
+                    leftovers.push(name.into_owned());
+                }
+                if path.is_dir() {
+                    pending.push(path);
+                }
+            }
+        }
+        assert!(leftovers.is_empty(), "spool files remain: {leftovers:?}");
+    }
+
     fn s3_operation(line: &str) -> &'static str {
         let target = request_target(line);
         if line.starts_with("POST ") && target.contains("uploads") {
