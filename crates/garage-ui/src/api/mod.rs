@@ -46,9 +46,11 @@ pub(crate) use buckets::create_bucket;
 pub(crate) use buckets::delete_bucket;
 pub(crate) use buckets::get_bucket;
 pub(crate) use buckets::get_bucket_cors;
+pub(crate) use buckets::get_bucket_lifecycle;
 pub(crate) use buckets::grant_bucket_permissions;
 pub(crate) use buckets::list_buckets;
 pub(crate) use buckets::put_bucket_cors;
+pub(crate) use buckets::put_bucket_lifecycle;
 pub(crate) use buckets::put_bucket_credential;
 pub(crate) use buckets::put_bucket_quotas;
 pub(crate) use buckets::remove_bucket_alias;
@@ -135,6 +137,10 @@ pub fn routes(app: App) -> Router<App> {
         .route(
             "/api/buckets/{id}/cors",
             get(get_bucket_cors).put(put_bucket_cors),
+        )
+        .route(
+            "/api/buckets/{id}/lifecycle",
+            get(get_bucket_lifecycle).put(put_bucket_lifecycle),
         )
         .route("/api/buckets/{id}/credential", put(put_bucket_credential))
         .route(
@@ -2134,6 +2140,135 @@ mod tests {
         )
         .await;
         assert_eq!(missing.status, StatusCode::BAD_REQUEST, "{}", missing.body);
+        assert_eq!(updates(&mock).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn bucket_lifecycle_put_replaces_the_rules_and_get_returns_them() {
+        let rules = json!([{
+            "ID": "expire",
+            "Status": "Enabled"
+        }]);
+        let info = json!({
+            "id": "bkt-1",
+            "corsRules": [{
+                "ID": "photos",
+                "AllowedOrigin": ["https://photos.example"]
+            }],
+            "lifecycleRules": rules.clone(),
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(info.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let read = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/lifecycle", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&read.body).unwrap(),
+            json!({ "lifecycleRules": rules })
+        );
+        assert!(!read.body.contains("corsRules"), "{}", read.body);
+        let details = bucket_info_calls(&mock);
+        assert_eq!(
+            details.len(),
+            1,
+            "{:?}",
+            details
+                .iter()
+                .map(|call| &call.line)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            details[0].line.contains("GET /v2/GetBucketInfo?id=bkt-1 "),
+            "{}",
+            details[0].line
+        );
+
+        let replaced = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some(&json!({ "lifecycleRules": rules }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+        let updates = |mock: &Upstream| {
+            mock.calls()
+                .into_iter()
+                .filter(|call| call.line.contains("UpdateBucket"))
+                .collect::<Vec<_>>()
+        };
+        let sent = updates(&mock);
+        assert_eq!(
+            sent.len(),
+            1,
+            "{:?}",
+            sent.iter().map(|call| &call.line).collect::<Vec<_>>()
+        );
+        assert!(
+            sent[0].line.contains("POST /v2/UpdateBucket?id=bkt-1 "),
+            "{}",
+            sent[0].line
+        );
+        let sent_body: Value = serde_json::from_str(&sent[0].body).unwrap();
+        assert_eq!(sent_body, json!({ "lifecycleRules": rules }));
+        assert!(sent_body.get("corsRules").is_none(), "{}", sent[0].body);
+
+        let cleared = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some(r#"{"lifecycleRules":[]}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.body);
+        let sent = updates(&mock);
+        assert_eq!(sent.len(), 2);
+        assert_eq!(
+            serde_json::from_str::<Value>(&sent[1].body).unwrap(),
+            json!({ "lifecycleRules": [] })
+        );
+
+        let viewer = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some(&json!({ "lifecycleRules": rules }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(updates(&mock).len(), 2);
+
+        let missing = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some("{}"),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &missing,
+            StatusCode::BAD_REQUEST,
+            "invalid_lifecycle",
+            "lifecycleRules must be an array",
+        );
         assert_eq!(updates(&mock).len(), 2);
     }
 
