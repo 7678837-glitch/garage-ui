@@ -167,6 +167,89 @@ pub async fn list(
     })
 }
 
+#[derive(Serialize)]
+pub struct IncompleteUpload {
+    pub key: String,
+    #[serde(rename = "uploadId")]
+    pub upload_id: String,
+    pub initiated: String,
+}
+
+pub async fn list_multipart_uploads(
+    app: &App,
+    bucket_id: &str,
+) -> Result<Vec<IncompleteUpload>, ApiError> {
+    let bucket = bucket_id.to_string();
+    drive(app, bucket.clone(), move |client| {
+        let bucket = bucket.clone();
+        async move { collect_multipart_uploads(&client, &bucket).await }
+    })
+    .await
+}
+
+async fn collect_multipart_uploads(
+    client: &Client,
+    bucket: &str,
+) -> Result<Vec<IncompleteUpload>, S3Failure> {
+    let mut found = Vec::new();
+    let mut key_marker = None;
+    let mut upload_id_marker = None;
+    loop {
+        let mut request = client.list_multipart_uploads().bucket(bucket);
+        if let Some(marker) = &key_marker {
+            request = request.key_marker(marker);
+        }
+        if let Some(marker) = &upload_id_marker {
+            request = request.upload_id_marker(marker);
+        }
+        let output = request.send().await.map_err(|error| {
+            classify(
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16()),
+                error.to_string(),
+            )
+        })?;
+        for upload in output.uploads() {
+            let Some(initiated) = upload.initiated().copied() else {
+                continue;
+            };
+            let Some(key) = upload.key() else {
+                continue;
+            };
+            let Some(upload_id) = upload.upload_id() else {
+                continue;
+            };
+            found.push(IncompleteUpload {
+                key: key.to_string(),
+                upload_id: upload_id.to_string(),
+                initiated: stamp(initiated),
+            });
+        }
+        if output.is_truncated() != Some(true) {
+            break;
+        }
+        let Some(next_key) = output
+            .next_key_marker()
+            .filter(|marker| !marker.is_empty())
+        else {
+            break;
+        };
+        let Some(next_id) = output
+            .next_upload_id_marker()
+            .filter(|marker| !marker.is_empty())
+        else {
+            break;
+        };
+        if key_marker.as_deref() == Some(next_key) && upload_id_marker.as_deref() == Some(next_id) {
+            break;
+        }
+        key_marker = Some(next_key.to_string());
+        upload_id_marker = Some(next_id.to_string());
+    }
+    Ok(found)
+}
+
 pub async fn search(
     app: &App,
     bucket_id: &str,

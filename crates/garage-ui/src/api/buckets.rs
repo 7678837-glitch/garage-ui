@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::access::{self, Op};
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
+use crate::objects;
 use crate::proxy::{self, confirmed};
 use crate::session::{
     self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
@@ -425,6 +426,63 @@ fn lifecycle_rules_from_bucket(bytes: &[u8]) -> Result<Value, ApiError> {
             "Bucket info did not include a lifecycle rule array",
         )),
     }
+}
+
+pub(crate) async fn list_multipart_uploads(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&current.user, Op::ReadObjects)?;
+    let uploads = objects::list_multipart_uploads(&app, &id).await?;
+    Ok(Json(json!({ "uploads": uploads })))
+}
+
+pub(crate) async fn cleanup_uploads(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    let older_than_secs = cleanup_age(&body)?;
+    let bytes = serde_json::to_vec(&json!({
+        "bucketId": id,
+        "olderThanSecs": older_than_secs,
+    }))
+    .map_err(|_| ApiError::internal())?;
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "CleanupIncompleteUploads",
+        None,
+        &bytes,
+    )
+    .await
+}
+
+fn invalid_age() -> ApiError {
+    ApiError::bad_request(
+        "invalid_age",
+        "olderThanSecs must be an integer that is at least 0",
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CleanupAge {
+    #[serde(rename = "olderThanSecs")]
+    older_than_secs: i64,
+}
+
+fn cleanup_age(body: &[u8]) -> Result<i64, ApiError> {
+    let parsed: CleanupAge = serde_json::from_slice(body).map_err(|_| invalid_age())?;
+    if parsed.older_than_secs < 0 {
+        return Err(invalid_age());
+    }
+    Ok(parsed.older_than_secs)
 }
 
 pub(crate) async fn grant_bucket_permissions(
