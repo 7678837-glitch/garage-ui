@@ -137,6 +137,23 @@ pub(crate) async fn get_bucket_cors(
     Ok(Json(json!({ "corsRules": rules })).into_response())
 }
 
+pub(crate) async fn get_bucket_lifecycle(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let response = get_bucket(State(app.clone()), Authed(current), Path(id), headers).await?;
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let rules = lifecycle_rules_from_bucket(&bytes)?;
+    Ok(Json(json!({ "lifecycleRules": rules })).into_response())
+}
+
 pub(crate) async fn delete_bucket(
     State(app): State<App>,
     Authed(current): Authed,
@@ -289,6 +306,58 @@ pub(crate) async fn put_bucket_cors(
     .await
 }
 
+pub(crate) async fn put_bucket_lifecycle(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "PUT",
+            "/api/buckets/lifecycle",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
+    let bytes = match lifecycle_update(&body) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_lifecycle",
+                "PUT",
+                "/api/buckets/lifecycle",
+                &id,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "UpdateBucket",
+        Some(&query),
+        &bytes,
+    )
+    .await
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CorsUpdate {
@@ -319,6 +388,41 @@ fn cors_rules_from_bucket(bytes: &[u8]) -> Result<Value, ApiError> {
         Some(_) => Err(ApiError::unavailable(
             "invalid_bucket",
             "Bucket info did not include a CORS rule array",
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LifecycleUpdate {
+    #[serde(rename = "lifecycleRules")]
+    lifecycle_rules: Vec<Value>,
+}
+
+fn invalid_lifecycle() -> ApiError {
+    ApiError::bad_request("invalid_lifecycle", "lifecycleRules must be an array")
+}
+
+fn lifecycle_update(body: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let update: LifecycleUpdate = serde_json::from_slice(body).map_err(|_| invalid_lifecycle())?;
+    serde_json::to_vec(&json!({ "lifecycleRules": update.lifecycle_rules }))
+        .map_err(|_| ApiError::internal())
+}
+
+// A missing or null lifecycleRules is an empty rule list. This route always returns an array.
+fn lifecycle_rules_from_bucket(bytes: &[u8]) -> Result<Value, ApiError> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| {
+        ApiError::unavailable(
+            "invalid_bucket",
+            "Bucket info did not include a lifecycle rule array",
+        )
+    })?;
+    match value.get("lifecycleRules") {
+        None | Some(Value::Null) => Ok(Value::Array(Vec::new())),
+        Some(Value::Array(rules)) => Ok(Value::Array(rules.clone())),
+        Some(_) => Err(ApiError::unavailable(
+            "invalid_bucket",
+            "Bucket info did not include a lifecycle rule array",
         )),
     }
 }
