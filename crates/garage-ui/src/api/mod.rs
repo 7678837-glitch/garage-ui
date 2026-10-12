@@ -408,7 +408,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use axum::body::Body;
+    use axum::body::{Body, HttpBody};
     use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
     use axum::response::IntoResponse;
     use serde_json::{Value, json};
@@ -4439,6 +4439,13 @@ mod tests {
         notify: tokio::sync::Notify,
     }
 
+    struct GetHold {
+        key: String,
+        release: AtomicBool,
+        early: AtomicBool,
+        notify: tokio::sync::Notify,
+    }
+
     struct S3Mock {
         url: String,
         requests: Arc<Mutex<Vec<String>>>,
@@ -4456,7 +4463,7 @@ mod tests {
 
     impl S3Mock {
         async fn start(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Self {
-            Self::serve(reply, None).await
+            Self::serve(reply, None, None).await
         }
 
         async fn start_holding_parts(
@@ -4466,7 +4473,14 @@ mod tests {
                 released: AtomicBool::new(false),
                 notify: tokio::sync::Notify::new(),
             });
-            Self::serve(reply, Some(hold)).await
+            Self::serve(reply, Some(hold), None).await
+        }
+
+        async fn start_holding_get(
+            reply: impl Fn(&str) -> String + Send + Sync + 'static,
+            hold: Arc<GetHold>,
+        ) -> Self {
+            Self::serve(reply, None, Some(hold)).await
         }
 
         fn release_parts(&self) {
@@ -4480,6 +4494,7 @@ mod tests {
         async fn serve(
             reply: impl Fn(&str) -> String + Send + Sync + 'static,
             hold: Option<Arc<PartHold>>,
+            get_hold: Option<Arc<GetHold>>,
         ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
@@ -4491,6 +4506,7 @@ mod tests {
             let bodies_task = Arc::clone(&bodies);
             let reply = Arc::new(reply);
             let hold_task = hold.clone();
+            let get_hold_task = get_hold.clone();
             let task = tokio::spawn(async move {
                 loop {
                     let Ok((mut socket, _)) = listener.accept().await else {
@@ -4501,6 +4517,7 @@ mod tests {
                     let bodies_task = Arc::clone(&bodies_task);
                     let reply = Arc::clone(&reply);
                     let hold = hold_task.clone();
+                    let get_hold = get_hold_task.clone();
                     tokio::spawn(async move {
                         let mut buf = Vec::new();
                         let mut tmp = [0_u8; 4096];
@@ -4568,6 +4585,14 @@ mod tests {
                             let _ = socket.shutdown().await;
                             return;
                         }
+                        // The socket read above uses this same two-second bound. Giving up still sends the object.
+                        if line.starts_with("GET ")
+                            && let Some(hold) = &get_hold
+                            && object_key_of(&line) == hold.key
+                            && !get_reply_ready(hold).await
+                        {
+                            hold.early.store(true, Ordering::SeqCst);
+                        }
                         let response = reply(&line);
                         let _ = socket.write_all(response.as_bytes()).await;
                         let _ = socket.shutdown().await;
@@ -4604,6 +4629,15 @@ mod tests {
                 .await
                 .is_ok()
             || hold.released.load(Ordering::SeqCst)
+    }
+
+    async fn get_reply_ready(hold: &GetHold) -> bool {
+        let notified = hold.notify.notified();
+        hold.release.load(Ordering::SeqCst)
+            || tokio::time::timeout(Duration::from_secs(2), notified)
+                .await
+                .is_ok()
+            || hold.release.load(Ordering::SeqCst)
     }
 
     async fn object_app(dir: &std::path::Path, endpoint: &str, with_key: bool) -> App {
@@ -9581,5 +9615,107 @@ mod tests {
         assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.body);
         assert!(!crate::zip::token_is_fresh(60));
         assert!(crate::zip::token_is_fresh(59));
+    }
+
+    #[tokio::test]
+    async fn archive_starts_the_zip_before_the_second_object_is_fully_read() {
+        let hold = Arc::new(GetHold {
+            key: "a/two.txt".to_string(),
+            release: AtomicBool::new(false),
+            early: AtomicBool::new(false),
+            notify: tokio::sync::Notify::new(),
+        });
+        let mock = S3Mock::start_holding_get(
+            |line| {
+                let body = if object_key_of(line) == "a/two.txt" {
+                    "two-body"
+                } else {
+                    "one-body"
+                };
+                object_bytes("text/plain", body)
+            },
+            Arc::clone(&hold),
+        )
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let issued = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(&json!({ "keys": ["a/one.txt", "a/two.txt"] }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(issued.status, StatusCode::OK, "{}", issued.body);
+        let token = serde_json::from_str::<Value>(&issued.body).unwrap()["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let archive_path = format!("/api/buckets/bkt-1/archive?token={token}");
+        let response = router(app.clone())
+            .oneshot(request("GET", &archive_path, None, Some(&admin)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let disposition = response
+            .headers()
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let had_length = response.headers().get("content-length").is_some();
+        let mut body = std::pin::pin!(response.into_body());
+        let mut bytes = Vec::new();
+        let mut released = false;
+        while let Some(frame) =
+            std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
+        {
+            let frame = frame.expect("archive frame");
+            let Ok(chunk) = frame.into_data() else {
+                continue;
+            };
+            if !released && !chunk.is_empty() {
+                released = true;
+                hold.release.store(true, Ordering::SeqCst);
+                hold.notify.notify_waiters();
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        assert!(released, "archive body had no data");
+        assert!(
+            !hold.early.load(Ordering::SeqCst),
+            "two.txt was released before any archive body byte"
+        );
+        assert!(!had_length, "archive response buffered a content-length");
+        assert_eq!(content_type, "application/zip");
+        assert!(
+            disposition.contains("archive.zip"),
+            "{disposition}"
+        );
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        assert_eq!(archive.len(), 2);
+        assert!(archive.by_name("_errors.txt").is_err());
+        {
+            let mut file = archive.by_name("one.txt").unwrap();
+            assert_eq!(file.compression(), zip::CompressionMethod::Stored);
+            let mut text = String::new();
+            file.read_to_string(&mut text).unwrap();
+            assert_eq!(text, "one-body");
+        }
+        let mut file = archive.by_name("two.txt").unwrap();
+        assert_eq!(file.compression(), zip::CompressionMethod::Stored);
+        let mut text = String::new();
+        file.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "two-body");
     }
 }
