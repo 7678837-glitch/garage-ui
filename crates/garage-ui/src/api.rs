@@ -108,6 +108,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/cluster/health", get(cluster_health))
         .route("/api/cluster/status", get(cluster_status))
         .route("/api/cluster/statistics", get(cluster_statistics))
+        .route("/api/nodes/{id}/statistics", get(node_statistics))
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/garage/{*path}", any(garage))
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
@@ -2904,6 +2905,27 @@ async fn cluster_statistics(
         &Method::GET,
         "v2/GetClusterStatistics",
         None,
+        &[],
+        &headers,
+    )
+    .await
+}
+
+async fn node_statistics(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewStats)?;
+    let query = format!("node={}", percent_encode(&id));
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetNodeStatistics",
+        Some(&query),
         &[],
         &headers,
     )
@@ -6191,6 +6213,70 @@ mod tests {
             StatusCode::BAD_GATEWAY,
             "garage_unavailable",
             "Garage admin API is not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn node_statistics_returns_the_garage_body() {
+        let body = r#"{ "freeform" : "node bytes=9007199254740993" , "totalObjectBytes" : 9007199254740993 }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/a%26b%3Dc/statistics",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert_cluster_get(
+            &cluster_calls(&mock, "GetNodeStatistics"),
+            "/v2/GetNodeStatistics?node=a%26b%3Dc",
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_can_read_node_statistics() {
+        let body = r#"{ "freeform" : "ok" , "bucketCount" : 9007199254740993 }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/a%26b%3Dc/statistics",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert_cluster_get(
+            &cluster_calls(&mock, "GetNodeStatistics"),
+            "/v2/GetNodeStatistics?node=a%26b%3Dc",
+        );
+        let bare = crate::util::temp_dir();
+        let garage_less = state::test_app(&bare).await;
+        let anonymous = exchange(
+            &garage_less,
+            request("GET", "/api/nodes/a%26b%3Dc/statistics", None, None),
+        )
+        .await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
         );
     }
 
