@@ -120,6 +120,23 @@ pub(crate) async fn get_bucket(
     .await
 }
 
+pub(crate) async fn get_bucket_cors(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let response = get_bucket(State(app.clone()), Authed(current), Path(id), headers).await?;
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let rules = cors_rules_from_bucket(&bytes)?;
+    Ok(Json(json!({ "corsRules": rules })).into_response())
+}
+
 pub(crate) async fn delete_bucket(
     State(app): State<App>,
     Authed(current): Authed,
@@ -218,6 +235,92 @@ pub(crate) async fn put_bucket_quotas(
         &bytes,
     )
     .await
+}
+
+pub(crate) async fn put_bucket_cors(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if let Err(error) = require(&current.user, Op::ChangeBuckets) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "PUT",
+            "/api/buckets/cors",
+            &id,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
+    let bytes = match cors_update(&body) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_cors",
+                "PUT",
+                "/api/buckets/cors",
+                &id,
+                400,
+            )
+            .await?;
+            return Err(error);
+        }
+    };
+    let query = format!("id={}", percent_encode(&id));
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "UpdateBucket",
+        Some(&query),
+        &bytes,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CorsUpdate {
+    #[serde(rename = "corsRules")]
+    cors_rules: Vec<Value>,
+}
+
+fn invalid_cors() -> ApiError {
+    ApiError::bad_request("invalid_cors", "corsRules must be an array")
+}
+
+fn cors_update(body: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let update: CorsUpdate = serde_json::from_slice(body).map_err(|_| invalid_cors())?;
+    serde_json::to_vec(&json!({ "corsRules": update.cors_rules })).map_err(|_| ApiError::internal())
+}
+
+// A missing or null corsRules is an empty rule list. This route always returns an array.
+fn cors_rules_from_bucket(bytes: &[u8]) -> Result<Value, ApiError> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| {
+        ApiError::unavailable(
+            "invalid_bucket",
+            "Bucket info did not include a CORS rule array",
+        )
+    })?;
+    match value.get("corsRules") {
+        None | Some(Value::Null) => Ok(Value::Array(Vec::new())),
+        Some(Value::Array(rules)) => Ok(Value::Array(rules.clone())),
+        Some(_) => Err(ApiError::unavailable(
+            "invalid_bucket",
+            "Bucket info did not include a CORS rule array",
+        )),
+    }
 }
 
 pub(crate) async fn grant_bucket_permissions(
@@ -490,7 +593,7 @@ fn invalid_quota() -> ApiError {
     )
 }
 
-// 配额整数按请求里的数字原文转发。经 f64 会把 9007199254740993 收成 9007199254740992。
+// Quota integers stay in the request's original digits. Parsing through f64 would turn 9007199254740993 into 9007199254740992.
 fn quota_update(body: &[u8]) -> Result<Vec<u8>, ApiError> {
     let wire = parse_quota_body(body)?;
     let mut out = Vec::new();
