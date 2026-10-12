@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -48,7 +48,7 @@ const blankAliasDraft: AliasDraft = {
   accessKeyId: "",
 };
 
-// 服务端未传 limit 时窗口是 100。下一页 offset 用本页条数。
+// Without a limit the server window is 100. The next offset is this page's row count.
 const PAGE_LIMIT = 100;
 
 function parseAlias(value: unknown, scope: "global" | "local"): Alias | null {
@@ -174,7 +174,7 @@ function parsePage(text: string): BucketPage {
   };
 }
 
-// JSON.parse 会把 9007199254740993 收成 9007199254740992。配额和用量按响应原文保留。
+// JSON.parse turns 9007199254740993 into 9007199254740992. Keep quota and usage digits as response text.
 function quoteCountLiterals(text: string): string {
   const parts: string[] = [];
   let index = 0;
@@ -305,7 +305,7 @@ class BucketListError extends Error {
   }
 }
 
-// api() 只把 message 放进 Error。桶列表还要显示 body 里的 code，所以这里自己读响应。
+// api() puts only message on Error. The bucket list also shows the body's code, so read the response here.
 function failureFrom(text: string, status: number): BucketListFailure {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
@@ -409,7 +409,7 @@ function unitPair(used: string, quota: string): string {
   return ` (${left} of ${right})`;
 }
 
-// 按十进制单位切原文字。不用 Number，避免超过 2^53 的字节被舍入。
+// Split the original digit text on decimal units. Skip Number so byte counts past 2^53 are not rounded.
 function formatBytes(bytes: string): string {
   const digits = bytes.replace(/^0+(?=\d)/, "");
   for (const [unit, scale] of DECIMAL_UNITS) {
@@ -547,6 +547,311 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         {save.isPending ? "Saving quotas" : `Save quotas for ${bucketId}`}
       </button>
     </form>
+  );
+}
+
+type CorsDraft = {
+  id: string;
+  origins: string;
+  methods: string;
+  headers: string;
+  expose: string;
+  maxAge: string;
+  extra: Record<string, unknown>;
+  preserved: unknown;
+};
+
+const CORS_FIELDS = [
+  ["id", "ID"],
+  ["origins", "AllowedOrigin"],
+  ["methods", "AllowedMethod"],
+  ["headers", "AllowedHeader"],
+  ["expose", "ExposeHeader"],
+  ["maxAge", "MaxAgeSeconds"],
+] as const;
+
+function emptyCorsDraft(): CorsDraft {
+  return {
+    id: "",
+    origins: "",
+    methods: "",
+    headers: "",
+    expose: "",
+    maxAge: "",
+    extra: {},
+    preserved: undefined,
+  };
+}
+
+function splitCsv(text: string): string[] {
+  return text
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function joinCsv(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.length > 0) {
+      items.push(item);
+    }
+  }
+  return items.join(", ");
+}
+
+function maxAgeText(value: unknown): string {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return String(value);
+  }
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+    return value;
+  }
+  return "";
+}
+
+function draftFromRule(value: unknown): CorsDraft {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { ...emptyCorsDraft(), preserved: value };
+  }
+  const record = value as Record<string, unknown>;
+  const extra = { ...record };
+  delete extra.ID;
+  delete extra.AllowedOrigin;
+  delete extra.AllowedMethod;
+  delete extra.AllowedHeader;
+  delete extra.ExposeHeader;
+  delete extra.MaxAgeSeconds;
+  return {
+    id: typeof record.ID === "string" ? record.ID : "",
+    origins: joinCsv(record.AllowedOrigin),
+    methods: joinCsv(record.AllowedMethod),
+    headers: joinCsv(record.AllowedHeader),
+    expose: joinCsv(record.ExposeHeader),
+    maxAge: maxAgeText(record.MaxAgeSeconds),
+    extra,
+    preserved: undefined,
+  };
+}
+
+function draftsFromCors(payload: unknown): CorsDraft[] {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return [];
+  }
+  const rules = (payload as { corsRules?: unknown }).corsRules;
+  if (!Array.isArray(rules)) {
+    return [];
+  }
+  return rules.map(draftFromRule);
+}
+
+function ageReady(value: string): boolean {
+  const text = value.trim();
+  return text.length === 0 || /^[0-9]+$/.test(text);
+}
+
+function ruleReady(rule: CorsDraft): boolean {
+  if (rule.preserved !== undefined) {
+    return true;
+  }
+  return (
+    rule.id.trim().length > 0 &&
+    splitCsv(rule.origins).length > 0 &&
+    splitCsv(rule.methods).length > 0 &&
+    ageReady(rule.maxAge)
+  );
+}
+
+function encodeRule(rule: CorsDraft): string {
+  if (rule.preserved !== undefined) {
+    return JSON.stringify(rule.preserved);
+  }
+  const fields: Record<string, unknown> = {
+    ...rule.extra,
+    ID: rule.id.trim(),
+    AllowedOrigin: splitCsv(rule.origins),
+    AllowedMethod: splitCsv(rule.methods),
+    AllowedHeader: splitCsv(rule.headers),
+    ExposeHeader: splitCsv(rule.expose),
+  };
+  delete fields.MaxAgeSeconds;
+  const age = rule.maxAge.trim();
+  const base = JSON.stringify(fields);
+  if (age.length === 0) {
+    return base;
+  }
+  return `${base.slice(0, -1)},"MaxAgeSeconds":${age}}`;
+}
+
+function corsBody(rules: CorsDraft[]): string {
+  return `{"corsRules":[${rules.map(encodeRule).join(",")}]}`;
+}
+
+function nextCorsText(rules: CorsDraft[]): string {
+  return `[${rules.map(encodeRule).join(",")}]`;
+}
+
+function CorsSummary({ bucketId }: { bucketId: string }) {
+  const query = useQuery({
+    queryKey: ["bucket-cors", bucketId, "view"],
+    queryFn: () => api<unknown>(`${bucketUrl(bucketId)}/cors`),
+    refetchOnWindowFocus: false,
+  });
+  if (!query.isSuccess) {
+    return null;
+  }
+  return (
+    <div>
+      {draftsFromCors(query.data).map((rule, index) =>
+        rule.preserved !== undefined ? (
+          <p key={index}>{JSON.stringify(rule.preserved)}</p>
+        ) : (
+          <p key={index}>
+            <span>{rule.id}</span>
+            {splitCsv(rule.origins).map((origin, originIndex) => (
+              <span key={originIndex}>{origin}</span>
+            ))}
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
+function CorsEditor({ bucketId }: { bucketId: string }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        Edit CORS
+      </button>
+    );
+  }
+  return <CorsForm bucketId={bucketId} />;
+}
+
+function CorsForm({ bucketId }: { bucketId: string }) {
+  const query = useQuery({
+    queryKey: ["bucket-cors", bucketId],
+    queryFn: () => api<unknown>(`${bucketUrl(bucketId)}/cors`),
+    refetchOnWindowFocus: false,
+  });
+  const [drafts, setDrafts] = useState<CorsDraft[] | null>(null);
+  const [current, setCurrent] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  useEffect(() => {
+    if (query.isSuccess && drafts === null) {
+      setDrafts(draftsFromCors(query.data));
+    }
+  }, [query.isSuccess, query.data, drafts]);
+  const save = useMutation({
+    mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/cors`, { method: "PUT", body }),
+  });
+  if (query.isError) {
+    return <p>{query.error instanceof Error ? query.error.message : "CORS rules are unavailable"}</p>;
+  }
+  if (drafts === null) {
+    return null;
+  }
+  const ready = drafts.every(ruleReady);
+  const replaceRule = (index: number, rule: CorsDraft) => {
+    setDrafts(drafts.map((item, itemIndex) => (itemIndex === index ? rule : item)));
+  };
+  return (
+    <div className="mt-3 grid max-w-sm gap-2">
+      {drafts.map((rule, index) => (
+        <div key={index} className="grid gap-2">
+          {rule.preserved !== undefined ? (
+            <p>{JSON.stringify(rule.preserved)}</p>
+          ) : (
+            CORS_FIELDS.map(([key, label]) => (
+              <label key={label} className="block text-sm">
+                {label}
+                <input
+                  className="mt-1 w-full border border-neutral-300 px-2 py-1"
+                  value={rule[key]}
+                  onChange={(event) => {
+                    replaceRule(index, { ...rule, [key]: event.target.value });
+                  }}
+                />
+              </label>
+            ))
+          )}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
+            }}
+          >
+            Remove CORS rule
+          </button>
+        </div>
+      ))}
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setDrafts([...drafts, emptyCorsDraft()]);
+        }}
+      >
+        Add CORS rule
+      </button>
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        disabled={!ready}
+        onClick={() => {
+          setReviewError(null);
+          void api<unknown>(`${bucketUrl(bucketId)}/cors`)
+            .then((fresh) => {
+              setCurrent(JSON.stringify(fresh));
+            })
+            .catch((error: unknown) => {
+              setCurrent(null);
+              setReviewError(error instanceof Error ? error.message : "CORS rules are unavailable");
+            });
+        }}
+      >
+        Review CORS
+      </button>
+      {reviewError ? <p>{reviewError}</p> : null}
+      {current !== null ? (
+        <>
+          <pre aria-label="Current">{current}</pre>
+          <pre aria-label="Next">{nextCorsText(drafts)}</pre>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              setCurrent(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            disabled={save.isPending || !ready}
+            onClick={() => {
+              save.mutate(corsBody(drafts));
+            }}
+          >
+            Save CORS
+          </button>
+          {save.error instanceof Error ? <p>{save.error.message}</p> : null}
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -889,7 +1194,7 @@ function compareCreated(left: string | null, right: string | null): number {
   return left < right ? -1 : 1;
 }
 
-// 只传 canManage 的管理员调用仍要看到对象写操作和预览。
+// A caller that passes only canManage still shows object writes and preview.
 export function Buckets({
   canManage = false,
   canWrite = canManage,
@@ -1083,6 +1388,7 @@ export function Buckets({
                         quotas={bucket.quotas}
                       />
                     ) : null}
+                    {canManage ? <CorsEditor bucketId={bucket.id} /> : <CorsSummary bucketId={bucket.id} />}
                   </td>
                   <td className="py-2 align-top">
                     {bucket.aliases.map((alias, aliasIndex) => (

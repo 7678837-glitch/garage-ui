@@ -52,7 +52,11 @@ test("shows the bucket id and string aliases without letting an alias hide the i
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toContain("/api/buckets?");
+      const url = String(input);
+      if (url.endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
+      expect(url).toContain("/api/buckets?");
       expect(init?.credentials).toBe("include");
       return json({
         items: [
@@ -86,6 +90,9 @@ test("loads the next page at the offset after the rows already shown", async () 
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.credentials).toBe("include");
       const url = new URL(String(input), "http://ui.local");
+      if (url.pathname.endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
       calls.push(`${url.pathname}?${url.searchParams.toString()}`);
       const offset = url.searchParams.get("offset");
       if (offset === "0") {
@@ -165,6 +172,9 @@ test("keeps a visible bucket id while a later fetch refreshes the list", async (
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://ui.local");
+      if (url.pathname.endsWith("/cors")) {
+        return Promise.resolve(json({ corsRules: [] }));
+      }
       expect(url.pathname).toBe("/api/buckets");
       expect(init?.credentials).toBe("include");
       calls += 1;
@@ -204,6 +214,9 @@ test("shows the API code and requests the bucket list again from Retry", async (
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://ui.local");
+      if (url.pathname.endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
       expect(url.pathname).toBe("/api/buckets");
       expect(url.searchParams.get("offset")).toBe("0");
       expect(url.searchParams.get("limit")).toBe("100");
@@ -345,7 +358,13 @@ test("a viewer sees the empty list and does not call bucket write routes", async
   expect(screen.queryByRole("button", { name: "Add alias to bkt-1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Remove global alias east" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Remove local alias site for GK" })).toBeNull();
-  expect(calls.every((call) => call.method === "GET" && call.url.startsWith("/api/buckets?"))).toBe(true);
+  expect(
+    calls.every(
+      (call) =>
+        call.method === "GET" &&
+        (call.url.startsWith("/api/buckets?") || call.url.endsWith("/cors")),
+    ),
+  ).toBe(true);
 });
 
 test("cancels a bucket delete without a request, then confirms the delete", async () => {
@@ -793,7 +812,9 @@ test("loads permissions for an encoded bucket id only after the row button is cl
   );
   renderBuckets();
   expect(await screen.findByRole("button", { name: "Permissions for a&b=c" })).toBeTruthy();
-  expect(calls.some((call) => call.startsWith("/api/buckets/"))).toBe(false);
+  expect(calls.some((call) => call.startsWith("/api/buckets/") && !call.endsWith("/cors"))).toBe(
+    false,
+  );
   fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
@@ -804,7 +825,9 @@ test("loads permissions for an encoded bucket id only after the row button is cl
   expect(screen.queryByText("index-secret.html")).toBeNull();
   expect(screen.queryByText("cors-secret.example")).toBeNull();
   expect(screen.queryByText("life-secret")).toBeNull();
-  expect(calls.filter((call) => call.startsWith("/api/buckets/"))).toEqual(["/api/buckets/a%26b%3Dc"]);
+  expect(calls.filter((call) => call.startsWith("/api/buckets/") && !call.endsWith("/cors"))).toEqual([
+    "/api/buckets/a%26b%3Dc",
+  ]);
 });
 
 test("an object address hides create and the table, and back returns to #buckets", async () => {
@@ -859,7 +882,10 @@ test("filters loaded buckets from the query string and keeps that choice in the 
   let calls = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
       calls += 1;
       return json({
         items: [
@@ -951,4 +977,88 @@ test("sorts loaded buckets by created time and keeps the choice in the address",
   expect(window.location.search).toContain("keep=1");
   expect(window.location.hash).toBe("#kept");
   expect((screen.getByLabelText("Sort buckets") as HTMLSelectElement).value).toBe("created");
+});
+
+test("saves a bucket CORS rule after showing the diff", async () => {
+  const calls: Call[] = [];
+  const cors = {
+    corsRules: [
+      {
+        ID: "photos",
+        AllowedOrigin: ["https://old.example"],
+        AllowedMethod: ["GET"],
+        AllowedHeader: [],
+        ExposeHeader: [],
+        MaxAgeSeconds: 60,
+      },
+    ],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      calls.push(call);
+      if (call.url === "/api/buckets/bkt-1/cors") {
+        return json(cors);
+      }
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 4,
+            bytes: 1000,
+            quotas: { maxSize: 5000, maxObjects: 12 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByRole("button", { name: "Edit CORS" })).toBeTruthy();
+  const corsGets = () =>
+    calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/cors");
+  expect(corsGets()).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Edit CORS" }));
+  const origin = (await screen.findByLabelText("AllowedOrigin")) as HTMLInputElement;
+  expect(origin.value).toBe("https://old.example");
+  expect(corsGets()).toHaveLength(1);
+  fireEvent.change(origin, { target: { value: "https://new.example" } });
+  fireEvent.click(screen.getByRole("button", { name: "Review CORS" }));
+  const current = await screen.findByLabelText("Current");
+  const next = screen.getByLabelText("Next");
+  expect(current.tagName).toBe("PRE");
+  expect(next.tagName).toBe("PRE");
+  expect(current.textContent).toContain("https://old.example");
+  expect(current.textContent).not.toContain("https://new.example");
+  expect(next.textContent).toContain("https://new.example");
+  expect(next.textContent).not.toContain("https://old.example");
+  expect(corsGets()).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Save CORS" }));
+  await waitFor(() => {
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  });
+  const put = calls.find((call) => call.method === "PUT");
+  expect(put?.url).toBe("/api/buckets/bkt-1/cors");
+  expect(put?.body).toEqual({
+    corsRules: [
+      {
+        ID: "photos",
+        AllowedOrigin: ["https://new.example"],
+        AllowedMethod: ["GET"],
+        AllowedHeader: [],
+        ExposeHeader: [],
+        MaxAgeSeconds: 60,
+      },
+    ],
+  });
+  expect(JSON.stringify(put?.body)).not.toContain("lifecycleRules");
+  expect(corsGets()).toHaveLength(2);
+  cleanup();
+  calls.length = 0;
+  renderBuckets(false);
+  expect(await screen.findByText("photos")).toBeTruthy();
+  expect(screen.getByText("https://old.example")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit CORS" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save CORS" })).toBeNull();
 });
