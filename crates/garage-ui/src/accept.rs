@@ -339,6 +339,53 @@ async fn setup_is_once_and_keys_require_a_session() {
 }
 
 #[tokio::test]
+async fn api_response_allows_no_cross_origin_access() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let forbidden = [
+        "access-control-allow-origin",
+        "access-control-allow-credentials",
+    ];
+    let probes = [
+        (
+            "GET",
+            with_peer(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/auth/status")
+                    .header("Origin", "https://evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+                [127, 0, 0, 1],
+            ),
+        ),
+        (
+            "OPTIONS",
+            with_peer(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/auth/status")
+                    .header("Origin", "https://evil.example")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+                [127, 0, 0, 1],
+            ),
+        ),
+    ];
+    for (method, request) in probes {
+        let response = exchange(&app, request).await;
+        for name in forbidden {
+            let present = response
+                .headers
+                .keys()
+                .any(|key| key.as_str().eq_ignore_ascii_case(name));
+            assert!(!present, "{method} /api/auth/status sent {name}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn cookies_are_secure_by_default_and_csrf_cookie_is_readable() {
     let dir = crate::util::temp_dir();
     let app = state::test_app(&dir).await;
