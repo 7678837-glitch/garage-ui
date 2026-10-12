@@ -308,6 +308,20 @@ async fn exchange(
     query: &str,
     body: &[u8],
 ) -> Result<UpstreamBody, ApiError> {
+    let result = exchange_upstream(app, name, method, query, body).await;
+    if result.is_err() {
+        app.record_garage_error();
+    }
+    result
+}
+
+async fn exchange_upstream(
+    app: &App,
+    name: &str,
+    method: &Method,
+    query: &str,
+    body: &[u8],
+) -> Result<UpstreamBody, ApiError> {
     let Some(base) = app.settings.garage_admin_url.clone() else {
         return Err(garage_unconfigured());
     };

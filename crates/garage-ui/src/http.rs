@@ -3,9 +3,9 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::Serialize;
 
@@ -39,7 +39,8 @@ pub fn router(app: App) -> Router {
         .merge(api::routes(app.clone()));
     let root = Router::new()
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz));
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics));
     let root = if base.is_empty() {
         root.merge(site)
     } else {
@@ -111,6 +112,7 @@ async fn request_log(
         .unwrap_or_else(new_request_id);
     let method = request.method().clone();
     let path = request.uri().path().to_string();
+    let started = std::time::Instant::now();
     let mut response = next.run(request).await;
     if let Ok(value) = HeaderValue::from_str(&id) {
         response.headers_mut().insert("x-request-id", value);
@@ -123,7 +125,44 @@ async fn request_log(
     app.record_access(&line);
     let path = redact(&path, &app.settings.redact_secrets);
     tracing::info!(request_id = %id, method = %method, path = %path, %status, "request");
+    app.observe_http(started.elapsed().as_secs_f64());
     response
+}
+
+async fn metrics(
+    axum::extract::State(app): axum::extract::State<App>,
+    headers: HeaderMap,
+) -> Response {
+    if !metrics_allowed(&app, &headers).await {
+        return crate::error::ApiError::unauthorized().into_response();
+    }
+    Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )
+        .body(Body::from(app.metrics_text()))
+        .unwrap()
+}
+
+async fn metrics_allowed(app: &App, headers: &HeaderMap) -> bool {
+    if let Some(expected) = app.settings.metrics_token.as_deref()
+        && let Some(presented) = bearer(headers)
+        && crate::util::ct_eq(presented, expected)
+    {
+        return true;
+    }
+    crate::session::authenticate(app, headers, "127.0.0.1")
+        .await
+        .is_ok()
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
 }
 
 async fn security_headers(request: Request, next: Next) -> Response {
@@ -454,5 +493,229 @@ mod tests {
     #[test]
     fn shutdown_wait_is_thirty_seconds() {
         assert_eq!(shutdown_wait(), Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn metrics_requires_a_session_or_the_token() {
+        let mut env = std::collections::HashMap::new();
+        env.insert(
+            "GARAGE_METRICS_TOKEN".to_string(),
+            "short-token".to_string(),
+        );
+        let Err(err) = crate::config::load_map(&env) else {
+            panic!("short metrics token must not boot");
+        };
+        let text = format!("{err:#}");
+        assert!(text.contains("拒绝启动"), "{text}");
+
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let anonymous = hit(&app, "GET", "/metrics", None, None, None).await;
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            anonymous.json,
+            serde_json::json!({"code": "unauthenticated", "message": "Login required"})
+        );
+        let wrong = hit(
+            &app,
+            "GET",
+            "/metrics",
+            None,
+            Some("Bearer wrong-metrics-token"),
+            None,
+        )
+        .await;
+        assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            wrong.json,
+            serde_json::json!({"code": "unauthenticated", "message": "Login required"})
+        );
+
+        let setup = hit(
+            &app,
+            "POST",
+            "/api/setup",
+            None,
+            None,
+            Some(r#"{"username":"Ada","password":"correct horse"}"#),
+        )
+        .await;
+        assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
+        let cookie = session_cookie(&setup.set_cookies);
+        let metrics = hit(&app, "GET", "/metrics", Some(&cookie), None, None).await;
+        assert_eq!(metrics.status, StatusCode::OK, "{}", metrics.body);
+        assert_eq!(
+            metrics.content_type.as_deref(),
+            Some("text/plain; version=0.0.4; charset=utf-8")
+        );
+        for name in [
+            "garage_ui_http_requests_total",
+            "garage_ui_http_request_duration_seconds",
+            "garage_ui_garage_errors_total",
+            "garage_ui_uploads_in_flight",
+        ] {
+            assert!(
+                metrics.body.contains(name),
+                "{name} missing\n{}",
+                metrics.body
+            );
+        }
+        let requests = sample(&metrics.body, "garage_ui_http_requests_total");
+        assert!(requests >= 1, "{}", metrics.body);
+        assert_eq!(
+            sample(
+                &metrics.body,
+                "garage_ui_http_request_duration_seconds_bucket{le=\"+Inf\"}"
+            ),
+            requests,
+            "{}",
+            metrics.body
+        );
+        assert_eq!(
+            sample(&metrics.body, "garage_ui_uploads_in_flight"),
+            0,
+            "{}",
+            metrics.body
+        );
+
+        let token = "metrics-token-ok16";
+        let token_dir = crate::util::temp_dir();
+        let token_app = crate::state::test_app_with(
+            &token_dir,
+            &[("GARAGE_METRICS_TOKEN", token)],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let by_token = hit(
+            &token_app,
+            "GET",
+            "/metrics",
+            None,
+            Some(&format!("Bearer {token}")),
+            None,
+        )
+        .await;
+        assert_eq!(by_token.status, StatusCode::OK, "{}", by_token.body);
+        assert_eq!(
+            by_token.content_type.as_deref(),
+            Some("text/plain; version=0.0.4; charset=utf-8")
+        );
+
+        let down_dir = crate::util::temp_dir();
+        let down = crate::state::test_app_with(
+            &down_dir,
+            &[
+                ("GARAGE_ADMIN_URL", "http://127.0.0.1:9"),
+                ("GARAGE_ADMIN_TOKEN", "test-token-value1"),
+                ("GARAGE_METRICS_TOKEN", token),
+            ],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let ready = hit(&down, "GET", "/readyz", None, None, None).await;
+        assert_eq!(
+            ready.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            ready.body
+        );
+        let scraped = hit(
+            &down,
+            "GET",
+            "/metrics",
+            None,
+            Some(&format!("Bearer {token}")),
+            None,
+        )
+        .await;
+        assert_eq!(scraped.status, StatusCode::OK, "{}", scraped.body);
+        assert!(
+            sample(&scraped.body, "garage_ui_garage_errors_total") >= 1,
+            "{}",
+            scraped.body
+        );
+    }
+
+    struct Hit {
+        status: StatusCode,
+        content_type: Option<String>,
+        set_cookies: Vec<String>,
+        body: String,
+        json: serde_json::Value,
+    }
+
+    async fn hit(
+        app: &App,
+        method: &str,
+        uri: &str,
+        cookie: Option<&str>,
+        authorization: Option<&str>,
+        body: Option<&str>,
+    ) -> Hit {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+        if let Some(authorization) = authorization {
+            builder = builder.header(header::AUTHORIZATION, authorization);
+        }
+        if body.is_some() {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+        }
+        let response = router(app.clone())
+            .oneshot(
+                builder
+                    .body(Body::from(body.unwrap_or("").to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let set_cookies = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok().map(str::to_string))
+            .collect();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        let json = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        Hit {
+            status,
+            content_type,
+            set_cookies,
+            body,
+            json,
+        }
+    }
+
+    fn session_cookie(set_cookies: &[String]) -> String {
+        set_cookies
+            .iter()
+            .find_map(|line| {
+                let pair = line.split(';').next()?.trim();
+                let (name, value) = pair.split_once('=')?;
+                (name == "garage_session").then(|| format!("garage_session={value}"))
+            })
+            .expect("setup set garage_session")
+    }
+
+    fn sample(body: &str, name: &str) -> u64 {
+        body.lines()
+            .find_map(|line| {
+                let rest = line.strip_prefix(name)?;
+                if rest.starts_with('_') || rest.starts_with('{') {
+                    return None;
+                }
+                rest.trim().parse().ok()
+            })
+            .unwrap_or_else(|| panic!("missing {name}\n{body}"))
     }
 }

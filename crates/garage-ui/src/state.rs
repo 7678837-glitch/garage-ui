@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use tokio::sync::{Mutex, Semaphore};
 
@@ -40,6 +41,7 @@ pub struct App {
     pub fixtures: Arc<std::sync::Mutex<HashMap<String, Fixture>>>,
     pub write: Arc<Mutex<()>>,
     pub upload_buffer: Arc<Semaphore>,
+    metrics: Arc<Metrics>,
     garage_link: Arc<Mutex<Option<CachedGarageLink>>>,
     credentials: Arc<Mutex<credentials::CredentialCache>>,
     pub key_id: Arc<String>,
@@ -165,6 +167,152 @@ impl App {
             .push(line.to_string());
         let _ = line;
     }
+
+    pub(crate) fn observe_http(&self, seconds: f64) {
+        self.metrics.observe_http(seconds);
+    }
+
+    pub(crate) fn record_garage_error(&self) {
+        self.metrics.garage_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn begin_upload(&self) -> UploadInFlight<'_> {
+        self.metrics
+            .uploads_in_flight
+            .fetch_add(1, Ordering::Relaxed);
+        UploadInFlight {
+            gauge: &self.metrics.uploads_in_flight,
+        }
+    }
+
+    pub(crate) fn metrics_text(&self) -> String {
+        self.metrics.render()
+    }
+}
+
+// 进程内只有这一份计数。各请求 fetch_add，抓取时再读。
+struct Metrics {
+    http_requests: AtomicU64,
+    http_buckets: [AtomicU64; 11],
+    http_sum_bits: AtomicU64,
+    garage_errors: AtomicU64,
+    uploads_in_flight: AtomicI64,
+}
+
+const LATENCY_BOUNDS: [f64; 10] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0];
+const LATENCY_LABELS: [&str; 11] = [
+    "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "+Inf",
+];
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            http_requests: AtomicU64::new(0),
+            http_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+            http_sum_bits: AtomicU64::new(0),
+            garage_errors: AtomicU64::new(0),
+            uploads_in_flight: AtomicI64::new(0),
+        }
+    }
+
+    fn observe_http(&self, seconds: f64) {
+        let start = LATENCY_BOUNDS
+            .iter()
+            .position(|bound| seconds <= *bound)
+            .unwrap_or(LATENCY_BOUNDS.len());
+        for bucket in &self.http_buckets[start..] {
+            bucket.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut current = self.http_sum_bits.load(Ordering::Relaxed);
+        loop {
+            let next = (f64::from_bits(current) + seconds).to_bits();
+            match self.http_sum_bits.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+        self.http_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn render(&self) -> String {
+        let requests = self.http_requests.load(Ordering::Relaxed);
+        let errors = self.garage_errors.load(Ordering::Relaxed);
+        let uploads = self.uploads_in_flight.load(Ordering::Relaxed);
+        let sum = f64::from_bits(self.http_sum_bits.load(Ordering::Relaxed));
+        let mut out = String::new();
+        push_counter(
+            &mut out,
+            "garage_ui_http_requests_total",
+            "Finished HTTP requests.",
+            requests,
+        );
+        out.push_str(
+            "# HELP garage_ui_http_request_duration_seconds HTTP request duration in seconds.\n",
+        );
+        out.push_str("# TYPE garage_ui_http_request_duration_seconds histogram\n");
+        let mut observations = 0_u64;
+        for (label, bucket) in LATENCY_LABELS.iter().zip(self.http_buckets.iter()) {
+            observations = bucket.load(Ordering::Relaxed);
+            out.push_str(&format!(
+                "garage_ui_http_request_duration_seconds_bucket{{le=\"{label}\"}} {observations}\n"
+            ));
+        }
+        out.push_str(&format!(
+            "garage_ui_http_request_duration_seconds_sum {}\n",
+            format_seconds(sum)
+        ));
+        out.push_str(&format!(
+            "garage_ui_http_request_duration_seconds_count {observations}\n"
+        ));
+        push_counter(
+            &mut out,
+            "garage_ui_garage_errors_total",
+            "Garage admin calls that returned no HTTP status.",
+            errors,
+        );
+        push_gauge(
+            &mut out,
+            "garage_ui_uploads_in_flight",
+            "Uploads currently in progress.",
+            uploads,
+        );
+        out
+    }
+}
+
+fn push_counter(out: &mut String, name: &str, help: &str, value: u64) {
+    out.push_str(&format!(
+        "# HELP {name} {help}\n# TYPE {name} counter\n{name} {value}\n"
+    ));
+}
+
+fn push_gauge(out: &mut String, name: &str, help: &str, value: i64) {
+    out.push_str(&format!(
+        "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {value}\n"
+    ));
+}
+
+fn format_seconds(value: f64) -> String {
+    if value == 0.0 {
+        "0".to_string()
+    } else {
+        format!("{value}")
+    }
+}
+
+pub(crate) struct UploadInFlight<'a> {
+    gauge: &'a AtomicI64,
+}
+
+impl Drop for UploadInFlight<'_> {
+    fn drop(&mut self) {
+        self.gauge.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 pub async fn boot() -> anyhow::Result<App> {
@@ -203,6 +351,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         write: Arc::new(Mutex::new(())),
         // 超出 64 MiB 时在这个信号量上等待。不再另做一条队列。
         upload_buffer: Arc::new(Semaphore::new(UPLOAD_BUFFER_BYTES)),
+        metrics: Arc::new(Metrics::new()),
         garage_link: Arc::new(Mutex::new(None)),
         credentials: Arc::new(Mutex::new(credentials::CredentialCache::new(60))),
         key_id: Arc::new(key_id),

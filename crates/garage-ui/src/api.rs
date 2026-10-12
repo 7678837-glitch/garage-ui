@@ -2252,6 +2252,8 @@ async fn put_object(
     body: Body,
     plan: objects::PartPlan,
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
+    // 权限和长度失败停在 put_bucket_object，这里才计入在途上传。
+    let _in_flight = app.begin_upload();
     let stored = objects::put(app, id, key, size, content_type, body, plan).await?;
     Ok((StatusCode::CREATED, Json(stored)))
 }
