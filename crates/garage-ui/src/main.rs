@@ -6,7 +6,7 @@ use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
 use garage_ui::cli::{self, Command, UserArgs, UserCommand};
-use garage_ui::{PORT, boot, listen_addr, probe, router, shutdown_wait};
+use garage_ui::{PORT, boot, listen_addr, probe, serve_http, shutdown_wait};
 
 fn main() -> anyhow::Result<()> {
     let cli = cli::parse();
@@ -14,8 +14,8 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("启动 tokio 失败")?;
-    // 健康检查不能打开数据库。带了子命令也先探测。
+        .context("failed to start tokio")?;
+    // The health check must not open the database. Probe before any subcommand.
     if cli.health {
         return runtime.block_on(probe(SocketAddr::from(([127, 0, 0, 1], PORT))));
     }
@@ -35,22 +35,17 @@ async fn serve() -> anyhow::Result<()> {
     let addr = listen_addr(host.as_deref())?;
     let listener = TcpListener::bind(addr)
         .await
-        .with_context(|| format!("监听 {addr} 失败"))?;
+        .with_context(|| format!("failed to listen on {addr}"))?;
     tracing::info!(%addr, version = garage_ui::version(), "listening");
     let (tx, rx) = watch::channel(false);
     let signal_task = tokio::spawn(async move {
         wait_for_stop_signal().await;
         let _ = tx.send(true);
     });
-    // axum 0.8.9 的 Serve 没有读头或空闲超时接口。整请求超时会截断以后的上传和下载。
-    let server = axum::serve(
-        listener,
-        router(app).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_requested(rx.clone()));
+    let server = serve_http(listener, app, shutdown_requested(rx.clone()));
     tokio::select! {
         result = server => {
-            result.context("HTTP 服务退出")?;
+            result.context("HTTP server stopped")?;
         }
         _ = shutdown_deadline(rx) => {
             tracing::info!(wait_secs = shutdown_wait().as_secs(), "shutdown wait elapsed");
@@ -79,7 +74,7 @@ async fn wait_for_stop_signal() {
                 signal.recv().await;
             }
             Err(error) => {
-                tracing::error!(%error, "无法监听 SIGTERM");
+                tracing::error!(%error, "failed to listen for SIGTERM");
                 std::future::pending::<()>().await;
             }
         }

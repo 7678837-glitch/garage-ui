@@ -1,13 +1,21 @@
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{ConnectInfo, Request};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::server::conn::auto::Builder;
+use hyper_util::service::TowerToHyperService;
 use serde::Serialize;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::watch;
 
 use crate::api;
 use crate::assets;
@@ -197,6 +205,227 @@ fn new_request_id() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     format!("{nanos:x}")
+}
+
+const DEFAULT_HEADER_READ_SECS: u64 = 10;
+const DEFAULT_IDLE_SECS: u64 = 60;
+const MAX_TIMEOUT_SECS: u64 = 365 * 24 * 60 * 60;
+
+pub(crate) struct Server {
+    pub(crate) header_read_timeout: Duration,
+    pub(crate) idle_timeout: Duration,
+    pub(crate) builder: Builder<TokioExecutor>,
+}
+
+impl Server {
+    pub(crate) fn from_env() -> Self {
+        let header_read_timeout =
+            timeout_from_env("GARAGE_HEADER_READ_TIMEOUT_SECS", DEFAULT_HEADER_READ_SECS);
+        let idle_timeout = timeout_from_env("GARAGE_IDLE_TIMEOUT_SECS", DEFAULT_IDLE_SECS);
+        let mut builder = Builder::new(TokioExecutor::new());
+        // A total request timeout would abort an upload or download that is still moving bytes.
+        builder
+            .http1()
+            .timer(TokioTimer::new())
+            .header_read_timeout(Some(header_read_timeout));
+        Self {
+            header_read_timeout,
+            idle_timeout,
+            builder,
+        }
+    }
+}
+
+fn timeout_from_env(name: &str, default_secs: u64) -> Duration {
+    let secs = std::env::var(name)
+        .ok()
+        .and_then(|text| text.parse::<u64>().ok())
+        .filter(|secs| (1..=MAX_TIMEOUT_SECS).contains(secs))
+        .unwrap_or(default_secs);
+    Duration::from_secs(secs)
+}
+
+pub async fn serve_http(
+    listener: tokio::net::TcpListener,
+    app: App,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> io::Result<()> {
+    let server = Server::from_env();
+    let routes = router(app);
+    let (signal_tx, signal_rx) = watch::channel(());
+    tokio::spawn(async move {
+        shutdown.await;
+        drop(signal_rx);
+    });
+    let (close_tx, close_rx) = watch::channel(());
+
+    loop {
+        let accepted = tokio::select! {
+            result = listener.accept() => result,
+            _ = signal_tx.closed() => break,
+        };
+        let (stream, remote) = match accepted {
+            Ok(pair) => pair,
+            Err(error) => {
+                if is_connection_error(&error) {
+                    continue;
+                }
+                tracing::error!(%error, "accept failed");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        let io = TokioIo::new(IdleIo::new(stream, server.idle_timeout));
+        let service =
+            TowerToHyperService::new(routes.clone().layer(axum::Extension(ConnectInfo(remote))));
+        let builder = server.builder.clone();
+        let signal_tx = signal_tx.clone();
+        let close_rx = close_rx.clone();
+        tokio::spawn(async move {
+            let mut connection =
+                std::pin::pin!(builder.serve_connection_with_upgrades(io, service));
+            let mut shutting_down = false;
+            loop {
+                tokio::select! {
+                    result = connection.as_mut() => {
+                        if let Err(error) = result {
+                            tracing::debug!(%error, "connection closed");
+                        }
+                        break;
+                    }
+                    _ = signal_tx.closed(), if !shutting_down => {
+                        shutting_down = true;
+                        connection.as_mut().graceful_shutdown();
+                    }
+                }
+            }
+            drop(close_rx);
+        });
+    }
+
+    drop(close_rx);
+    drop(listener);
+    close_tx.closed().await;
+    Ok(())
+}
+
+fn is_connection_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+    )
+}
+
+struct IdleIo<T> {
+    inner: T,
+    idle: Duration,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl<T> IdleIo<T> {
+    fn new(inner: T, idle: Duration) -> Self {
+        Self {
+            inner,
+            idle,
+            sleep: Box::pin(tokio::time::sleep(idle)),
+        }
+    }
+
+    fn arm(&mut self) {
+        self.sleep
+            .as_mut()
+            .reset(tokio::time::Instant::now() + self.idle);
+    }
+
+    fn timed_out(&mut self, cx: &mut Context<'_>) -> bool {
+        self.sleep.as_mut().poll(cx).is_ready()
+    }
+}
+
+fn idle_expired() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "connection idle timeout")
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for IdleIo<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let before = buf.filled().len();
+        match Pin::new(&mut this.inner).poll_read(cx, buf) {
+            Poll::Pending => {
+                if this.timed_out(cx) {
+                    Poll::Ready(Err(idle_expired()))
+                } else {
+                    Poll::Pending
+                }
+            }
+            Poll::Ready(Ok(())) => {
+                if buf.filled().len() > before {
+                    this.arm();
+                }
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for IdleIo<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_write(cx, buf) {
+            Poll::Pending => {
+                if this.timed_out(cx) {
+                    Poll::Ready(Err(idle_expired()))
+                } else {
+                    Poll::Pending
+                }
+            }
+            Poll::Ready(Ok(0)) => Poll::Ready(Ok(0)),
+            Poll::Ready(Ok(n)) => {
+                this.arm();
+                Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_flush(cx) {
+            Poll::Pending => {
+                if this.timed_out(cx) {
+                    Poll::Ready(Err(idle_expired()))
+                } else {
+                    Poll::Pending
+                }
+            }
+            other => other,
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_shutdown(cx) {
+            Poll::Pending => {
+                if this.timed_out(cx) {
+                    Poll::Ready(Err(idle_expired()))
+                } else {
+                    Poll::Pending
+                }
+            }
+            other => other,
+        }
+    }
 }
 
 pub fn shutdown_wait() -> Duration {
