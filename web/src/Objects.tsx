@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { encodeObjectKey } from "./App";
-import { ApiError, api } from "./api/client";
+import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
@@ -273,10 +273,29 @@ function inlineKind(contentType: string): InlineKind | null {
   return INLINE_KIND[mime] ?? null;
 }
 
+function codeOf(text: string): string | null {
+  if (!text.startsWith("{")) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return null;
+  }
+  const code = (parsed as Record<string, unknown>).code;
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
 async function readPreviewText(path: string): Promise<string> {
   // api() 会把响应当 JSON 解析，纯文本预览必须直接读 body。
   const response = await fetch(path, { credentials: "include" });
   if (!response.ok) {
+    const text = await response.text();
+    noteUnauthenticated(response.status, codeOf(text));
     throw new Error(UNAVAILABLE);
   }
   return response.text();

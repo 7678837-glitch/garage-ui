@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { api } from "./api/client";
+import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 
 type Role = "admin" | "viewer";
@@ -163,7 +163,9 @@ async function loadUsers(): Promise<Account[]> {
   const response = await fetch("/api/users", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
-    throw new UserListError(failureFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new UserListError(failure);
   }
   return parseAccounts(text ? (JSON.parse(text) as unknown) : undefined);
 }

@@ -20,6 +20,21 @@ function csrfToken(): string {
   return decodeURIComponent(found.slice("garage_csrf=".length));
 }
 
+type UnauthenticatedHook = (status: number, code: string | null) => void;
+
+let unauthenticatedHook: UnauthenticatedHook | null = null;
+
+export function bindUnauthenticated(hook: UnauthenticatedHook | null): void {
+  unauthenticatedHook = hook;
+}
+
+export function noteUnauthenticated(status: number, code: string | null): void {
+  if (status !== 401 || code !== "unauthenticated") {
+    return;
+  }
+  unauthenticatedHook?.(status, code);
+}
+
 export class ApiError extends Error {
   readonly code: string | null;
 
@@ -72,6 +87,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
     throw new ApiError(failure.message, failure.code);
   }
   if (!text) {
@@ -135,6 +151,8 @@ export function putObject(input: {
         resolve();
         return;
       }
+      const failure = failureFrom(xhr.responseText, xhr.status);
+      noteUnauthenticated(xhr.status, failure.code);
       reject(new Error(`request failed (${xhr.status})`));
     };
     xhr.onerror = () => {

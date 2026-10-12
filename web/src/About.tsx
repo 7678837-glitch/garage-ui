@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 
 type ProbeWord = "unknown" | "present" | "absent";
@@ -92,7 +93,9 @@ async function loadCapabilities(): Promise<Capabilities> {
   const response = await fetch("/api/capabilities", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
-    throw new CapabilitiesError(failureFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new CapabilitiesError(failure);
   }
   return parseCapabilities(text);
 }

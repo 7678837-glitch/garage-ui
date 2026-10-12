@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, api } from "./api/client";
+import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 
 const COUNTS = [
@@ -296,6 +296,7 @@ async function loadStatistics(): Promise<ClusterStatistics> {
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
     // 统计响应按原文解析，不经过 api()。横幅只认 error.code。
     throw new ApiError(failure.message, failure.code);
   }

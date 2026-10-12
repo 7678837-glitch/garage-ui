@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "./api/client";
+import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
 import { savePhase, saveStatus, setFormDirty } from "./unsaved";
@@ -151,7 +151,9 @@ async function loadPage(offset: number): Promise<KeyPage> {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new KeyListError(failureFrom(text, response.status));
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new KeyListError(failure);
   }
   return parsePage(text ? (JSON.parse(text) as unknown) : undefined);
 }

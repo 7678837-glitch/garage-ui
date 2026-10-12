@@ -6,11 +6,12 @@ import {
   type Query,
   type QueryCache,
   type QueryCacheNotifyEvent,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
-import { api, type AuthStatus } from "./api/client";
+import { api, bindUnauthenticated, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { About, garageLine } from "./About";
 import { AdminTokens } from "./AdminTokens";
@@ -473,7 +474,30 @@ function Home({ status }: { status: SessionStatus }) {
   );
 }
 
+function clearSignedIn(client: QueryClient): void {
+  client.setQueryData<SessionStatus>(["auth", "status"], (current) => {
+    if (!current) {
+      return current;
+    }
+    return {
+      ...current,
+      authenticated: false,
+      username: null,
+      role: null,
+      can_download: null,
+      can_share: null,
+    };
+  });
+}
+
 export function App() {
+  const client = useQueryClient();
+  // 子请求可能在 effect 之前返回。钩子要在 useQuery 之前挂上，卸载时再拆掉。
+  bindUnauthenticated(() => clearSignedIn(client));
+  useEffect(() => {
+    bindUnauthenticated(() => clearSignedIn(client));
+    return () => bindUnauthenticated(null);
+  }, [client]);
   const status = useQuery({
     queryKey: ["auth", "status"],
     queryFn: () => api<SessionStatus>("/api/auth/status"),

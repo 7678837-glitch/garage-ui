@@ -1413,3 +1413,83 @@ test("an admin with the download bit off still sees upload, delete, preview, and
   );
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
+
+test("returns to the login form when a signed-in request is unauthenticated", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/cluster/status")) {
+        return new Response(
+          JSON.stringify({ code: "unauthenticated", message: "Login required" }),
+          { status: 401 },
+        );
+      }
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByRole("button", { name: "Log in" })).toBeTruthy();
+  expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
+});
+
+test("keeps the change-password form when the current password is rejected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/change-password")) {
+        return new Response(
+          JSON.stringify({ code: "invalid_credentials", message: "Invalid credentials" }),
+          { status: 401 },
+        );
+      }
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Bea",
+            role: "viewer",
+            can_download: false,
+            can_share: false,
+            garage_version: null,
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/capabilities")) {
+        return capabilitiesResponse();
+      }
+      return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+    }),
+  );
+  renderApp();
+  fireEvent.change(await screen.findByLabelText("Current password"), {
+    target: { value: "current secret" },
+  });
+  fireEvent.change(screen.getByLabelText("New password"), { target: { value: "correct horse" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  expect(await screen.findByText("Invalid credentials")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+});
