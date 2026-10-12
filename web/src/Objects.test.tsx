@@ -733,6 +733,55 @@ test("shows Download only for one selected object and does not offer Preview", a
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });
 
+test("shows Download ZIP for two selected objects and requests the archive once", async () => {
+  const calls: { url: string; method: string; body: string | null }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({
+        url: String(input),
+        method,
+        body: typeof init?.body === "string" ? init.body : null,
+      });
+      if (method === "POST") {
+        return json({ token: "zip-token-1" });
+      }
+      return json(
+        page([
+          objectRow("a.txt", 1, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 2, "2026-10-12T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects();
+  expect(await screen.findByRole("checkbox", { name: "Select a.txt" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Download ZIP" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download ZIP" })).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  expect(screen.queryByRole("button", { name: "Download ZIP" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Download ZIP" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
+    "/api/buckets/bkt-1/objects/a.txt?download=1",
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+  await waitFor(() => {
+    const archive = document.querySelector('a[href*="archive?token="]');
+    expect(archive?.getAttribute("href")).toContain("/api/buckets/bkt-1/archive?token=zip-token-1");
+  });
+  expect(calls.filter((call) => call.method === "POST")).toEqual([
+    {
+      url: "/api/buckets/bkt-1/archive-token",
+      method: "POST",
+      body: JSON.stringify({ keys: ["a.txt", "b.txt"] }),
+    },
+  ]);
+  expect(calls.some((call) => call.url.includes("archive?token="))).toBe(false);
+});
+
 test("cancels an object delete without a request, then removes the row after 204", async () => {
   const calls: { url: string; method: string }[] = [];
   let deleted = false;

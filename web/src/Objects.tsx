@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -249,6 +249,14 @@ function metadataPath(bucketId: string, key: string): string {
   return `${bucketUrl(bucketId)}/objects/${encodeObjectKey(key)}`;
 }
 
+function archiveHref(bucketId: string, value: unknown): string {
+  if (!isRecord(value)) {
+    throw new Error(UNAVAILABLE);
+  }
+  const token = requiredString(value, "token");
+  return `${bucketUrl(bucketId)}/archive?token=${encodeURIComponent(token)}`;
+}
+
 function previewPath(bucketId: string, key: string): string {
   return `${metadataPath(bucketId, key)}?preview=1`;
 }
@@ -296,7 +304,7 @@ function codeOf(text: string): string | null {
 }
 
 async function readPreviewText(path: string): Promise<string> {
-  // api() 会把响应当 JSON 解析，纯文本预览必须直接读 body。
+  // api() parses the response as JSON, so a plain-text preview has to read the body itself.
   const response = await fetch(path, { credentials: "include" });
   if (!response.ok) {
     const text = await response.text();
@@ -323,7 +331,7 @@ function InlineBody({
     case "text":
       return text === undefined ? null : <pre>{text}</pre>;
     case "pdf":
-      // 只放开脚本，不授予同源，避免 PDF 脚本访问管理台。
+      // Allow scripts only, and do not grant same origin, so a PDF script cannot reach the console.
       return <iframe sandbox="allow-scripts" src={src} title={objectKey} />;
     case "video":
       return <video controls src={src} />;
@@ -405,7 +413,7 @@ function compareObjects(left: ObjectEntry, right: ObjectEntry, sort: "size" | "t
   return left.key < right.key ? -1 : 1;
 }
 
-// 前缀没有大小和修改时间，按这两列排序时保持在对象前面。
+// A prefix has no size or modification time, so those sorts keep it ahead of the objects.
 function sortLoaded(entries: Entry[], sort: SortChoice): Entry[] {
   if (sort === "key") {
     return entries;
@@ -454,7 +462,11 @@ function batchSelection(
   return { keys, totalSize };
 }
 
-// 批量选择只保留当前可见对象键。换页后上一页的键不再留在操作条上。
+function sameKeys(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
+// Bulk selection keeps only object keys visible on this page. After a page change, keys from the previous page leave the bar.
 function pickedOnPage(picked: readonly string[], visibleKeys: readonly string[]): string[] {
   const visible = new Set(visibleKeys);
   return picked.filter((key) => visible.has(key));
@@ -519,6 +531,8 @@ export function Objects({
     url: string;
     website: string | null;
   } | null>(null);
+  const [zipLink, setZipLink] = useState<{ keys: readonly string[]; href: string } | null>(null);
+  const zipAnchor = useRef<HTMLAnchorElement>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
@@ -548,9 +562,12 @@ export function Objects({
     if (shareLink !== null) {
       setShareLink(null);
     }
+    if (zipLink !== null) {
+      setZipLink(null);
+    }
   }
   const searching = search !== null;
-  // 分享位只在对象页读取。调用方没有这个字段，不能改上层组件去传。
+  // Read the share flag on the object page. The caller does not have this field, so this file cannot change the parent to pass it down.
   const session = useQuery({
     queryKey: ["auth-status"],
     queryFn: async () => {
@@ -621,6 +638,15 @@ export function Objects({
       await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
     },
   });
+  const archiveZip = useMutation({
+    mutationFn: async (keys: readonly string[]) => {
+      const body = await api<unknown>(`${bucketUrl(bucketId)}/archive-token`, {
+        method: "POST",
+        body: JSON.stringify({ keys }),
+      });
+      return archiveHref(bucketId, body);
+    },
+  });
   if (!searching && list.data && (kept === null || kept.page !== list.data)) {
     setKept({ prefix, page: list.data });
   }
@@ -631,6 +657,8 @@ export function Objects({
   const visibleKeys = objectKeys(visible);
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
+  const archiveKeys = batchSelection(visible, shownPicked).keys;
+  const zipHref = zipLink !== null && sameKeys(zipLink.keys, archiveKeys) ? zipLink.href : null;
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
   const previewKey = canTransfer ? singleKey : null;
   const shareObject = useMutation({
@@ -909,7 +937,7 @@ export function Objects({
               className="border border-neutral-900 px-3 py-1 text-left"
               type="button"
               onClick={() => {
-                // 一个键仍走 DELETE。两个及以上才 POST objects:delete，单击不能进批量接口。
+                // One key still uses DELETE. Two or more keys POST objects:delete. One click must not call the batch route.
                 if (shownPicked.length === 1) {
                   removeObject.reset();
                   setPendingDelete({ kind: "object", name: shownPicked[0] });
@@ -922,6 +950,32 @@ export function Objects({
             >
               Delete
             </button>
+          ) : null}
+          {canTransfer && shownPicked.length > 1 ? (
+            <>
+              <button
+                className="border border-neutral-900 px-3 py-1 text-left"
+                type="button"
+                disabled={archiveZip.isPending}
+                onClick={() => {
+                  archiveZip.mutate(archiveKeys, {
+                    onSuccess: (href) => {
+                      setZipLink({ keys: archiveKeys, href });
+                      const anchor = zipAnchor.current;
+                      if (anchor === null) {
+                        return;
+                      }
+                      anchor.href = href;
+                      anchor.click();
+                    },
+                  });
+                }}
+              >
+                Download ZIP
+              </button>
+              <a ref={zipAnchor} href={zipHref ?? undefined} target="_blank" rel="noopener" hidden />
+              {archiveZip.error instanceof Error ? <p>{archiveZip.error.message}</p> : null}
+            </>
           ) : null}
           {canTransfer && singleKey !== null ? (
             <a
