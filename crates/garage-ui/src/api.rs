@@ -11087,4 +11087,59 @@ mod tests {
                 .all(|call| !call.line.contains("DeleteAdminToken"))
         );
     }
+
+    #[tokio::test]
+    async fn admin_timeout_is_504_and_refusal_stays_502() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stall_port = listener.local_addr().unwrap().port();
+        let stall = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let _hold = socket;
+                std::future::pending::<()>().await;
+            }
+        });
+        let stall_url = format!("http://127.0.0.1:{stall_port}");
+        let stall_dir = crate::util::temp_dir();
+        let stalled = state::test_app_with(
+            &stall_dir,
+            &[
+                ("GARAGE_ADMIN_URL", stall_url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("GARAGE_ADMIN_CONNECT_TIMEOUT_SECS", "1"),
+                ("GARAGE_ADMIN_TIMEOUT_SECS", "1"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&stalled).await;
+        let timed_out =
+            exchange(&stalled, request("GET", "/api/buckets", None, Some(&admin))).await;
+        stall.abort();
+        assert_eq!(timed_out.status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(code_of(&timed_out.body), "garage_timeout");
+        assert!(!timed_out.body.contains(TOKEN));
+
+        let refused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let refused_port = refused.local_addr().unwrap().port();
+        drop(refused);
+        let refused_url = format!("http://127.0.0.1:{refused_port}");
+        let refused_dir = crate::util::temp_dir();
+        let down = state::test_app_with(
+            &refused_dir,
+            &[
+                ("GARAGE_ADMIN_URL", refused_url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("GARAGE_ADMIN_CONNECT_TIMEOUT_SECS", "1"),
+                ("GARAGE_ADMIN_TIMEOUT_SECS", "1"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&down).await;
+        let refused_response =
+            exchange(&down, request("GET", "/api/buckets", None, Some(&admin))).await;
+        assert_eq!(refused_response.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(code_of(&refused_response.body), "garage_unavailable");
+        assert!(!refused_response.body.contains(TOKEN));
+    }
 }

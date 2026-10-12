@@ -336,8 +336,8 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         .await
         .map_err(|_| anyhow::anyhow!("无法初始化口令校验"))?;
     let http = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(loaded.settings.garage_admin_connect_timeout)
+        .timeout(loaded.settings.garage_admin_timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .context_client()?;

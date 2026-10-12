@@ -336,14 +336,14 @@ async fn exchange_upstream(
     if !body.is_empty() {
         request = request.body(body.to_vec());
     }
-    let upstream = request.send().await.map_err(|_| garage_down())?;
+    let upstream = request.send().await.map_err(admin_transport)?;
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = upstream
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .cloned();
-    let bytes = upstream.bytes().await.map_err(|_| garage_down())?.to_vec();
+    let bytes = upstream.bytes().await.map_err(admin_transport)?.to_vec();
     Ok(UpstreamBody {
         status,
         bytes,
@@ -388,6 +388,19 @@ fn garage_unconfigured() -> ApiError {
 
 fn garage_down() -> ApiError {
     ApiError::unavailable("garage_unavailable", "Garage admin API is not reachable")
+}
+
+// reqwest 错误正文可能含管理地址，响应里不保留它。
+fn admin_transport(error: reqwest::Error) -> ApiError {
+    if error.is_timeout() {
+        ApiError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            "garage_timeout",
+            "Garage admin API timed out",
+        )
+    } else {
+        garage_down()
+    }
 }
 
 fn credential_mutation(
@@ -794,10 +807,10 @@ mod lists {
             .bearer_auth(token)
             .send()
             .await
-            .map_err(|_| garage_down())?;
+            .map_err(admin_transport)?;
         let status =
             StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-        let bytes = upstream.bytes().await.map_err(|_| garage_down())?;
+        let bytes = upstream.bytes().await.map_err(admin_transport)?;
         if !status.is_success() {
             return Err(garage_down());
         }

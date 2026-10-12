@@ -9,6 +9,8 @@ pub const JSON_BODY_LIMIT: usize = 1024 * 1024;
 const DEFAULT_UPLOAD_MB: u64 = 512;
 const DEFAULT_ABSOLUTE_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_IDLE_SECS: u64 = 2 * 60 * 60;
+const DEFAULT_ADMIN_CONNECT_SECS: u64 = 5;
+const DEFAULT_ADMIN_TIMEOUT_SECS: u64 = 30;
 const MAX_DURATION_SECS: u64 = 365 * 24 * 60 * 60;
 
 const AUTH_OFF: &[&str] = &["AUTH_DISABLED", "DISABLE_AUTH", "GARAGE_UI_NO_AUTH"];
@@ -34,6 +36,8 @@ pub struct Settings {
     pub cookie_secure: bool,
     pub session_absolute: Duration,
     pub session_idle: Duration,
+    pub garage_admin_connect_timeout: Duration,
+    pub garage_admin_timeout: Duration,
     pub bcrypt_cost: u32,
     pub json_body_limit: usize,
     pub max_upload_bytes: u64,
@@ -109,6 +113,15 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
         env.get("SESSION_IDLE_SECS").map(String::as_str),
         DEFAULT_IDLE_SECS,
     );
+    let garage_admin_connect_timeout = duration_or_default(
+        env.get("GARAGE_ADMIN_CONNECT_TIMEOUT_SECS")
+            .map(String::as_str),
+        DEFAULT_ADMIN_CONNECT_SECS,
+    );
+    let garage_admin_timeout = duration_or_default(
+        env.get("GARAGE_ADMIN_TIMEOUT_SECS").map(String::as_str),
+        DEFAULT_ADMIN_TIMEOUT_SECS,
+    );
     let max_upload_mb = match env.get("MAX_UPLOAD_SIZE_MB").map(String::as_str) {
         Some(value) => value
             .parse::<u64>()
@@ -158,6 +171,8 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             cookie_secure,
             session_absolute,
             session_idle,
+            garage_admin_connect_timeout,
+            garage_admin_timeout,
             bcrypt_cost: PRODUCTION_BCRYPT_COST,
             json_body_limit: JSON_BODY_LIMIT,
             max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
@@ -826,5 +841,18 @@ mod tests {
         assert!(text.contains(path), "{text}");
         assert!(!text.contains(env_access), "{text}");
         assert!(!text.contains(env_secret), "{text}");
+    }
+
+    #[test]
+    fn admin_timeout_defaults_are_five_and_thirty() {
+        let loaded = load_map(&map(&[])).unwrap();
+        assert_eq!(
+            loaded.settings.garage_admin_connect_timeout,
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            loaded.settings.garage_admin_timeout,
+            Duration::from_secs(30)
+        );
     }
 }
