@@ -9434,6 +9434,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn archive_token_rejects_empty_or_missing_keys() {
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, "http://127.0.0.1:9", true).await;
+        let (admin, _) = login(&app).await;
+        for (body, code, message) in [
+            ("{}", "invalid_keys", "keys must be an array of strings"),
+            (
+                r#"{"keys":[]}"#,
+                "keys_required",
+                "At least one key is required",
+            ),
+            (
+                r#"{"keys":[1]}"#,
+                "invalid_keys",
+                "keys must be an array of strings",
+            ),
+        ] {
+            let response = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/buckets/bkt-1/archive-token",
+                    Some(body),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(&response, StatusCode::BAD_REQUEST, code, message);
+            assert!(!response.body.contains("\"token\""), "{}", response.body);
+        }
+    }
+
+    #[tokio::test]
     async fn archive_token_rejects_reuse_and_cleans_parent_segments() {
         let mock = S3Mock::start(|line| {
             let key = object_key_of(line);
