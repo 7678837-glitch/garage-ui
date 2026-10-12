@@ -203,6 +203,41 @@ async fn login_ok(app: &App, username: &str, password: &str) -> Session {
     session_from(&response.headers)
 }
 
+async fn setup_from(app: &App, peer: [u8; 4]) -> Exchange {
+    exchange(
+        app,
+        with_peer(
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+            peer,
+        ),
+    )
+    .await
+}
+
+async fn failed_password_change(app: &App, session: &Session) -> Exchange {
+    exchange(
+        app,
+        request(
+            "POST",
+            "/api/auth/change-password",
+            Some(
+                &json!({
+                    "current_password": "wrong horse",
+                    "new_password": NEW_PASSWORD
+                })
+                .to_string(),
+            ),
+            Some(session),
+        ),
+    )
+    .await
+}
+
 async fn user_id(app: &App, session: &Session, username: &str) -> i64 {
     let response = exchange(app, request("GET", "/api/users", None, Some(session))).await;
     assert_eq!(response.status, StatusCode::OK, "{}", response.body);
@@ -465,6 +500,129 @@ async fn login_rate_limit_is_per_username_and_writes_audit() {
     assert!(!audit.contains("wrong horse"));
     assert!(!logs(&app).contains("wrong horse"));
     assert_clean("rate audit", &audit);
+}
+
+#[tokio::test]
+async fn setup_rate_limit_is_per_address() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let peer = [198, 51, 100, 7];
+    let other_peer = [203, 0, 113, 9];
+
+    let created = setup_from(&app, peer).await;
+    assert_eq!(created.status, StatusCode::OK);
+    assert_clean("setup", &created.body);
+
+    for _ in 0..9 {
+        let conflict = setup_from(&app, peer).await;
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+        assert_eq!(code_of(&conflict.body), "already_initialized");
+        assert_clean("setup conflict", &conflict.body);
+    }
+
+    let blocked = setup_from(&app, peer).await;
+    assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(code_of(&blocked.body), "rate_limited");
+    let retry: u64 = header(&blocked.headers, "retry-after").parse().unwrap();
+    assert!(retry >= 1);
+    assert_clean("setup blocked", &blocked.body);
+
+    let other = setup_from(&app, other_peer).await;
+    assert_eq!(other.status, StatusCode::CONFLICT);
+    assert_eq!(code_of(&other.body), "already_initialized");
+    assert_clean("setup other peer", &other.body);
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let again = setup_from(&app, peer).await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    assert_eq!(code_of(&again.body), "already_initialized");
+    assert_clean("setup after window", &again.body);
+
+    let audit = audit_text(&app).await;
+    assert!(
+        audit.contains("Ada 198.51.100.7 rate_limited rate_limited POST /api/setup"),
+        "setup 429 did not record result rate_limited",
+    );
+    assert_clean("setup rate audit", &audit);
+    assert_clean("setup rate log", &logs(&app));
+}
+
+#[tokio::test]
+async fn password_rate_limit_is_per_username() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let ada = setup_admin(&app).await;
+
+    for _ in 0..10 {
+        let response = failed_password_change(&app, &ada).await;
+        assert_eq!(response.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code_of(&response.body), "invalid_credentials");
+        assert!(
+            !response.body.contains("wrong horse"),
+            "body leaked a password"
+        );
+        assert_clean("password change", &response.body);
+    }
+
+    let blocked = failed_password_change(&app, &ada).await;
+    assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(code_of(&blocked.body), "rate_limited");
+    let retry: u64 = header(&blocked.headers, "retry-after").parse().unwrap();
+    assert!(retry >= 1);
+    assert!(
+        !blocked.body.contains("wrong horse"),
+        "body leaked a password"
+    );
+    assert_clean("password blocked", &blocked.body);
+
+    let created = exchange(
+        &app,
+        request(
+            "POST",
+            "/api/users",
+            Some(
+                &json!({
+                    "username": "Bea",
+                    "password": OTHER_PASSWORD,
+                    "role": "admin"
+                })
+                .to_string(),
+            ),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_clean("create user", &created.body);
+    let bea = login_ok(&app, "Bea", OTHER_PASSWORD).await;
+    let other = failed_password_change(&app, &bea).await;
+    assert_eq!(other.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(code_of(&other.body), "invalid_credentials");
+    assert!(
+        !other.body.contains("wrong horse"),
+        "body leaked a password"
+    );
+    assert_clean("other user", &other.body);
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let again = failed_password_change(&app, &ada).await;
+    assert_eq!(again.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(code_of(&again.body), "invalid_credentials");
+    assert!(
+        !again.body.contains("wrong horse"),
+        "body leaked a password"
+    );
+    assert_clean("password after window", &again.body);
+
+    let audit = audit_text(&app).await;
+    assert!(
+        audit.contains("Ada 127.0.0.1 rate_limited rate_limited POST /api/auth/change-password"),
+        "password 429 did not record result rate_limited",
+    );
+    assert!(!audit.contains("wrong horse"), "audit leaked a password");
+    assert_clean("password rate audit", &audit);
+    assert!(!logs(&app).contains("wrong horse"), "log leaked a password");
+    assert_clean("password rate log", &logs(&app));
 }
 
 #[tokio::test]
