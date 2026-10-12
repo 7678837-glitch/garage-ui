@@ -82,14 +82,26 @@ type FetchCall = {
   range: string | null;
 };
 
+// jsdom's Headers.append deletes Range, so read the header the caller passed.
+function rangeHeader(headers: HeadersInit | undefined): string | null {
+  if (headers === undefined || headers instanceof Headers || Array.isArray(headers)) {
+    return null;
+  }
+  const name = Object.keys(headers).find((key) => key.toLowerCase() === "range");
+  if (name === undefined) {
+    return null;
+  }
+  const value = headers[name];
+  return typeof value === "string" ? value : null;
+}
+
 function stubBucketObjects(rows: ListedObject[], previewBody = "preview-body") {
   const calls: FetchCall[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      const headers = new Headers(init?.headers);
-      calls.push({ url, credentials: init?.credentials, range: headers.get("range") });
+      calls.push({ url, credentials: init?.credentials, range: rangeHeader(init?.headers) });
       if (url.includes("preview=1")) {
         return new Response(previewBody, { status: 200 });
       }
@@ -1338,9 +1350,115 @@ test("renders one text object inline from the preview URL without truncating it"
   expect(metadataAt).toBeGreaterThanOrEqual(0);
   expect(previewAt).toBeGreaterThan(metadataAt);
   expect(calls.filter((call) => call.url.includes("preview=1"))).toEqual([
-    { url: previewUrl, credentials: "include", range: null },
+    { url: previewUrl, credentials: "include", range: "bytes=0-262143" },
   ]);
   expect(calls.some((call) => call.url.includes("download=1"))).toBe(false);
+});
+
+test("large text loads the beginning and the previous load is cancelled", async () => {
+  type PreviewCall = {
+    url: string;
+    method: string;
+    range: string | null;
+    signal: AbortSignal | null;
+  };
+  const previewCalls: PreviewCall[] = [];
+  const pending = new Map<string, (response: Response) => void>();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("preview=1")) {
+        previewCalls.push({
+          url,
+          method,
+          range: rangeHeader(init?.headers),
+          signal: init?.signal ?? null,
+        });
+        return new Promise<Response>((resolve) => {
+          pending.set(url, resolve);
+        });
+      }
+      const key = ["a.txt", "b.txt", "c.txt"].find((item) => url.endsWith(`/objects/${item}`));
+      if (key) {
+        return json({
+          key,
+          size: 4,
+          etag: "abc",
+          lastModified: "2026-10-11T00:00:00Z",
+          contentType: "text/plain",
+        });
+      }
+      return json(
+        page([
+          objectRow("a.txt", 4, "2026-10-11T00:00:00Z"),
+          objectRow("b.txt", 4, "2026-10-11T00:00:00Z"),
+          objectRow("c.txt", 4, "2026-10-11T00:00:00Z"),
+        ]),
+      );
+    }),
+  );
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  await waitFor(() => {
+    expect(previewCalls.some((call) => call.url.endsWith("/objects/a.txt?preview=1"))).toBe(true);
+  });
+  const first = previewCalls.find((call) => call.url.endsWith("/objects/a.txt?preview=1"));
+  if (!first) {
+    throw new Error("missing text preview");
+  }
+  expect(first.method).toBe("GET");
+  expect(first.range).toBe("bytes=0-262143");
+  if (!first.signal) {
+    throw new Error("missing text preview");
+  }
+  expect(first.signal.aborted).toBe(false);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
+  await waitFor(() => {
+    expect(previewCalls.some((call) => call.url.endsWith("/objects/b.txt?preview=1"))).toBe(true);
+  });
+  expect(first.signal.aborted).toBe(true);
+  expect(previewCalls.filter((call) => call.url.endsWith("/objects/a.txt?preview=1")).length).toBe(1);
+
+  const second = previewCalls.find((call) => call.url.endsWith("/objects/b.txt?preview=1"));
+  if (!second) {
+    throw new Error("missing text preview");
+  }
+  expect(second.method).toBe("GET");
+  expect(second.range).toBe("bytes=0-262143");
+  const releaseSecond = pending.get(second.url);
+  if (!releaseSecond) {
+    throw new Error("missing text preview");
+  }
+  releaseSecond(new Response("hello", { status: 206 }));
+  expect((await screen.findByText("hello")).tagName).toBe("PRE");
+  const note = screen.getByText("Showing the first 256 KiB.");
+  expect(note.tagName).toBe("P");
+  expect(note.textContent).toBe("Showing the first 256 KiB.");
+  expect(previewCalls.filter((call) => call.url.endsWith("/objects/b.txt?preview=1")).length).toBe(1);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select c.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  await waitFor(() => {
+    expect(previewCalls.some((call) => call.url.endsWith("/objects/c.txt?preview=1"))).toBe(true);
+  });
+  const third = previewCalls.find((call) => call.url.endsWith("/objects/c.txt?preview=1"));
+  if (!third) {
+    throw new Error("missing text preview");
+  }
+  expect(third.method).toBe("GET");
+  expect(third.range).toBe("bytes=0-262143");
+  const releaseThird = pending.get(third.url);
+  if (!releaseThird) {
+    throw new Error("missing text preview");
+  }
+  releaseThird(new Response("whole", { status: 200 }));
+  expect((await screen.findByText("whole")).tagName).toBe("PRE");
+  expect(screen.queryByText("Showing the first 256 KiB.")).toBeNull();
+  expect(previewCalls.filter((call) => call.url.endsWith("/objects/c.txt?preview=1")).length).toBe(1);
 });
 
 const imageTypes = [
