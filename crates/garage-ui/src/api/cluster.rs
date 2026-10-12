@@ -3,7 +3,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use crate::access::{self, Op};
 use crate::error::ApiError;
@@ -145,6 +145,96 @@ pub(crate) async fn get_worker_variable(
         &current,
         &headers,
         "GetWorkerVariable",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
+fn invalid_repair() -> ApiError {
+    ApiError::bad_request("invalid_repair", "repairType is required")
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepairBody {
+    #[serde(rename = "repairType")]
+    repair_type: RepairType,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum RepairType {
+    Kind(RepairKind),
+    Scrub(ScrubRepair),
+}
+
+#[derive(Deserialize, Serialize)]
+enum RepairKind {
+    #[serde(rename = "tables")]
+    Tables,
+    #[serde(rename = "blocks")]
+    Blocks,
+    #[serde(rename = "versions")]
+    Versions,
+    #[serde(rename = "multipartUploads")]
+    MultipartUploads,
+    #[serde(rename = "blockRefs")]
+    BlockRefs,
+    #[serde(rename = "blockRc")]
+    BlockRc,
+    #[serde(rename = "rebalance")]
+    Rebalance,
+    #[serde(rename = "aliases")]
+    Aliases,
+    #[serde(rename = "clearResyncQueue")]
+    ClearResyncQueue,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ScrubRepair {
+    scrub: ScrubCommand,
+}
+
+#[derive(Deserialize, Serialize)]
+enum ScrubCommand {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "pause")]
+    Pause,
+    #[serde(rename = "resume")]
+    Resume,
+    #[serde(rename = "cancel")]
+    Cancel,
+}
+
+fn repair_body(body: &[u8]) -> Result<RepairBody, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_repair())?;
+    // serde_json accepts a JSON array as a struct, field by field. The request must be an object.
+    if !value.is_object() {
+        return Err(invalid_repair());
+    }
+    serde_json::from_value(value).map_err(|_| invalid_repair())
+}
+
+pub(crate) async fn post_repair(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::RunOps)?;
+    let accepted = repair_body(&body)?;
+    let payload = serde_json::to_vec(&accepted).map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "LaunchRepairOperation",
         Some(&query),
         &payload,
     )
