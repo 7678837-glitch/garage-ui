@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { CapacityField } from "./CapacityField";
+import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 
 const HIDDEN = new Set([
@@ -111,7 +112,7 @@ function withoutTrailingComma(text: string): string | null {
   return text.slice(0, text.length - match[0].length);
 }
 
-// JSON.parse 会把超过 2^53-1 的整数收成另一个值。这些字段不进页面。
+// JSON.parse collapses integers above 2^53-1 into a different value. Those fields do not enter the page.
 function omitHiddenNumbers(text: string): string {
   let out = "";
   let index = 0;
@@ -217,7 +218,7 @@ function arrayElements(text: string, open: number): { start: number; end: number
   return items;
 }
 
-// 容量数字不进 JSON.parse，只作为 CapacityField 的字节串。
+// Capacity digits do not go through JSON.parse. They stay a byte string for CapacityField.
 function roleCapacityById(text: string): Map<string, string> {
   const found = new Map<string, string>();
   const root = skipWs(text, 0);
@@ -297,6 +298,50 @@ function stageCapacity(id: string, capacity: string): Promise<unknown> {
   });
 }
 
+type PendingBlockPurge = {
+  id: string;
+  hash: string;
+};
+
+function purgeBlocks(id: string, hash: string): Promise<unknown> {
+  return api(`/api/nodes/${id}/blocks/purge`, {
+    method: "POST",
+    headers: { "x-confirm": "yes" },
+    body: JSON.stringify([hash]),
+  });
+}
+
+function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => void }) {
+  const [hash, setHash] = useState("");
+  return (
+    <>
+      <label className="block">
+        <span className="text-sm">Block hash for {id}</span>
+        <input
+          className="mt-1 w-full border border-line px-2 py-1"
+          value={hash}
+          onChange={(event) => {
+            setHash(event.target.value);
+          }}
+        />
+      </label>
+      <button
+        className="border border-ink px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          const next = hash.trim();
+          if (next.length === 0) {
+            return;
+          }
+          onAsk(next);
+        }}
+      >
+        Purge blocks on {id}
+      </button>
+    </>
+  );
+}
+
 function failureFrom(text: string, status: number): { message: string; code: string | null } {
   const fallback = `request failed (${status})`;
   const empty = { message: fallback, code: null };
@@ -325,7 +370,7 @@ async function loadNodes(): Promise<NodeLine[]> {
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
     noteUnauthenticated(response.status, failure.code);
-    // 节点列表按原文解析，不经过 api()。横幅只认 error.code。
+    // The node list is parsed from the raw text and does not go through api(). The banner only recognizes error.code.
     throw new ApiError(failure.message, failure.code);
   }
   return parseNodes(text);
@@ -438,6 +483,10 @@ export function ClusterNodes() {
   });
   const stage = useMutation({
     mutationFn: ({ id, capacity }: { id: string; capacity: string }) => stageCapacity(id, capacity),
+  });
+  const [purgeTarget, setPurgeTarget] = useState<PendingBlockPurge | null>(null);
+  const purge = useMutation({
+    mutationFn: (target: PendingBlockPurge) => purgeBlocks(target.id, target.hash),
   });
   const connect = useMutation({
     mutationFn: connectNode,
@@ -573,9 +622,31 @@ export function ClusterNodes() {
                   }}
                 />
               ) : null}
+              <NodeBlockPurge
+                id={node.id}
+                onAsk={(hash) => {
+                  setPurgeTarget({ id: node.id, hash });
+                }}
+              />
             </li>
           ))}
         </ul>
+      ) : null}
+      {purgeTarget !== null ? (
+        <ConfirmDialog
+          action="clear-block"
+          name={purgeTarget.hash}
+          scope={purgeTarget.id}
+          consequence="Object data will be lost."
+          onCancel={() => {
+            setPurgeTarget(null);
+          }}
+          onConfirm={() => {
+            const target = purgeTarget;
+            setPurgeTarget(null);
+            purge.mutate(target);
+          }}
+        />
       ) : null}
     </section>
   );

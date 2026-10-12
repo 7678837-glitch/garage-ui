@@ -154,7 +154,7 @@ test("shows an up node with a hostname and a down draining node", async () => {
   expect(up?.textContent).toContain("v2.4.1");
   expect(up?.textContent).toContain("Up");
   expect(up?.querySelector("form")?.getAttribute("aria-label")).toBe("Node capacity");
-  expect(down?.textContent).toBe("node-downDownDraining");
+  expect(down?.textContent).toBe(nodeCard("node-down", "node-downDownDraining"));
   const page = document.body.textContent ?? "";
   expect(page).not.toContain("9007199254740993");
   expect(page).not.toContain("9007199254740992");
@@ -412,7 +412,7 @@ test("wraps a 64-character node id, hostname, address, and connect result", asyn
   expect(line.closest("ul")?.classList.contains("min-w-0")).toBe(true);
   const items = screen.getAllByRole("listitem").map((item) => item.textContent);
   expect(items).toContain(connectResult);
-  expect(items).toContain(`${nodeId}${hostname}${address}v2.4.1Up`);
+  expect(items).toContain(nodeCard(nodeId, `${nodeId}${hostname}${address}v2.4.1Up`));
 });
 
 test("shows Connecting while connect is submitting, then Connected when no lines return", async () => {
@@ -445,6 +445,10 @@ test("shows Connecting while connect is submitting, then Connected when no lines
   expect(idle.textContent).toBe("Connect node");
   expect(screen.getByText("node-up")).toBeTruthy();
 });
+
+function nodeCard(id: string, body: string): string {
+  return `${body}Block hash for ${id}Purge blocks on ${id}`;
+}
 
 function nodeCardText(): string[] {
   return screen.queryAllByRole("listitem").map((item) => item.textContent ?? "");
@@ -515,8 +519,8 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(screen.queryByText("n-c")).toBeNull();
   expect(screen.queryByText("n-m")).toBeNull();
   expect(nodeCardText()).toEqual([
-    "n-bApple10.0.0.2:3901v2.4.1Up",
-    "n-aapple10.0.0.3:3901v2.4.1Up",
+    nodeCard("n-b", "n-bApple10.0.0.2:3901v2.4.1Up"),
+    nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
   ]);
   expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("APPLE");
   const sort = screen.getByLabelText("Sort nodes") as HTMLSelectElement;
@@ -538,11 +542,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
 
   fireEvent.change(screen.getByLabelText("Filter nodes"), { target: { value: "" } });
   expect(nodeCardText()).toEqual([
-    "n-bApple10.0.0.2:3901v2.4.1Up",
-    "n-aapple10.0.0.3:3901v2.4.1Up",
-    "n-zDown",
-    "n-cDown",
-    "n-mmango10.0.0.4:3901v2.4.1Up",
+    nodeCard("n-b", "n-bApple10.0.0.2:3901v2.4.1Up"),
+    nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
+    nodeCard("n-z", "n-zDown"),
+    nodeCard("n-c", "n-cDown"),
+    nodeCard("n-m", "n-mmango10.0.0.4:3901v2.4.1Up"),
   ]);
   expect(window.location.search).toBe("?keep=1");
   expect(window.location.hash).toBe("#stay");
@@ -550,11 +554,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
 
   fireEvent.change(screen.getByLabelText("Sort nodes"), { target: { value: "hostname" } });
   expect(nodeCardText()).toEqual([
-    "n-cDown",
-    "n-zDown",
-    "n-aapple10.0.0.3:3901v2.4.1Up",
-    "n-bApple10.0.0.2:3901v2.4.1Up",
-    "n-mmango10.0.0.4:3901v2.4.1Up",
+    nodeCard("n-c", "n-cDown"),
+    nodeCard("n-z", "n-zDown"),
+    nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
+    nodeCard("n-b", "n-bApple10.0.0.2:3901v2.4.1Up"),
+    nodeCard("n-m", "n-mmango10.0.0.4:3901v2.4.1Up"),
   ]);
   expect(new URLSearchParams(window.location.search).get("nodesSort")).toBe("hostname");
   expect(new URLSearchParams(window.location.search).has("nodes")).toBe(false);
@@ -563,7 +567,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(statusCalls()).toBe(1);
 
   fireEvent.change(screen.getByLabelText("Filter nodes"), { target: { value: "N-Z" } });
-  expect(nodeCardText()).toEqual(["n-zDown"]);
+  expect(nodeCardText()).toEqual([nodeCard("n-z", "n-zDown")]);
   expect(screen.queryByText("n-c")).toBeNull();
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   expect(window.location.search).toContain("nodes=N-Z");
@@ -595,11 +599,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   });
   expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
   expect(nodeCardText()).toEqual([
-    "n-bApple10.0.0.2:3901v2.4.1Up",
-    "n-aapple10.0.0.3:3901v2.4.1Up",
-    "n-zDown",
-    "n-cDown",
-    "n-mmango10.0.0.4:3901v2.4.1Up",
+    nodeCard("n-b", "n-bApple10.0.0.2:3901v2.4.1Up"),
+    nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
+    nodeCard("n-z", "n-zDown"),
+    nodeCard("n-c", "n-cDown"),
+    nodeCard("n-m", "n-mmango10.0.0.4:3901v2.4.1Up"),
   ]);
   expect(window.location.search).toContain("nodesSort=capacity");
   expect(window.location.search).toContain("keep=1");
@@ -770,4 +774,63 @@ test("keeps the address and connect result when the node list fails and recovers
   expect(callsFor(fetchMock, "/api/cluster/health")).toBe(healthSeen);
   expect(callsFor(fetchMock, "/api/cluster/statistics")).toBe(statisticsSeen);
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
+});
+
+test("purge asks for the block hash before it sends", async () => {
+  const fetchMock = installFetch("admin", () =>
+    json({
+      nodes: [
+        {
+          id: "n1",
+          hostname: "alpha",
+          isUp: true,
+          draining: false,
+        },
+      ],
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("n1")).toBeTruthy();
+  const field = screen.getByLabelText("Block hash for n1") as HTMLInputElement;
+  const purge = screen.getByRole("button", { name: "Purge blocks on n1" });
+  const purgePosts = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/nodes/n1/blocks/purge");
+
+  fireEvent.click(purge);
+  expect(screen.queryByRole("heading", { name: "Confirm abc" })).toBeNull();
+  expect(screen.queryByText("Object data will be lost.")).toBeNull();
+  expect(purgePosts()).toHaveLength(0);
+
+  fireEvent.change(field, { target: { value: "  abc  " } });
+  fireEvent.click(purge);
+  expect(screen.getByRole("heading", { name: "Confirm abc" })).toBeTruthy();
+  expect(screen.getByText("Object data will be lost.").tagName).toBe("P");
+  expect(screen.getAllByText("n1")).toHaveLength(2);
+  expect((screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+
+  fireEvent.change(screen.getByLabelText("Type abc to confirm"), { target: { value: "nope" } });
+  expect((screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  expect(purgePosts()).toHaveLength(0);
+
+  fireEvent.change(screen.getByLabelText("Type abc to confirm"), { target: { value: "abc" } });
+  const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+  expect(screen.queryByRole("heading", { name: "Confirm abc" })).toBeNull();
+  await act(async () => {});
+  expect(purgePosts()).toHaveLength(1);
+  const init = purgePosts()[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("POST");
+  expect(new Headers(init?.headers).get("x-confirm")).toBe("yes");
+  expect(init?.body).toBe('["abc"]');
+
+  fireEvent.click(purge);
+  expect(screen.getByRole("heading", { name: "Confirm abc" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("heading", { name: "Confirm abc" })).toBeNull();
+  expect(purgePosts()).toHaveLength(1);
 });
