@@ -42,7 +42,7 @@ Not included in the minimum version. Permissions are in 3.10 of [security.md](se
 - API: `POST /api/buckets/{id}/share` (key, expires) (A, or a caller who has the share permission).
 - Garage: S3 presigning (uses the public S3 address and region). The website address is generated from a configuration template (the template must contain `{bucket}`).
 
-Acceptance: The generated link can be used to download within its validity period, and returns 403 after it expires. A record is visible in the audit log.
+Acceptance: The generated link can be used to download within its validity period. After the link expires, Garage rejects it. The expired request returned HTTP 400 and S3 code InvalidRequest on dxflrs/garage:v2.3.0, and HTTP 400 and S3 code InvalidRequest on dxflrs/garage:v2.4.1. A record is visible in the audit log.
 
 ## 5.6 Bulk download
 
