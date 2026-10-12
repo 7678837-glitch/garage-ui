@@ -229,10 +229,18 @@ pub async fn presign_get(
     let bucket = bucket_id.to_string();
     let object_key = key.to_string();
     let sources = sources(app, bucket_id).await;
+    let tls_insecure = app.settings.tls_insecure;
+    let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let signed_bucket = bucket.clone();
     let attempted = app
         .read_credential(&bucket, sources, move |credential| {
-            let client = s3_client(&region, &endpoint, &credential);
+            let client = s3_client(
+                &region,
+                &endpoint,
+                &credential,
+                tls_insecure,
+                tls_ca_pem.as_deref(),
+            );
             let bucket = signed_bucket.clone();
             let object_key = object_key.clone();
             async move {
@@ -1277,11 +1285,19 @@ where
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unavailable("garage_unavailable", "Garage is unavailable"))?;
     let sources = sources(app, &bucket_id).await;
+    let tls_insecure = app.settings.tls_insecure;
+    let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let notes = Arc::new(Mutex::new(None::<String>));
     let notes_for_call = Arc::clone(&notes);
     let attempted = app
         .read_credential(&bucket_id, sources, move |credential| {
-            let client = s3_client(&region, &endpoint, &credential);
+            let client = s3_client(
+                &region,
+                &endpoint,
+                &credential,
+                tls_insecure,
+                tls_ca_pem.as_deref(),
+            );
             let pending = call(client);
             let notes = Arc::clone(&notes_for_call);
             async move {
@@ -1358,7 +1374,13 @@ async fn key_secret(app: &App, access_key_id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Client {
+fn s3_client(
+    region: &str,
+    endpoint: &str,
+    credential: &BucketCredential,
+    tls_insecure: bool,
+    tls_ca_pem: Option<&[u8]>,
+) -> Client {
     let credentials = Credentials::new(
         credential.access_key_id(),
         credential.secret_key(),
@@ -1368,7 +1390,7 @@ fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Cli
     );
     // latest 默认校验响应校验和。Garage 不回这些头，开启后正常列表会被判失败。
     // 同一把密钥只打一次 HTTP。403 的第二次尝试由 CredentialCache::read 发起。
-    let config = aws_sdk_s3::Config::builder()
+    let mut config = aws_sdk_s3::Config::builder()
         .behavior_version(aws_config::BehaviorVersion::latest())
         .region(Region::new(region.to_string()))
         .endpoint_url(endpoint)
@@ -1376,9 +1398,599 @@ fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Cli
         .credentials_provider(credentials)
         .retry_config(RetryConfig::standard().with_max_attempts(1))
         .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
-        .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
-        .build();
-    Client::from_conf(config)
+        .response_checksum_validation(ResponseChecksumValidation::WhenRequired);
+    if tls_insecure {
+        config = config.http_client(skip_verify_client());
+    } else if let Some(pem) = tls_ca_pem {
+        config = config.http_client(ca_trust_client(pem));
+    }
+    Client::from_conf(config.build())
+}
+
+fn ca_trust_client(
+    pem: &[u8],
+) -> aws_smithy_runtime_api::client::http::SharedHttpClient {
+    use aws_smithy_http_client::tls::{self, TlsContext, TrustStore};
+
+    let trust = TrustStore::default().with_pem_certificate(pem.to_vec());
+    let context = TlsContext::builder()
+        .with_trust_store(trust)
+        .build()
+        .expect("tls context");
+    aws_smithy_http_client::Builder::new()
+        .tls_provider(tls::Provider::Rustls(
+            tls::rustls_provider::CryptoMode::AwsLc,
+        ))
+        .tls_context(context)
+        .build_https()
+}
+
+// smithy-http-client 1.5.0 keeps its certificate verifier private.
+// The skip switch installs this one. Handshake signatures still have to check,
+// or rustls aborts before the certificate decision matters.
+struct AcceptAnyServerCert {
+    algorithms: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl std::fmt::Debug for AcceptAnyServerCert {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AcceptAnyServerCert")
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyServerCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
+fn skip_verify_client() -> SkipVerifyClient {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let algorithms = provider.signature_verification_algorithms;
+    let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .expect("rustls default versions")
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyServerCert { algorithms }))
+        .with_no_client_auth();
+    SkipVerifyClient {
+        config: std::sync::Arc::new(config),
+    }
+}
+
+#[derive(Debug)]
+struct SkipVerifyClient {
+    config: std::sync::Arc<rustls::ClientConfig>,
+}
+
+#[derive(Debug)]
+struct SkipVerifyConnector {
+    config: std::sync::Arc<rustls::ClientConfig>,
+    connect_timeout: Option<std::time::Duration>,
+    read_timeout: Option<std::time::Duration>,
+}
+
+impl aws_smithy_runtime_api::client::http::HttpClient for SkipVerifyClient {
+    fn http_connector(
+        &self,
+        settings: &aws_smithy_runtime_api::client::http::HttpConnectorSettings,
+        _components: &aws_smithy_runtime_api::client::runtime_components::RuntimeComponents,
+    ) -> aws_smithy_runtime_api::client::http::SharedHttpConnector {
+        aws_smithy_runtime_api::client::http::SharedHttpConnector::new(SkipVerifyConnector {
+            config: std::sync::Arc::clone(&self.config),
+            connect_timeout: settings.connect_timeout(),
+            read_timeout: settings.read_timeout(),
+        })
+    }
+}
+
+impl aws_smithy_runtime_api::client::http::HttpConnector for SkipVerifyConnector {
+    fn call(
+        &self,
+        mut request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    ) -> aws_smithy_runtime_api::client::http::HttpConnectorFuture {
+        let config = std::sync::Arc::clone(&self.config);
+        let connect_timeout = self.connect_timeout;
+        let read_timeout = self.read_timeout;
+        aws_smithy_runtime_api::client::http::HttpConnectorFuture::new(async move {
+            dispatch(&mut request, &config, connect_timeout, read_timeout)
+                .await
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::TimedOut {
+                        aws_smithy_runtime_api::client::result::ConnectorError::timeout(Box::new(
+                            error,
+                        ))
+                    } else {
+                        aws_smithy_runtime_api::client::result::ConnectorError::io(Box::new(error))
+                    }
+                })
+        })
+    }
+}
+
+async fn dispatch(
+    request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    config: &std::sync::Arc<rustls::ClientConfig>,
+    connect_timeout: Option<std::time::Duration>,
+    read_timeout: Option<std::time::Duration>,
+) -> std::io::Result<aws_smithy_runtime_api::http::Response> {
+    let uri = request.uri().to_string();
+    let (https, host, port, lookup) = endpoint_parts(&uri)?;
+    let body = request_bytes(request).await?;
+    let encoded = encode_request(request, &host, &port, https, &body)?;
+    let work = async {
+        let mut tcp = connect_tcp(&lookup, connect_timeout).await?;
+        let raw = if https {
+            tls_exchange(&mut tcp, config, &host, &encoded).await?
+        } else {
+            plain_exchange(&mut tcp, &encoded).await?
+        };
+        http_response(&raw)
+    };
+    match read_timeout {
+        Some(limit) => match tokio::time::timeout(limit, work).await {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "read timeout",
+            )),
+        },
+        None => work.await,
+    }
+}
+
+fn endpoint_parts(uri: &str) -> std::io::Result<(bool, String, String, String)> {
+    let https = uri.starts_with("https://");
+    let rest = uri.split_once("://").map(|(_, rest)| rest).unwrap_or(uri);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "missing authority",
+        ));
+    }
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let Some((host, rest)) = rest.split_once(']') else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "bad ipv6 authority",
+            ));
+        };
+        (host.to_string(), rest.strip_prefix(':').filter(|port| !port.is_empty()).map(str::to_string))
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) if !host.is_empty() && !port.is_empty() => {
+                (host.to_string(), Some(port.to_string()))
+            }
+            _ => (authority.to_string(), None),
+        }
+    };
+    let port = port.unwrap_or_else(|| if https { "443" } else { "80" }.to_string());
+    let lookup = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    Ok((https, host, port, lookup))
+}
+
+async fn connect_tcp(lookup: &str, timeout: Option<std::time::Duration>) -> std::io::Result<tokio::net::TcpStream> {
+    let connect = async {
+        let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+        let mut found = false;
+        for address in tokio::net::lookup_host(lookup).await? {
+            found = true;
+            match tokio::net::TcpStream::connect(address).await {
+                Ok(stream) => return Ok(stream),
+                Err(error) => last = error,
+            }
+        }
+        if found {
+            Err(last)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no address",
+            ))
+        }
+    };
+    match timeout {
+        Some(limit) => match tokio::time::timeout(limit, connect).await {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connect timeout",
+            )),
+        },
+        None => connect.await,
+    }
+}
+
+async fn request_bytes(request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest) -> std::io::Result<Vec<u8>> {
+    let body = request.take_body();
+    if let Some(bytes) = body.bytes() {
+        return Ok(bytes.to_vec());
+    }
+    let mut out = Vec::new();
+    let mut body = std::pin::pin!(body);
+    while let Some(frame) = std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await {
+        let frame = frame.map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        out.extend_from_slice(&data);
+    }
+    Ok(out)
+}
+
+fn encode_request(
+    request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    host: &str,
+    port: &str,
+    https: bool,
+    body: &[u8],
+) -> std::io::Result<Vec<u8>> {
+    let path = request.uri_mut().path().to_string();
+    let query = request.uri_mut().query().unwrap_or("").to_string();
+    let path = if path.is_empty() { "/" } else { path.as_str() };
+    let target = if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    };
+    let mut head = format!("{} {target} HTTP/1.1\r\n", request.method());
+    let mut saw_host = false;
+    let mut saw_length = false;
+    let mut saw_connection = false;
+    for (name, value) in request.headers().iter() {
+        if name.eq_ignore_ascii_case("host") {
+            saw_host = true;
+        } else if name.eq_ignore_ascii_case("content-length") {
+            saw_length = true;
+        } else if name.eq_ignore_ascii_case("connection") {
+            saw_connection = true;
+        }
+        head.push_str(name);
+        head.push_str(": ");
+        head.push_str(value);
+        head.push_str("\r\n");
+    }
+    if !saw_host {
+        let value = if (https && port == "443") || (!https && port == "80") {
+            if host.contains(':') {
+                format!("[{host}]")
+            } else {
+                host.to_string()
+            }
+        } else if host.contains(':') {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        };
+        head.push_str("host: ");
+        head.push_str(&value);
+        head.push_str("\r\n");
+    }
+    if !saw_length {
+        head.push_str(&format!("content-length: {}\r\n", body.len()));
+    }
+    if !saw_connection {
+        head.push_str("connection: close\r\n");
+    }
+    head.push_str("\r\n");
+    let mut bytes = head.into_bytes();
+    bytes.extend_from_slice(body);
+    Ok(bytes)
+}
+
+async fn plain_exchange(tcp: &mut tokio::net::TcpStream, request: &[u8]) -> std::io::Result<Vec<u8>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    tcp.write_all(request).await?;
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        if decode_http(&raw, false)?.is_some() {
+            return Ok(raw);
+        }
+        let read = tcp.read(&mut buf).await?;
+        if read == 0 {
+            if decode_http(&raw, true)?.is_some() {
+                return Ok(raw);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "response closed",
+            ));
+        }
+        raw.extend_from_slice(&buf[..read]);
+    }
+}
+
+async fn tls_exchange(
+    tcp: &mut tokio::net::TcpStream,
+    config: &std::sync::Arc<rustls::ClientConfig>,
+    host: &str,
+    request: &[u8],
+) -> std::io::Result<Vec<u8>> {
+    let name = rustls::pki_types::ServerName::try_from(host.to_string())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name"))?;
+    let mut conn = rustls::ClientConnection::new(std::sync::Arc::clone(config), name)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    handshake(tcp, &mut conn).await?;
+    write_plain(tcp, &mut conn, request).await?;
+    read_plain_http(tcp, &mut conn).await
+}
+
+async fn handshake(
+    tcp: &mut tokio::net::TcpStream,
+    conn: &mut rustls::ClientConnection,
+) -> std::io::Result<()> {
+    while conn.is_handshaking() {
+        flush_tls(tcp, conn).await?;
+        if !conn.wants_read() {
+            if conn.wants_write() {
+                continue;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "tls handshake stalled",
+            ));
+        }
+        if pull_tls(tcp, conn).await? == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "tls handshake closed",
+            ));
+        }
+    }
+    flush_tls(tcp, conn).await
+}
+
+async fn flush_tls(
+    tcp: &mut tokio::net::TcpStream,
+    conn: &mut rustls::ClientConnection,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    while conn.wants_write() {
+        let mut cipher = Vec::new();
+        let wrote = conn.write_tls(&mut cipher)?;
+        if wrote == 0 || cipher.is_empty() {
+            break;
+        }
+        tcp.write_all(&cipher).await?;
+    }
+    Ok(())
+}
+
+async fn pull_tls(
+    tcp: &mut tokio::net::TcpStream,
+    conn: &mut rustls::ClientConnection,
+) -> std::io::Result<usize> {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 16 * 1024];
+    let read = tcp.read(&mut buf).await?;
+    if read == 0 {
+        let _ = conn.read_tls(&mut &[][..])?;
+        return Ok(0);
+    }
+    let mut offset = 0;
+    while offset < read {
+        let wrote = conn.read_tls(&mut &buf[offset..read])?;
+        if wrote == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "tls buffer full",
+            ));
+        }
+        offset += wrote;
+    }
+    conn.process_new_packets()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    Ok(read)
+}
+
+async fn write_plain(
+    tcp: &mut tokio::net::TcpStream,
+    conn: &mut rustls::ClientConnection,
+    data: &[u8],
+) -> std::io::Result<()> {
+    let mut offset = 0;
+    while offset < data.len() {
+        match conn.writer().write(&data[offset..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "tls writer",
+                ))
+            }
+            Ok(wrote) => offset += wrote,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error),
+        }
+        flush_tls(tcp, conn).await?;
+    }
+    flush_tls(tcp, conn).await
+}
+
+async fn read_plain_http(
+    tcp: &mut tokio::net::TcpStream,
+    conn: &mut rustls::ClientConnection,
+) -> std::io::Result<Vec<u8>> {
+    let mut raw = Vec::new();
+    loop {
+        drain_plain(conn, &mut raw)?;
+        if decode_http(&raw, false)?.is_some() {
+            return Ok(raw);
+        }
+        if pull_tls(tcp, conn).await? == 0 {
+            drain_plain(conn, &mut raw)?;
+            if decode_http(&raw, true)?.is_some() {
+                return Ok(raw);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "response closed",
+            ));
+        }
+    }
+}
+
+fn drain_plain(conn: &mut rustls::ClientConnection, out: &mut Vec<u8>) -> std::io::Result<()> {
+    use std::io::Read;
+
+    let mut buf = [0u8; 8192];
+    loop {
+        match conn.reader().read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(read) => out.extend_from_slice(&buf[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn http_response(raw: &[u8]) -> std::io::Result<aws_smithy_runtime_api::http::Response> {
+    let message = decode_http(raw, true)?.ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "response closed")
+    })?;
+    let status = aws_smithy_runtime_api::http::StatusCode::try_from(message.status)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let mut response = aws_smithy_runtime_api::http::Response::new(status, SdkBody::from(message.body));
+    for (name, value) in message.headers {
+        let _ = response.headers_mut().try_insert(name, value);
+    }
+    Ok(response)
+}
+
+struct HttpMessage {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+fn decode_http(raw: &[u8], eof: bool) -> std::io::Result<Option<HttpMessage>> {
+    let Some(split) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
+        if eof {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "http headers",
+            ));
+        }
+        return Ok(None);
+    };
+    let head = std::str::from_utf8(&raw[..split])
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let mut lines = head.split("\r\n");
+    let status = lines
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "http status"))?;
+    let mut headers = Vec::new();
+    let mut length = None;
+    let mut chunked = false;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            length = value.parse().ok();
+        } else if name.eq_ignore_ascii_case("transfer-encoding")
+            && value.to_ascii_lowercase().contains("chunked")
+        {
+            chunked = true;
+        }
+        headers.push((name.to_string(), value.to_string()));
+    }
+    let rest = &raw[split + 4..];
+    let body = if chunked {
+        match decode_chunks(rest) {
+            Some(body) => body,
+            None if eof => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "http chunks",
+                ))
+            }
+            None => return Ok(None),
+        }
+    } else if let Some(length) = length {
+        if rest.len() < length {
+            if eof {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "http body",
+                ));
+            }
+            return Ok(None);
+        }
+        rest[..length].to_vec()
+    } else if eof {
+        rest.to_vec()
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(HttpMessage {
+        status,
+        headers,
+        body,
+    }))
+}
+
+fn decode_chunks(mut rest: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = rest.windows(2).position(|window| window == b"\r\n")?;
+        let line = std::str::from_utf8(&rest[..line_end]).ok()?;
+        let size = usize::from_str_radix(line.split(';').next()?.trim(), 16).ok()?;
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            if rest.is_empty() || rest.starts_with(b"\r\n") {
+                return Some(out);
+            }
+            return rest
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|_| out);
+        }
+        if rest.len() < size + 2 || &rest[size..size + 2] != b"\r\n" {
+            return None;
+        }
+        out.extend_from_slice(&rest[..size]);
+        rest = &rest[size + 2..];
+    }
 }
 
 fn s3_error(status: u16, message: String) -> ApiError {
@@ -1393,4 +2005,190 @@ fn s3_error(status: u16, message: String) -> ApiError {
         body,
         Some(HeaderValue::from_static("application/json")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Read};
+    use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
+
+    use super::*;
+
+    const TLS_SERVER: &str = r#"
+import http.server
+import ssl
+import sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(sys.argv[1], sys.argv[2])
+server.socket = context.wrap_socket(server.socket, server_side=True)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"#;
+
+    struct TlsProbe {
+        child: Child,
+        port: u16,
+        ca: PathBuf,
+    }
+
+    fn openssl(args: &[&str]) {
+        let output = Command::new("openssl").args(args).output().expect("openssl");
+        assert!(
+            output.status.success(),
+            "openssl {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    impl TlsProbe {
+        fn start() -> Self {
+            let dir = crate::util::temp_dir();
+            let ca = dir.join("ca.pem");
+            let ca_key = dir.join("ca.key");
+            let server_key = dir.join("server.key");
+            let server_cert = dir.join("server.pem");
+            let csr = dir.join("server.csr");
+            let ca_s = ca.to_str().expect("ca path");
+            let ca_key_s = ca_key.to_str().expect("ca key path");
+            let server_key_s = server_key.to_str().expect("server key path");
+            let server_cert_s = server_cert.to_str().expect("server cert path");
+            let csr_s = csr.to_str().expect("csr path");
+            openssl(&[
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                ca_key_s,
+                "-out",
+                ca_s,
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=GarageTestCA",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+            ]);
+            openssl(&[
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                server_key_s,
+                "-out",
+                csr_s,
+                "-nodes",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1",
+                "-addext",
+                "extendedKeyUsage=serverAuth",
+            ]);
+            openssl(&[
+                "x509",
+                "-req",
+                "-in",
+                csr_s,
+                "-CA",
+                ca_s,
+                "-CAkey",
+                ca_key_s,
+                "-CAcreateserial",
+                "-out",
+                server_cert_s,
+                "-days",
+                "1",
+                "-copy_extensions",
+                "copy",
+            ]);
+            let mut child = Command::new("python3")
+                .arg("-c")
+                .arg(TLS_SERVER)
+                .arg(&server_cert)
+                .arg(&server_key)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("python");
+            let stdout = child.stdout.take().expect("python stdout");
+            let mut line = String::new();
+            BufReader::new(stdout)
+                .read_line(&mut line)
+                .expect("python port");
+            let port = line.trim().parse().unwrap_or_else(|_| {
+                let mut err = String::new();
+                if let Some(stderr) = child.stderr.take() {
+                    let _ = BufReader::new(stderr).read_to_string(&mut err);
+                }
+                panic!("python port from {line:?}: {err}");
+            });
+            Self { child, port, ca }
+        }
+    }
+
+    impl Drop for TlsProbe {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn error_chain(error: &dyn std::error::Error) -> String {
+        let mut text = error.to_string();
+        let mut source = error.source();
+        while let Some(inner) = source {
+            text.push_str(": ");
+            text.push_str(&inner.to_string());
+            source = inner.source();
+        }
+        text
+    }
+
+    async fn handshake_error(endpoint: &str, tls_insecure: bool, ca: Option<&[u8]>) -> String {
+        let credential = BucketCredential::new("AKIATEST", "secret");
+        let client = s3_client("garage", endpoint, &credential, tls_insecure, ca);
+        match client.list_buckets().send().await {
+            Ok(_) => String::new(),
+            Err(error) => error_chain(&error),
+        }
+    }
+
+    #[tokio::test]
+    async fn s3_client_verifies_tls_unless_the_switch_is_one() {
+        let probe = TlsProbe::start();
+        let endpoint = format!("https://127.0.0.1:{}", probe.port);
+        let ca = std::fs::read(&probe.ca).expect("ca pem");
+
+        let denied = handshake_error(&endpoint, false, None).await;
+        assert!(denied.contains("certificate"), "{denied}");
+
+        let trusted = handshake_error(&endpoint, false, Some(ca.as_slice())).await;
+        assert!(
+            !trusted.contains("certificate"),
+            "custom CA must pass the handshake: {trusted}"
+        );
+
+        let skipped = handshake_error(&endpoint, true, None).await;
+        assert!(
+            !skipped.contains("certificate"),
+            "tls_insecure must pass the handshake: {skipped}"
+        );
+    }
 }
