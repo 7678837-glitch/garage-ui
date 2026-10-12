@@ -8351,6 +8351,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disable_drops_the_user_session_after_reenable() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let other_id = users
+            .iter()
+            .find(|user| user["username"] != "Ada")
+            .expect("other user")["id"]
+            .as_i64()
+            .expect("id");
+
+        let disabled = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{other_id}"),
+                Some(&json!({ "disabled": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(disabled.status, StatusCode::OK, "{}", disabled.body);
+
+        let enabled = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{other_id}"),
+                Some(&json!({ "disabled": false }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(enabled.status, StatusCode::OK, "{}", enabled.body);
+
+        let other = exchange(&app, request("GET", "/api/config", None, Some(&viewer))).await;
+        assert_eq!(other.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code_of(&other.body), "unauthenticated");
+
+        let kept = exchange(&app, request("GET", "/api/config", None, Some(&admin))).await;
+        assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    }
+
+    #[tokio::test]
     async fn create_user_rejections_are_audited() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
