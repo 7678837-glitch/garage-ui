@@ -1276,6 +1276,131 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
   );
 }
 
+type IncompleteUpload = {
+  key: string;
+  uploadId: string;
+  initiated: string;
+};
+
+function olderThanSecs(hours: string): number | null {
+  if (!/^(0|[1-9]\d*)$/.test(hours)) {
+    return null;
+  }
+  const secs = Number(hours) * 3600;
+  return Number.isSafeInteger(secs) ? secs : null;
+}
+
+function uploadsFrom(body: unknown): IncompleteUpload[] {
+  if (typeof body !== "object" || body === null || !("uploads" in body)) {
+    return [];
+  }
+  const uploads = (body as { uploads: unknown }).uploads;
+  if (!Array.isArray(uploads)) {
+    return [];
+  }
+  const rows: IncompleteUpload[] = [];
+  for (const item of uploads) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const record = item as { key?: unknown; uploadId?: unknown; initiated?: unknown };
+    if (
+      typeof record.key !== "string" ||
+      typeof record.uploadId !== "string" ||
+      typeof record.initiated !== "string"
+    ) {
+      continue;
+    }
+    rows.push({ key: record.key, uploadId: record.uploadId, initiated: record.initiated });
+  }
+  return rows;
+}
+
+function IncompleteUploads({ bucketId }: { bucketId: string }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        Incomplete uploads
+      </button>
+    );
+  }
+  return <IncompleteUploadsPanel bucketId={bucketId} />;
+}
+
+function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ["bucket-multipart", bucketId],
+    queryFn: () => api<unknown>(`${bucketUrl(bucketId)}/multipart`),
+    refetchOnWindowFocus: false,
+  });
+  const [hours, setHours] = useState("");
+  const cleanup = useMutation({
+    mutationFn: (secs: number) =>
+      api(`${bucketUrl(bucketId)}/cleanup-uploads`, {
+        method: "POST",
+        body: JSON.stringify({ olderThanSecs: secs }),
+      }),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["bucket-multipart", bucketId] });
+    },
+  });
+  if (query.isError) {
+    return (
+      <p>
+        {query.error instanceof Error ? query.error.message : "Incomplete uploads are unavailable"}
+      </p>
+    );
+  }
+  if (!query.isSuccess) {
+    return null;
+  }
+  const secs = olderThanSecs(hours);
+  return (
+    <div className="mt-3 grid max-w-sm gap-2">
+      {uploadsFrom(query.data).map((upload) => (
+        <p key={`${upload.key}:${upload.uploadId}`}>
+          <span>{upload.key}</span>
+          <span>{upload.uploadId}</span>
+          <span>{upload.initiated}</span>
+        </p>
+      ))}
+      <label className="block text-sm">
+        Older than hours
+        <input
+          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          inputMode="numeric"
+          value={hours}
+          onChange={(event) => {
+            setHours(event.target.value);
+          }}
+        />
+      </label>
+      <button
+        className="border border-neutral-900 px-3 py-1 text-left"
+        type="button"
+        disabled={secs === null || cleanup.isPending}
+        onClick={() => {
+          if (secs === null) {
+            return;
+          }
+          cleanup.mutate(secs);
+        }}
+      >
+        Clean up
+      </button>
+      {cleanup.error instanceof Error ? <p>{cleanup.error.message}</p> : null}
+    </div>
+  );
+}
+
 function CreateBucketForm() {
   const client = useQueryClient();
   const [globalAlias, setGlobalAlias] = useState("");
@@ -1811,7 +1936,10 @@ export function Buckets({
                     ) : null}
                     {canManage ? <CorsEditor bucketId={bucket.id} /> : <CorsSummary bucketId={bucket.id} />}
                     {canManage ? (
-                      <LifecycleEditor bucketId={bucket.id} />
+                      <>
+                        <LifecycleEditor bucketId={bucket.id} />
+                        <IncompleteUploads bucketId={bucket.id} />
+                      </>
                     ) : (
                       <LifecycleSummary bucketId={bucket.id} />
                     )}

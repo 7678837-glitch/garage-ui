@@ -1179,3 +1179,81 @@ test("saves a bucket lifecycle rule after showing the diff", async () => {
   expect(screen.queryByRole("button", { name: "Edit lifecycle" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Save lifecycle" })).toBeNull();
 });
+
+test("shows incomplete uploads and cleans up older than one hour", async () => {
+  const calls: Call[] = [];
+  let cleaned = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      calls.push(call);
+      if (call.url.endsWith("/multipart")) {
+        return json(
+          cleaned
+            ? { uploads: [] }
+            : {
+                uploads: [
+                  {
+                    key: "old.bin",
+                    uploadId: "up-old",
+                    initiated: "2000-01-01T00:00:00Z",
+                  },
+                ],
+              },
+        );
+      }
+      if (call.url.endsWith("/cleanup-uploads")) {
+        cleaned = true;
+        return json({});
+      }
+      if (call.url.endsWith("/lifecycle")) {
+        return json({ lifecycleRules: [] });
+      }
+      if (call.url.endsWith("/cors")) {
+        return json({ corsRules: [] });
+      }
+      return json({
+        items: [
+          {
+            id: "bkt-1",
+            objects: 4,
+            bytes: 1000,
+            quotas: { maxSize: 5000, maxObjects: 12 },
+          },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderBuckets(true);
+  expect(await screen.findByRole("button", { name: "Incomplete uploads" })).toBeTruthy();
+  expect(calls.some((call) => call.url.endsWith("/multipart"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Incomplete uploads" }));
+  expect(await screen.findByText("old.bin")).toBeTruthy();
+  expect(screen.getByText("up-old")).toBeTruthy();
+  expect(screen.getByText("2000-01-01T00:00:00Z")).toBeTruthy();
+  const hours = screen.getByLabelText("Older than hours") as HTMLInputElement;
+  expect(hours.value).toBe("");
+  const cleanUp = screen.getByRole("button", { name: "Clean up" }) as HTMLButtonElement;
+  expect(cleanUp.disabled).toBe(true);
+  fireEvent.change(hours, { target: { value: "1" } });
+  expect((screen.getByRole("button", { name: "Clean up" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Clean up" }));
+  await waitFor(() => {
+    expect(screen.queryByText("up-old")).toBeNull();
+  });
+  const posts = calls.filter((call) => call.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]?.url).toBe("/api/buckets/bkt-1/cleanup-uploads");
+  expect(posts[0]?.body).toEqual({ olderThanSecs: 3600 });
+  expect(calls.filter((call) => call.method === "DELETE")).toHaveLength(0);
+  cleanup();
+  calls.length = 0;
+  renderBuckets(false);
+  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Incomplete uploads" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Clean up" })).toBeNull();
+});
