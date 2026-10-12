@@ -573,7 +573,20 @@ async fn list_users(
     let users = db::list_users(&app.db)
         .await
         .map_err(|_| ApiError::internal())?;
-    Ok(Json(Value::Array(users.iter().map(public_user).collect())))
+    let created = db::list_user_created_at(&app.db)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let mut listed = Vec::with_capacity(users.len());
+    for user in &users {
+        // 对不上库里的创建时间就失败，不编一个时间。
+        let created_at = created
+            .iter()
+            .find(|row| row.id == user.id)
+            .map(|row| row.created_at)
+            .ok_or_else(ApiError::internal)?;
+        listed.push(public_user(user, created_at));
+    }
+    Ok(Json(Value::Array(listed)))
 }
 
 async fn create_user(
@@ -703,7 +716,8 @@ async fn create_user(
         201,
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(public_user(&user))).into_response())
+    let created_at = stored_created_at(&app.db, user.id).await?;
+    Ok((StatusCode::CREATED, Json(public_user(&user, created_at))).into_response())
 }
 
 async fn patch_user(
@@ -854,7 +868,8 @@ async fn patch_user(
         200,
     )
     .await?;
-    Ok(Json(public_user(&updated)))
+    let created_at = stored_created_at(&app.db, updated.id).await?;
+    Ok(Json(public_user(&updated, created_at)))
 }
 
 async fn remove_user(
@@ -3057,7 +3072,7 @@ fn require(user: &User, op: Op) -> Result<(), ApiError> {
     }
 }
 
-fn public_user(user: &User) -> Value {
+fn public_user(user: &User, created_at: i64) -> Value {
     json!({
         "id": user.id,
         "username": user.username,
@@ -3065,7 +3080,18 @@ fn public_user(user: &User) -> Value {
         "can_download": user.can_download,
         "can_share": user.can_share,
         "disabled": user.disabled,
+        "created_at": created_at,
     })
+}
+
+async fn stored_created_at(pool: &sqlx::SqlitePool, id: i64) -> Result<i64, ApiError> {
+    let rows = db::list_user_created_at(pool)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    rows.into_iter()
+        .find(|row| row.id == id)
+        .map(|row| row.created_at)
+        .ok_or_else(ApiError::internal)
 }
 
 fn effective_share(user: &User) -> bool {
@@ -8538,6 +8564,28 @@ mod tests {
         let current =
             exchange(&app, request("GET", "/api/config", None, Some(&replacement))).await;
         assert_eq!(current.status, StatusCode::OK, "{}", current.body);
+    }
+
+    #[tokio::test]
+    async fn user_list_reports_created_at() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let stored: i64 = sqlx::query_scalar(
+            "SELECT created_at FROM users WHERE username = 'Ada' COLLATE NOCASE",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let response = exchange(&app, request("GET", "/api/users", None, Some(&session))).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let users: Vec<Value> = serde_json::from_str(&response.body).unwrap();
+        let ada = users
+            .iter()
+            .find(|user| user["username"] == "Ada")
+            .expect("user");
+        assert_eq!(ada["created_at"].as_i64(), Some(stored));
+        assert!(ada.get("password_hash").is_none());
     }
 
     #[tokio::test]

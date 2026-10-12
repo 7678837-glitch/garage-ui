@@ -203,6 +203,25 @@ pub async fn list_users(pool: &SqlitePool) -> Result<Vec<User>, sqlx::Error> {
     Ok(rows.iter().map(user_from_row).collect())
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct UserCreatedAt {
+    pub id: i64,
+    pub created_at: i64,
+}
+
+pub async fn list_user_created_at(pool: &SqlitePool) -> Result<Vec<UserCreatedAt>, sqlx::Error> {
+    let rows = sqlx::query("SELECT id, created_at FROM users")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| UserCreatedAt {
+            id: row.get("id"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
+}
+
 pub async fn update_user(
     pool: &SqlitePool,
     id: i64,

@@ -12,7 +12,10 @@ type Account = {
   can_download: boolean;
   can_share: boolean;
   disabled: boolean;
+  createdAt: number | null;
 };
+
+type UserSort = "username" | "created";
 
 type PermissionBits = {
   can_download: boolean;
@@ -49,13 +52,15 @@ function readUserFilter(): string {
   return new URLSearchParams(window.location.search).get("users") ?? "";
 }
 
-function writeUserFilter(filter: string) {
-  const params = new URLSearchParams(window.location.search);
-  if (filter.length > 0) {
-    params.set("users", filter);
-  } else {
-    params.delete("users");
-  }
+function userSortFrom(value: string | null): UserSort {
+  return value === "created" ? "created" : "username";
+}
+
+function readUserSort(): UserSort {
+  return userSortFrom(new URLSearchParams(window.location.search).get("usersSort"));
+}
+
+function replaceAddress(params: URLSearchParams) {
   const search = params.toString();
   const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -64,11 +69,65 @@ function writeUserFilter(filter: string) {
   }
 }
 
+function writeUserFilter(filter: string) {
+  const params = new URLSearchParams(window.location.search);
+  if (filter.length > 0) {
+    params.set("users", filter);
+  } else {
+    params.delete("users");
+  }
+  replaceAddress(params);
+}
+
+function writeUserSort(sort: UserSort) {
+  const params = new URLSearchParams(window.location.search);
+  if (sort === "created") {
+    params.set("usersSort", "created");
+  } else {
+    params.delete("usersSort");
+  }
+  replaceAddress(params);
+}
+
 function userMatches(account: Account, filter: string): boolean {
   if (filter.length === 0) {
     return true;
   }
   return account.username.toLowerCase().includes(filter.toLowerCase());
+}
+
+function compareCreated(left: number | null, right: number | null): number {
+  if (left === right) {
+    return 0;
+  }
+  if (left === null) {
+    return 1;
+  }
+  if (right === null) {
+    return -1;
+  }
+  return left < right ? -1 : 1;
+}
+
+function orderedAccounts(rows: Account[], sort: UserSort): Account[] {
+  const copy = [...rows];
+  switch (sort) {
+    case "username":
+      copy.sort((left, right) =>
+        left.username.toLowerCase().localeCompare(right.username.toLowerCase()),
+      );
+      return copy;
+    case "created":
+      copy.sort((left, right) => compareCreated(left.createdAt, right.createdAt));
+      return copy;
+  }
+}
+
+function createdAtFrom(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  return null;
 }
 
 function errorText(caught: unknown): string {
@@ -102,6 +161,7 @@ function parseAccount(value: unknown): Account {
     can_download: row.can_download,
     can_share: row.can_share,
     disabled: row.disabled,
+    createdAt: createdAtFrom(row.created_at),
   };
 }
 
@@ -458,20 +518,22 @@ export function Users({ selfUsername }: { selfUsername: string }) {
     queryKey: ["users"],
     queryFn: loadUsers,
   });
-  const accounts = [...(users.data ?? [])].sort((left, right) =>
-    left.username.toLowerCase().localeCompare(right.username.toLowerCase()),
-  );
+  const loaded = users.data ?? [];
   const [filter, setFilter] = useState(readUserFilter);
+  const [sort, setSort] = useState(readUserSort);
   useEffect(() => {
-    const sync = () => setFilter(readUserFilter());
+    const sync = () => {
+      setFilter(readUserFilter());
+      setSort(readUserSort());
+    };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
-  const shown = accounts.filter((account) => userMatches(account, filter));
+  const shown = orderedAccounts(loaded, sort).filter((account) => userMatches(account, filter));
   const view = {
     busy: users.isPending,
-    refreshing: accounts.length > 0 && users.isFetching && !users.isPending,
-    empty: Boolean(users.data) && accounts.length === 0,
+    refreshing: loaded.length > 0 && users.isFetching && !users.isPending,
+    empty: Boolean(users.data) && loaded.length === 0,
     failure: users.isError ? userListFailure(users.error) : null,
   };
 
@@ -490,6 +552,21 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserFilter(next);
             }}
           />
+        </label>
+        <label className="block text-sm">
+          Sort users
+          <select
+            className="mt-1 w-full border border-line px-2 py-1"
+            value={sort}
+            onChange={(event) => {
+              const next = userSortFrom(event.target.value);
+              setSort(next);
+              writeUserSort(next);
+            }}
+          >
+            <option value="username">Username</option>
+            <option value="created">Created</option>
+          </select>
         </label>
         <p>Default order is Username.</p>
       </div>

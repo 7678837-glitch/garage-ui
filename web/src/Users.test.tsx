@@ -19,6 +19,7 @@ type Row = {
   can_share: boolean;
   disabled: boolean;
   password_hash?: string;
+  created_at?: number;
 };
 
 type Call = {
@@ -559,6 +560,42 @@ test("shows Ada before Zed when the API returns Zed first", async () => {
     .slice(1)
     .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
   expect(names).toEqual(["Ada", "Zed"]);
+});
+
+test("sorts loaded users by created time and keeps the choice in the address", async () => {
+  window.history.replaceState(null, "", "/?keep=1#users/stay");
+  installApi([
+    {
+      id: 9,
+      username: "Zed",
+      role: "viewer",
+      can_download: false,
+      can_share: false,
+      disabled: false,
+      created_at: 2000,
+    },
+    { ...ada, created_at: 1000 },
+    {
+      id: 3,
+      username: "Mina",
+      role: "viewer",
+      can_download: false,
+      can_share: false,
+      disabled: false,
+    },
+  ]);
+  renderUsers();
+  await screen.findByRole("cell", { name: "Zed" });
+  fireEvent.change(screen.getByLabelText("Sort users"), { target: { value: "created" } });
+  const names = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+  expect(names).toEqual(["Ada", "Zed", "Mina"]);
+  expect(window.location.search).toContain("usersSort=created");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#users/stay");
+  expect((screen.getByLabelText("Sort users") as HTMLSelectElement).value).toBe("created");
 });
 
 test("filters loaded users from the query string and keeps that choice in the address", async () => {
