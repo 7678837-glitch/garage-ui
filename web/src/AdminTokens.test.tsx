@@ -4,6 +4,16 @@ import { afterEach, expect, test, vi } from "vitest";
 import { AdminTokens } from "./AdminTokens";
 import { sectionFromHash } from "./Nav";
 
+const readFileSync = (
+  globalThis as unknown as {
+    process: {
+      getBuiltinModule(id: "node:fs"): {
+        readFileSync(path: string, encoding: "utf8"): string;
+      };
+    };
+  }
+).process.getBuiltinModule("node:fs").readFileSync;
+
 afterEach(() => {
   cleanup();
   window.history.replaceState(null, "", "/");
@@ -190,13 +200,11 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
     }),
   );
   renderTokens();
-  expect(
-    screen.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent?.trim()),
-  ).toEqual(["Never expires"]);
-  expect(screen.queryByRole("checkbox", { name: "ListBuckets" })).toBeNull();
-  expect(screen.queryByRole("checkbox", { name: "GetClusterStatus" })).toBeNull();
-  expect(screen.queryByRole("checkbox", { name: "CreateAdminToken" })).toBeNull();
-  fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "*" } });
+  expect(screen.getByRole("checkbox", { name: "Never expires" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "ListBuckets" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "GetClusterStatus" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "CreateAdminToken" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "All" }));
   expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
   fireEvent.click(screen.getByRole("button", { name: "Create token" }));
@@ -312,11 +320,13 @@ test("an admin updates an issued token and the response secret stays off the pag
   }
   const edit = within(form);
   expect((edit.getByLabelText("Name") as HTMLInputElement).value).toBe("issued-reader");
-  expect((edit.getByLabelText("Scope") as HTMLInputElement).value).toBe("ListBuckets");
-  expect(
-    edit.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent?.trim()),
-  ).toEqual(["Never expires"]);
-  fireEvent.change(edit.getByLabelText("Scope"), { target: { value: "*" } });
+  expect((edit.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(
+    true,
+  );
+  expect((edit.getByRole("checkbox", { name: "Never expires" }) as HTMLInputElement).checked).toBe(
+    false,
+  );
+  fireEvent.click(edit.getByRole("checkbox", { name: "All" }));
   expect(edit.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   fireEvent.change(edit.getByLabelText("Name"), { target: { value: "renamed-reader" } });
@@ -564,4 +574,218 @@ test("an unrecognized tokensOffset stays on the first page and does not rewrite 
   expect(await screen.findByRole("row", { name: /config-reader/ })).toBeTruthy();
   expect(window.location.search).toBe("?tokensOffset=nope&tokens=reader");
   expect(window.location.hash).toBe("#tokens/stay");
+});
+
+const SCOPE_GROUPS: { name: string; endpoints: string[] }[] = [
+  {
+    name: "Cluster",
+    endpoints: [
+      "ConnectClusterNodes",
+      "GetClusterHealth",
+      "GetClusterStatistics",
+      "GetClusterStatus",
+      "Metrics",
+    ],
+  },
+  {
+    name: "Node",
+    endpoints: ["CreateMetadataSnapshot", "GetNodeInfo", "GetNodeStatistics"],
+  },
+  {
+    name: "Layout",
+    endpoints: [
+      "ApplyClusterLayout",
+      "ClusterLayoutSkipDeadNodes",
+      "GetClusterLayout",
+      "GetClusterLayoutHistory",
+      "PreviewClusterLayoutChanges",
+      "RevertClusterLayout",
+      "UpdateClusterLayout",
+    ],
+  },
+  {
+    name: "Bucket",
+    endpoints: [
+      "AddBucketAlias",
+      "CleanupIncompleteUploads",
+      "CreateBucket",
+      "DeleteBucket",
+      "GetBucketInfo",
+      "InspectObject",
+      "ListBuckets",
+      "RemoveBucketAlias",
+      "UpdateBucket",
+    ],
+  },
+  {
+    name: "Key",
+    endpoints: ["CreateKey", "DeleteKey", "GetKeyInfo", "ImportKey", "ListKeys", "UpdateKey"],
+  },
+  {
+    name: "Permission",
+    endpoints: ["AllowBucketKey", "DenyBucketKey"],
+  },
+  {
+    name: "Worker",
+    endpoints: [
+      "GetWorkerInfo",
+      "GetWorkerVariable",
+      "LaunchRepairOperation",
+      "ListWorkers",
+      "SetWorkerVariable",
+    ],
+  },
+  {
+    name: "Block",
+    endpoints: ["GetBlockInfo", "ListBlockErrors", "PurgeBlocks", "RetryBlockResync"],
+  },
+  {
+    name: "Admin token",
+    endpoints: [
+      "CreateAdminToken",
+      "DeleteAdminToken",
+      "GetAdminTokenInfo",
+      "GetCurrentAdminTokenInfo",
+      "ListAdminTokens",
+      "UpdateAdminToken",
+    ],
+  },
+];
+
+function operationIds(specText: string): string[] {
+  const spec = JSON.parse(specText) as { paths?: Record<string, unknown> };
+  const names: string[] = [];
+  for (const item of Object.values(spec.paths ?? {})) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    for (const operation of Object.values(item)) {
+      if (typeof operation !== "object" || operation === null || !("operationId" in operation)) {
+        continue;
+      }
+      const id = (operation as { operationId?: unknown }).operationId;
+      if (typeof id === "string") {
+        names.push(id);
+      }
+    }
+  }
+  return names;
+}
+
+function checkedBox(name: string): boolean {
+  return (screen.getByRole("checkbox", { name }) as HTMLInputElement).checked;
+}
+
+test("scope_groups_cover_every_v24_admin_endpoint", async () => {
+  const names = operationIds(readFileSync("../openapi/garage-admin-v2.json", "utf8"));
+  const excluded = new Set(["CheckDomain", "Health"]);
+  const endpoints = [...new Set(names.filter((id) => !excluded.has(id)))].sort();
+  const grouped = SCOPE_GROUPS.flatMap((group) => group.endpoints).sort();
+  expect(endpoints).toHaveLength(47);
+  expect(endpoints.filter((id) => id !== "Metrics")).toHaveLength(46);
+  expect(grouped).toEqual(endpoints);
+  expect(names.filter((id) => id === "CheckDomain" || id === "Health")).toHaveLength(2);
+
+  const calls: { method: string; url: string; body: unknown }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = String(input);
+      const raw = init?.body;
+      calls.push({
+        method,
+        url,
+        body: typeof raw === "string" ? (JSON.parse(raw) as unknown) : undefined,
+      });
+      if (method === "POST" && url === "/api/admin-tokens") {
+        return json({
+          id: "tok-new",
+          name: "reader",
+          secretToken: "created-token-secret-9f3a",
+          scope: ["CreateAdminToken", "GetClusterStatus", "ListBuckets"],
+          expired: false,
+        });
+      }
+      if (isTokenList(input, method)) {
+        return json(tokenPage([]));
+      }
+      if (url === "/api/admin-tokens/current") {
+        return json({
+          name: "this-server-reader",
+          scope: ["GetClusterHealth"],
+          expiration: null,
+          expired: false,
+          fromConfig: false,
+          created: "2026-03-01T00:00:00Z",
+        });
+      }
+      return json({ message: "missing" }, 404);
+    }),
+  );
+  renderTokens();
+
+  for (const id of endpoints) {
+    expect(screen.getByRole("checkbox", { name: id })).toBeTruthy();
+  }
+  expect(screen.queryByRole("checkbox", { name: "CheckDomain" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Health" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Cluster" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Bucket" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Cluster" }));
+  const bucketOnly = new Set(SCOPE_GROUPS.find((group) => group.name === "Bucket")?.endpoints);
+  for (const id of endpoints) {
+    expect([id, checkedBox(id)]).toEqual([id, bucketOnly.has(id)]);
+  }
+  expect(checkedBox("Cluster")).toBe(false);
+  expect(checkedBox("Bucket")).toBe(true);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Bucket" }));
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Cluster" }));
+  const cluster = new Set(SCOPE_GROUPS[0].endpoints);
+  for (const id of endpoints) {
+    expect([id, checkedBox(id)]).toEqual([id, cluster.has(id)]);
+  }
+  for (const group of SCOPE_GROUPS) {
+    expect([group.name, checkedBox(group.name)]).toEqual([group.name, group.name === "Cluster"]);
+  }
+  expect(checkedBox("All")).toBe(false);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "All" }));
+  expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
+  for (const id of endpoints) {
+    expect([id, checkedBox(id)]).toEqual([id, true]);
+  }
+  expect(checkedBox("All")).toBe(true);
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+  const fullDialog = screen.getByRole("dialog");
+  expect(fullDialog.textContent).toContain("*");
+  fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => {
+    expect(calls.some((call) => call.method === "POST")).toBe(true);
+  });
+  expect(calls.find((call) => call.method === "POST")?.body).toEqual({
+    name: "reader",
+    scope: ["*"],
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "I have saved it" }));
+  expect(screen.queryByText("This scope is equivalent to full admin access.")).toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "CreateAdminToken" }));
+  expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "GetClusterStatus" }));
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+  fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => {
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(2);
+  });
+  expect(calls.filter((call) => call.method === "POST")[1]?.body).toEqual({
+    name: "reader",
+    scope: ["CreateAdminToken", "GetClusterStatus", "ListBuckets"],
+  });
 });

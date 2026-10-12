@@ -115,7 +115,7 @@ function tokenId(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-// id 只留在状态里拼 PATCH 和 DELETE 路径，不能出现在文本、标签或地址栏。secretToken 不进页面状态。
+// The id stays in state only to build PATCH and DELETE paths. It must not appear in text, labels, or the address bar. secretToken stays out of page state.
 function adminTokenFrom(value: unknown): AdminToken {
   if (typeof value !== "object" || value === null) {
     throw new Error("Admin tokens are unavailable");
@@ -184,7 +184,7 @@ type TokenDraft = {
   name: string;
   expiration: string;
   neverExpires: boolean;
-  scope: string;
+  scope: string[];
 };
 
 type CreateAdminTokenBody = {
@@ -194,22 +194,140 @@ type CreateAdminTokenBody = {
   scope?: string[];
 };
 
+const SCOPE_GROUPS: readonly { readonly name: string; readonly endpoints: readonly string[] }[] = [
+  {
+    name: "Cluster",
+    endpoints: [
+      "ConnectClusterNodes",
+      "GetClusterHealth",
+      "GetClusterStatistics",
+      "GetClusterStatus",
+      "Metrics",
+    ],
+  },
+  {
+    name: "Node",
+    endpoints: ["CreateMetadataSnapshot", "GetNodeInfo", "GetNodeStatistics"],
+  },
+  {
+    name: "Layout",
+    endpoints: [
+      "ApplyClusterLayout",
+      "ClusterLayoutSkipDeadNodes",
+      "GetClusterLayout",
+      "GetClusterLayoutHistory",
+      "PreviewClusterLayoutChanges",
+      "RevertClusterLayout",
+      "UpdateClusterLayout",
+    ],
+  },
+  {
+    name: "Bucket",
+    endpoints: [
+      "AddBucketAlias",
+      "CleanupIncompleteUploads",
+      "CreateBucket",
+      "DeleteBucket",
+      "GetBucketInfo",
+      "InspectObject",
+      "ListBuckets",
+      "RemoveBucketAlias",
+      "UpdateBucket",
+    ],
+  },
+  {
+    name: "Key",
+    endpoints: ["CreateKey", "DeleteKey", "GetKeyInfo", "ImportKey", "ListKeys", "UpdateKey"],
+  },
+  {
+    name: "Permission",
+    endpoints: ["AllowBucketKey", "DenyBucketKey"],
+  },
+  {
+    name: "Worker",
+    endpoints: [
+      "GetWorkerInfo",
+      "GetWorkerVariable",
+      "LaunchRepairOperation",
+      "ListWorkers",
+      "SetWorkerVariable",
+    ],
+  },
+  {
+    name: "Block",
+    endpoints: ["GetBlockInfo", "ListBlockErrors", "PurgeBlocks", "RetryBlockResync"],
+  },
+  {
+    name: "Admin token",
+    endpoints: [
+      "CreateAdminToken",
+      "DeleteAdminToken",
+      "GetAdminTokenInfo",
+      "GetCurrentAdminTokenInfo",
+      "ListAdminTokens",
+      "UpdateAdminToken",
+    ],
+  },
+];
+
+const SCOPE_ENDPOINTS: readonly string[] = SCOPE_GROUPS.flatMap((group) => group.endpoints);
+
 const EMPTY_DRAFT: TokenDraft = {
   name: "",
   expiration: "",
   neverExpires: false,
-  scope: "",
+  scope: [],
 };
 
-function scopeItems(text: string): string[] {
-  return text
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
+function selectionFrom(scope: readonly string[]): string[] {
+  if (scope.includes("*")) {
+    return [...SCOPE_ENDPOINTS];
+  }
+  const known = new Set<string>(SCOPE_ENDPOINTS);
+  return scope.filter((item) => known.has(item));
 }
 
-function scopeIsFullAdmin(items: string[]): boolean {
-  return items.includes("*") || items.includes("CreateAdminToken");
+function scopeWire(selected: readonly string[]): string[] | undefined {
+  if (selected.length === 0) {
+    return undefined;
+  }
+  const chosen = new Set(selected);
+  if (SCOPE_ENDPOINTS.every((id) => chosen.has(id))) {
+    return ["*"];
+  }
+  return [...chosen].sort();
+}
+
+function scopeIsFullAdmin(selected: readonly string[]): boolean {
+  const chosen = new Set(selected);
+  return chosen.has("CreateAdminToken") || SCOPE_ENDPOINTS.every((id) => chosen.has(id));
+}
+
+function scopeShown(selected: readonly string[]): string {
+  return scopeWire(selected)?.join(", ") ?? "";
+}
+
+function withEndpoint(selected: readonly string[], id: string, checked: boolean): string[] {
+  if (!checked) {
+    return selected.filter((item) => item !== id);
+  }
+  return selected.includes(id) ? [...selected] : [...selected, id];
+}
+
+function withMembers(
+  selected: readonly string[],
+  members: readonly string[],
+  checked: boolean,
+): string[] {
+  const memberSet = new Set(members);
+  if (!checked) {
+    return selected.filter((item) => !memberSet.has(item));
+  }
+  const next = new Set(selected);
+  for (const id of members) {
+    next.add(id);
+  }
+  return [...next];
 }
 
 function draftFrom(token: AdminToken): TokenDraft {
@@ -217,7 +335,7 @@ function draftFrom(token: AdminToken): TokenDraft {
     name: token.name,
     expiration: token.expiration,
     neverExpires: token.expiration.trim().length === 0,
-    scope: token.scope.join(", "),
+    scope: selectionFrom(token.scope),
   };
 }
 
@@ -228,11 +346,70 @@ function createTokenBody(draft: TokenDraft): CreateAdminTokenBody {
   } else if (draft.expiration.trim().length > 0) {
     body.expiration = draft.expiration.trim();
   }
-  const scope = scopeItems(draft.scope);
-  if (scope.length > 0) {
+  const scope = scopeWire(draft.scope);
+  if (scope) {
     body.scope = scope;
   }
   return body;
+}
+
+function ScopePicker({
+  selected,
+  onChange,
+}: {
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
+}) {
+  const chosen = new Set(selected);
+  const allChecked = SCOPE_ENDPOINTS.every((id) => chosen.has(id));
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="text-sm">Scope</legend>
+      <label className="text-sm">
+        <input
+          className="mr-2"
+          type="checkbox"
+          checked={allChecked}
+          onChange={(event) => {
+            onChange(event.target.checked ? [...SCOPE_ENDPOINTS] : []);
+          }}
+        />
+        All
+      </label>
+      {SCOPE_GROUPS.map((group) => {
+        const groupChecked = group.endpoints.every((id) => chosen.has(id));
+        return (
+          <div key={group.name} className="grid gap-1">
+            <label className="text-sm">
+              <input
+                className="mr-2"
+                type="checkbox"
+                checked={groupChecked}
+                onChange={(event) => {
+                  onChange(withMembers(selected, group.endpoints, event.target.checked));
+                }}
+              />
+              {group.name}
+            </label>
+            {group.endpoints.map((id) => (
+              <label key={id} className="ml-4 text-sm">
+                <input
+                  className="mr-2"
+                  type="checkbox"
+                  checked={chosen.has(id)}
+                  onChange={(event) => {
+                    onChange(withEndpoint(selected, id, event.target.checked));
+                  }}
+                />
+                {id}
+              </label>
+            ))}
+          </div>
+        );
+      })}
+      {scopeIsFullAdmin(selected) ? <p>This scope is equivalent to full admin access.</p> : null}
+    </fieldset>
+  );
 }
 
 function createdSecret(value: unknown): string | null {
@@ -369,13 +546,12 @@ function CreateTokenForm() {
     onSuccess: async (secret) => {
       setPending(null);
       setDraft(EMPTY_DRAFT);
-      // secret 只留在对话框。列表刷新走 loadAdminTokens，不把创建响应写进查询缓存。
+      // The secret stays in the dialog. The list refresh uses loadAdminTokens and does not write the create response into the query cache.
       setReveal(secret);
       await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
     },
   });
   const error = create.error instanceof Error ? create.error.message : null;
-  const items = scopeItems(draft.scope);
   return (
     <>
       <form
@@ -421,17 +597,12 @@ function CreateTokenForm() {
           />
           Never expires
         </label>
-        <label className="block text-sm">
-          Scope
-          <input
-            className="mt-1 w-full border border-ink px-2 py-1"
-            value={draft.scope}
-            onChange={(event) => {
-              setDraft({ ...draft, scope: event.target.value });
-            }}
-          />
-        </label>
-        {scopeIsFullAdmin(items) ? <p>This scope is equivalent to full admin access.</p> : null}
+        <ScopePicker
+          selected={draft.scope}
+          onChange={(scope) => {
+            setDraft({ ...draft, scope });
+          }}
+        />
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -445,7 +616,7 @@ function CreateTokenForm() {
         <ConfirmDialog
           action="create-admin-token"
           name={pending.name}
-          scope={pending.scope}
+          scope={scopeShown(pending.scope)}
           pending={create.isPending}
           consequence="The secret is shown once. It cannot be viewed again."
           onCancel={() => {
@@ -500,7 +671,6 @@ function EditTokenForm({
     },
   });
   const error = update.error instanceof Error ? update.error.message : null;
-  const items = scopeItems(draft.scope);
   return (
     <>
       <form
@@ -546,17 +716,12 @@ function EditTokenForm({
           />
           Never expires
         </label>
-        <label className="block text-sm">
-          Scope
-          <input
-            className="mt-1 w-full border border-ink px-2 py-1"
-            value={draft.scope}
-            onChange={(event) => {
-              setDraft({ ...draft, scope: event.target.value });
-            }}
-          />
-        </label>
-        {scopeIsFullAdmin(items) ? <p>This scope is equivalent to full admin access.</p> : null}
+        <ScopePicker
+          selected={draft.scope}
+          onChange={(scope) => {
+            setDraft({ ...draft, scope });
+          }}
+        />
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -570,7 +735,7 @@ function EditTokenForm({
         <ConfirmDialog
           action="update-admin-token"
           name={token.name}
-          scope={pending.scope}
+          scope={scopeShown(pending.scope)}
           pending={update.isPending}
           consequence="This replaces the token name, expiration, and scope."
           onCancel={() => {
