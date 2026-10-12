@@ -5425,6 +5425,10 @@ mod tests {
                         };
                         let text = String::from_utf8_lossy(&buf[..header_end]);
                         let line = text.lines().next().unwrap_or("").to_string();
+                        let recorded = match header_value(&text, "range") {
+                            Some(range) => format!("{line} Range: {range}"),
+                            None => line.clone(),
+                        };
                         let content_type = header_value(&text, "content-type").map(str::to_string);
                         let length = header_value(&text, "content-length")
                             .and_then(|value| value.parse::<usize>().ok())
@@ -5446,7 +5450,7 @@ mod tests {
                         requests_task
                             .lock()
                             .expect("s3 requests")
-                            .push(line.clone());
+                            .push(recorded.clone());
                         content_types_task
                             .lock()
                             .expect("s3 content types")
@@ -5475,7 +5479,7 @@ mod tests {
                         {
                             hold.early.store(true, Ordering::SeqCst);
                         }
-                        let response = reply(&line);
+                        let response = reply(&recorded);
                         let _ = socket.write_all(response.as_bytes()).await;
                         let _ = socket.shutdown().await;
                     });
@@ -8768,6 +8772,152 @@ mod tests {
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert!(seen[0].starts_with("GET "), "{}", seen[0]);
         assert_eq!(object_key_of(&seen[0]), "photos/note.txt");
+    }
+
+    fn partial_object(body: &str, content_range: &str) -> String {
+        format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nContent-Range: {content_range}\r\nETag: \"abc\"\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn ranged_object_reply(line: &str) -> String {
+        if line.starts_with("HEAD ") {
+            return head_ok();
+        }
+        if line.contains("bytes=1-3") {
+            return partial_object("ell", "bytes 1-3/11");
+        }
+        if line.contains("bytes=1-") {
+            return partial_object("ello plain", "bytes 1-10/11");
+        }
+        object_bytes("text/plain", "hello plain")
+    }
+
+    fn ranged_get(uri: &str, range: &str, session: &Session) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("cookie", cookie_header(session))
+            .header("x-csrf-token", &session.csrf)
+            .header("range", range)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ranged_object_returns_the_requested_bytes() {
+        let mock = S3Mock::start(ranged_object_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let preview = exchange(
+            &app,
+            ranged_get(
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "bytes=1-3",
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(
+            preview.status,
+            StatusCode::PARTIAL_CONTENT,
+            "{}",
+            preview.body
+        );
+        assert_eq!(preview.body, "ell");
+        assert_eq!(
+            header_text(&preview, "content-range"),
+            Some("bytes 1-3/11")
+        );
+        assert_eq!(
+            header_text(&preview, "x-content-type-options"),
+            Some("nosniff")
+        );
+        assert_eq!(
+            header_text(&preview, "cache-control"),
+            Some("private, no-store")
+        );
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].starts_with("GET "), "{}", seen[0]);
+        assert!(seen[0].contains("x-id=GetObject"), "{}", seen[0]);
+        assert!(seen[0].contains("bytes=1-3"), "{}", seen[0]);
+        assert_eq!(bucket_of(&seen[0]), "bkt-1");
+        assert_eq!(object_key_of(&seen[0]), "note.txt");
+        let download = exchange(
+            &app,
+            ranged_get(
+                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "bytes=1-",
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(
+            download.status,
+            StatusCode::PARTIAL_CONTENT,
+            "{}",
+            download.body
+        );
+        assert_eq!(download.body, "ello plain");
+        assert_eq!(
+            header_text(&download, "content-range"),
+            Some("bytes 1-10/11")
+        );
+        let seen = mock.requests();
+        assert!(
+            seen.iter()
+                .any(|line| line.contains("bytes=1-") && !line.contains("bytes=1-3")),
+            "{seen:?}"
+        );
+        let before = mock.requests();
+        let rejected = exchange(
+            &app,
+            ranged_get(
+                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "bytes=0-1, bytes=2-4",
+                &session,
+            ),
+        )
+        .await;
+        assert_error(
+            &rejected,
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "range_not_satisfiable",
+            "range is invalid",
+        );
+        assert_eq!(mock.requests(), before, "{:?}", mock.requests());
+        let meta = exchange(
+            &app,
+            ranged_get(
+                "/api/buckets/bkt-1/objects/note.txt",
+                "bytes=0-1",
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(meta.status, StatusCode::OK, "{}", meta.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&meta.body).unwrap(),
+            json!({
+                "key": "note.txt",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z",
+                "contentType": "text/plain"
+            })
+        );
+        let seen = mock.requests();
+        let last = seen.last().expect("metadata request");
+        assert!(last.starts_with("HEAD "), "{last}");
+        assert!(
+            !seen
+                .iter()
+                .any(|line| line.starts_with("GET ") && line.contains("bytes=0-1")),
+            "{seen:?}"
+        );
     }
 
     struct DownloadLog(Arc<Mutex<Vec<u8>>>);

@@ -288,6 +288,8 @@ pub async fn metadata(app: &App, bucket_id: &str, key: &str) -> Result<ObjectMet
 pub struct ObjectStream {
     pub content_type: String,
     pub body: SdkBody,
+    pub status: StatusCode,
+    pub content_range: Option<String>,
 }
 
 pub async fn presign_get(
@@ -383,12 +385,22 @@ pub async fn read_all(app: &App, bucket_id: &str, key: &str) -> Result<Vec<u8>, 
 }
 
 pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
+    open_ranged(app, bucket_id, key, None).await
+}
+
+pub async fn open_ranged(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    range: Option<String>,
+) -> Result<ObjectStream, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
     drive(app, bucket.clone(), move |client| {
         let bucket = bucket.clone();
         let key = key.clone();
-        async move { fetch_object(&client, &bucket, &key).await }
+        let range = range.clone();
+        async move { fetch_object(&client, &bucket, &key, range.as_deref()).await }
     })
     .await
 }
@@ -730,25 +742,37 @@ fn match_from(object: &aws_sdk_s3::types::Object) -> Option<ObjectMatch> {
     })
 }
 
-async fn fetch_object(client: &Client, bucket: &str, key: &str) -> Result<ObjectStream, S3Failure> {
-    let output = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|error| {
-            classify(
-                error
-                    .raw_response()
-                    .map(|response| response.status().as_u16()),
-                error.to_string(),
-            )
-        })?;
+async fn fetch_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    range: Option<&str>,
+) -> Result<ObjectStream, S3Failure> {
+    let mut request = client.get_object().bucket(bucket).key(key);
+    if let Some(range) = range {
+        request = request.range(range);
+    }
+    let output = request.send().await.map_err(|error| {
+        classify(
+            error
+                .raw_response()
+                .map(|response| response.status().as_u16()),
+            error.to_string(),
+        )
+    })?;
+    let content_range = output.content_range().map(str::to_string);
+    // GetObject's success output has no HTTP status. S3 sends Content-Range only on 206.
+    let status = if content_range.is_some() {
+        StatusCode::PARTIAL_CONTENT
+    } else {
+        StatusCode::OK
+    };
     // 不把对象读进 Vec。外层仍按块流出，提前丢弃才会取消上游读取。
     Ok(ObjectStream {
         content_type: output.content_type().unwrap_or("").to_string(),
         body: cancel_when_dropped(output.body.into_inner()),
+        status,
+        content_range,
     })
 }
 
