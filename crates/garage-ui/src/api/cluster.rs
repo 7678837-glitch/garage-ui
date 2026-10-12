@@ -1,0 +1,591 @@
+use axum::Json;
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use crate::access::{self, Op};
+use crate::error::ApiError;
+use crate::proxy::{self, confirmed};
+use crate::session::{
+    self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
+};
+use crate::state::{self, App};
+use crate::util::{self, hex_encode, random_bytes};
+use super::Authed;
+use super::is_json_ws;
+use super::percent_encode;
+use super::post_garage;
+use super::record;
+use super::require;
+use super::status;
+
+pub(crate) async fn cluster_health(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    read_cluster(&app, &current, &headers, "v2/GetClusterHealth").await
+}
+
+pub(crate) async fn cluster_status(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    read_cluster(&app, &current, &headers, "v2/GetClusterStatus").await
+}
+
+pub(crate) async fn cluster_statistics(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewStats)?;
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetClusterStatistics",
+        None,
+        &[],
+        &headers,
+    )
+    .await
+}
+
+pub(crate) async fn node_statistics(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewStats)?;
+    let query = format!("node={}", percent_encode(&id));
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetNodeStatistics",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await
+}
+
+pub(crate) async fn connect_cluster(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if let Err(error) = require(&current.user, Op::ChangeLayout) {
+        let target = String::from_utf8_lossy(&body);
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/cluster/connect",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
+    post_garage(&app, &current, &headers, "ConnectClusterNodes", None, &body).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StageCapacityBody {
+    id: String,
+    capacity: String,
+}
+
+struct StatusRole<'a> {
+    id: String,
+    capacity: Option<&'a str>,
+    zone: Option<&'a [u8]>,
+    tags: Option<&'a [u8]>,
+}
+
+pub(crate) async fn stage_layout(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if let Err(error) = require(&current.user, Op::ChangeLayout) {
+        let target = String::from_utf8_lossy(&body);
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/layout/stage",
+            &target,
+            403,
+        )
+        .await?;
+        return Err(error);
+    }
+    let staged = staged_capacity(&body)?;
+    let status = read_cluster(&app, &current, &headers, "v2/GetClusterStatus").await?;
+    if !status.status().is_success() {
+        return Ok(status);
+    }
+    let bytes = axum::body::to_bytes(status.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let roles = status_roles(&bytes)?;
+    let Some(role) = roles.iter().find(|role| role.id == staged.id) else {
+        return Err(ApiError::not_found());
+    };
+    let Some(current_capacity) = role.capacity else {
+        return Err(ApiError::bad_request(
+            "capacity_unavailable",
+            "Node capacity is not a whole number of bytes",
+        ));
+    };
+    if current_capacity == staged.capacity {
+        return Ok(Json(json!({ "updated": 0 })).into_response());
+    }
+    let (Some(zone), Some(tags)) = (role.zone, role.tags) else {
+        return Err(ApiError::bad_request(
+            "capacity_unavailable",
+            "Node role is missing zone or tags",
+        ));
+    };
+    let update = layout_update_body(&staged.id, zone, tags, &staged.capacity);
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "UpdateClusterLayout",
+        None,
+        &update,
+    )
+    .await?;
+    if !posted.status().is_success() {
+        return Ok(posted);
+    }
+    Ok(Json(json!({ "updated": 1 })).into_response())
+}
+
+fn staged_capacity(body: &[u8]) -> Result<StageCapacityBody, ApiError> {
+    let staged: StageCapacityBody = serde_json::from_slice(body).map_err(|_| {
+        ApiError::bad_request("invalid_capacity", "Capacity must be a decimal string")
+    })?;
+    if staged.id.is_empty()
+        || staged
+            .id
+            .bytes()
+            .any(|byte| byte < 0x20 || byte == b'"' || byte == b'\\')
+    {
+        return Err(ApiError::bad_request("invalid_node", "Node id is invalid"));
+    }
+    if util::bucket::Capacity::from_byte_string(&staged.capacity).is_err() {
+        return Err(ApiError::bad_request(
+            "invalid_capacity",
+            "Capacity must be a whole number of bytes",
+        ));
+    }
+    Ok(staged)
+}
+
+fn unreadable_status() -> ApiError {
+    ApiError::unavailable(
+        "garage_unavailable",
+        "Garage cluster status is unreadable",
+    )
+}
+
+// role.capacity 超过 2^53-1 时，serde_json 的数字会改掉字节。这里只抄数字字符。
+fn status_roles(input: &[u8]) -> Result<Vec<StatusRole<'_>>, ApiError> {
+    let mut cursor = JsonCursor::new(input);
+    if !cursor.eat(b'{') {
+        return Err(unreadable_status());
+    }
+    let mut roles = None;
+    if cursor.peek() != Some(b'}') {
+        loop {
+            let key = cursor.string().map_err(|_| unreadable_status())?;
+            if !cursor.eat(b':') {
+                return Err(unreadable_status());
+            }
+            if key == "nodes" {
+                roles = Some(cursor.node_array()?);
+            } else {
+                cursor.skip_value().map_err(|_| unreadable_status())?;
+            }
+            if !cursor.eat(b',') {
+                break;
+            }
+        }
+    }
+    if !cursor.eat(b'}') {
+        return Err(unreadable_status());
+    }
+    cursor.skip();
+    if cursor.at != cursor.input.len() {
+        return Err(unreadable_status());
+    }
+    roles.ok_or_else(unreadable_status)
+}
+
+fn layout_update_body(id: &str, zone: &[u8], tags: &[u8], capacity: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(br#"{"roles":[{"id":""#);
+    out.extend_from_slice(id.as_bytes());
+    out.extend_from_slice(br#"","zone":"#);
+    out.extend_from_slice(zone);
+    out.extend_from_slice(br#","capacity":"#);
+    out.extend_from_slice(capacity.as_bytes());
+    out.extend_from_slice(br#","tags":"#);
+    out.extend_from_slice(tags);
+    out.extend_from_slice(br#"}]}"#);
+    out
+}
+
+struct JsonCursor<'a> {
+    input: &'a [u8],
+    at: usize,
+}
+
+impl<'a> JsonCursor<'a> {
+    fn new(input: &'a [u8]) -> Self {
+        Self { input, at: 0 }
+    }
+
+    fn skip(&mut self) {
+        while self.input.get(self.at).is_some_and(is_json_ws) {
+            self.at += 1;
+        }
+    }
+
+    fn peek(&mut self) -> Option<u8> {
+        self.skip();
+        self.input.get(self.at).copied()
+    }
+
+    fn eat(&mut self, byte: u8) -> bool {
+        if self.peek() == Some(byte) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn string(&mut self) -> Result<String, ()> {
+        let raw = self.raw_string()?;
+        let inner = &raw[1..raw.len() - 1];
+        if inner.contains(&b'\\') {
+            return Err(());
+        }
+        std::str::from_utf8(inner).map(str::to_string).map_err(|_| ())
+    }
+
+    fn raw_string(&mut self) -> Result<&'a [u8], ()> {
+        self.skip();
+        if self.input.get(self.at) != Some(&b'"') {
+            return Err(());
+        }
+        let start = self.at;
+        self.at += 1;
+        while let Some(&byte) = self.input.get(self.at) {
+            if byte == b'\\' {
+                self.at += 2;
+                if self.at > self.input.len() {
+                    return Err(());
+                }
+                continue;
+            }
+            if byte == b'"' {
+                self.at += 1;
+                return Ok(&self.input[start..self.at]);
+            }
+            if byte < 0x20 {
+                return Err(());
+            }
+            self.at += 1;
+        }
+        Err(())
+    }
+
+    fn raw_value(&mut self) -> Result<&'a [u8], ()> {
+        self.skip();
+        let start = self.at;
+        self.skip_value()?;
+        Ok(&self.input[start..self.at])
+    }
+
+    fn capacity_token(&mut self) -> Result<Option<&'a str>, ()> {
+        if !self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
+            self.skip_value()?;
+            return Ok(None);
+        }
+        let bytes = &self.input[self.at..];
+        let mut end = 0;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if bytes
+            .get(end)
+            .is_some_and(|byte| matches!(*byte, b'.' | b'e' | b'E'))
+        {
+            self.skip_number()?;
+            return Ok(None);
+        }
+        if bytes.get(end).is_some_and(|byte| !is_value_end(*byte)) {
+            return Err(());
+        }
+        let digits = std::str::from_utf8(&bytes[..end]).map_err(|_| ())?;
+        self.at += end;
+        Ok(Some(digits))
+    }
+
+    fn node_array(&mut self) -> Result<Vec<StatusRole<'a>>, ApiError> {
+        if !self.eat(b'[') {
+            return Err(unreadable_status());
+        }
+        let mut roles = Vec::new();
+        if self.peek() != Some(b']') {
+            loop {
+                roles.push(self.node_object()?);
+                if !self.eat(b',') {
+                    break;
+                }
+            }
+        }
+        if !self.eat(b']') {
+            return Err(unreadable_status());
+        }
+        Ok(roles)
+    }
+
+    fn node_object(&mut self) -> Result<StatusRole<'a>, ApiError> {
+        if !self.eat(b'{') {
+            return Err(unreadable_status());
+        }
+        let mut id = None;
+        let mut capacity = None;
+        let mut zone = None;
+        let mut tags = None;
+        if self.peek() != Some(b'}') {
+            loop {
+                let key = self.string().map_err(|_| unreadable_status())?;
+                if !self.eat(b':') {
+                    return Err(unreadable_status());
+                }
+                match key.as_str() {
+                    "id" => id = Some(self.string().map_err(|_| unreadable_status())?),
+                    "role" if self.peek() == Some(b'{') => {
+                        let role = self.role_object()?;
+                        capacity = role.capacity;
+                        zone = role.zone;
+                        tags = role.tags;
+                    }
+                    _ => self.skip_value().map_err(|_| unreadable_status())?,
+                }
+                if !self.eat(b',') {
+                    break;
+                }
+            }
+        }
+        if !self.eat(b'}') {
+            return Err(unreadable_status());
+        }
+        let Some(id) = id else {
+            return Err(unreadable_status());
+        };
+        Ok(StatusRole {
+            id,
+            capacity,
+            zone,
+            tags,
+        })
+    }
+
+    fn role_object(&mut self) -> Result<StatusRole<'a>, ApiError> {
+        if !self.eat(b'{') {
+            return Err(unreadable_status());
+        }
+        let mut capacity = None;
+        let mut zone = None;
+        let mut tags = None;
+        if self.peek() != Some(b'}') {
+            loop {
+                let key = self.string().map_err(|_| unreadable_status())?;
+                if !self.eat(b':') {
+                    return Err(unreadable_status());
+                }
+                match key.as_str() {
+                    "capacity" => capacity = self.capacity_token().map_err(|_| unreadable_status())?,
+                    "zone" => zone = Some(self.raw_value().map_err(|_| unreadable_status())?),
+                    "tags" => tags = Some(self.raw_value().map_err(|_| unreadable_status())?),
+                    _ => self.skip_value().map_err(|_| unreadable_status())?,
+                }
+                if !self.eat(b',') {
+                    break;
+                }
+            }
+        }
+        if !self.eat(b'}') {
+            return Err(unreadable_status());
+        }
+        Ok(StatusRole {
+            id: String::new(),
+            capacity,
+            zone,
+            tags,
+        })
+    }
+
+    fn skip_value(&mut self) -> Result<(), ()> {
+        match self.peek() {
+            Some(b'"') => {
+                self.raw_string()?;
+                Ok(())
+            }
+            Some(b'{') => self.skip_container(b'{', b'}'),
+            Some(b'[') => self.skip_container(b'[', b']'),
+            Some(b't') => self.eat_lit(b"true"),
+            Some(b'f') => self.eat_lit(b"false"),
+            Some(b'n') => self.eat_lit(b"null"),
+            Some(b'-') | Some(b'0'..=b'9') => self.skip_number(),
+            _ => Err(()),
+        }
+    }
+
+    fn skip_container(&mut self, open: u8, close: u8) -> Result<(), ()> {
+        if !self.eat(open) {
+            return Err(());
+        }
+        if self.peek() == Some(close) {
+            self.at += 1;
+            return Ok(());
+        }
+        loop {
+            if open == b'{' {
+                self.string()?;
+                if !self.eat(b':') {
+                    return Err(());
+                }
+            }
+            self.skip_value()?;
+            if !self.eat(b',') {
+                break;
+            }
+        }
+        if self.eat(close) { Ok(()) } else { Err(()) }
+    }
+
+    fn eat_lit(&mut self, literal: &[u8]) -> Result<(), ()> {
+        self.skip();
+        if self.input[self.at..].starts_with(literal) {
+            self.at += literal.len();
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn skip_number(&mut self) -> Result<(), ()> {
+        self.skip();
+        if self.input.get(self.at) == Some(&b'-') {
+            self.at += 1;
+        }
+        if !self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+            return Err(());
+        }
+        while self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+            self.at += 1;
+        }
+        if self.input.get(self.at) == Some(&b'.') {
+            self.at += 1;
+            if !self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+                return Err(());
+            }
+            while self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+                self.at += 1;
+            }
+        }
+        if self
+            .input
+            .get(self.at)
+            .is_some_and(|byte| *byte == b'e' || *byte == b'E')
+        {
+            self.at += 1;
+            if self
+                .input
+                .get(self.at)
+                .is_some_and(|byte| *byte == b'+' || *byte == b'-')
+            {
+                self.at += 1;
+            }
+            if !self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+                return Err(());
+            }
+            while self.input.get(self.at).is_some_and(u8::is_ascii_digit) {
+                self.at += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_value_end(byte: u8) -> bool {
+    matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t')
+}
+
+async fn read_cluster(
+    app: &App,
+    current: &Current,
+    headers: &HeaderMap,
+    path: &'static str,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewCluster)?;
+    proxy::dispatch(
+        app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        path,
+        None,
+        &[],
+        headers,
+    )
+    .await
+}
+
+pub(crate) async fn garage(
+    State(app): State<App>,
+    Authed(current): Authed,
+    method: Method,
+    Path(path): Path<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &method,
+        &path,
+        query.as_deref(),
+        &body,
+        &headers,
+    )
+    .await
+}
