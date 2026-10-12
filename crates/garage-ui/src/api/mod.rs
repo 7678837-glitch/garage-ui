@@ -4677,6 +4677,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_list_walks_5000_objects_page_by_page() {
+        let pages: Vec<Vec<String>> = (0..5)
+            .map(|page| {
+                (0..1000)
+                    .map(|index| format!("k{:04}", page * 1000 + index))
+                    .collect()
+            })
+            .collect();
+        let mock = S3Mock::start(move |line| {
+            let token = query_value(request_target(line), "continuation-token");
+            let index = match token {
+                None => 0,
+                Some("t2") => 1,
+                Some("t3") => 2,
+                Some("t4") => 3,
+                Some("t5") => 4,
+                other => panic!("unexpected continuation token {other:?}"),
+            };
+            let next = match index {
+                0 => Some("t2"),
+                1 => Some("t3"),
+                2 => Some("t4"),
+                3 => Some("t5"),
+                _ => None,
+            };
+            list_page_xml(&pages[index], next)
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+
+        let mut path = "/api/buckets/bkt-1/objects?limit=1000".to_string();
+        let mut total = 0;
+        let mut page_count = 0;
+        loop {
+            let response = exchange(&app, request("GET", &path, None, Some(&session))).await;
+            assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+            let body: Value = serde_json::from_str(&response.body).unwrap();
+            let entries = body["entries"].as_array().expect("entries");
+            let objects = entries
+                .iter()
+                .filter(|entry| entry["kind"] == "object")
+                .count();
+            assert_eq!(objects, 1000, "{}", response.body);
+            total += objects;
+            page_count += 1;
+            assert!(page_count <= 5, "{}", response.body);
+            if page_count == 1 {
+                assert_eq!(entries[0]["key"], "k0000");
+            }
+            match body["next"].as_str() {
+                None => {
+                    assert_eq!(entries[999]["key"], "k4999");
+                    break;
+                }
+                Some(token) => {
+                    path = format!("/api/buckets/bkt-1/objects?limit=1000&next={token}");
+                }
+            }
+        }
+        assert_eq!(total, 5000);
+        assert_eq!(page_count, 5);
+
+        let seen = mock.requests();
+        assert_eq!(seen.len(), 5, "{seen:?}");
+        let tokens = [None, Some("t2"), Some("t3"), Some("t4"), Some("t5")];
+        for (line, token) in seen.iter().zip(tokens) {
+            let target = request_target(line);
+            assert_eq!(query_value(target, "max-keys"), Some("1000"), "{target}");
+            assert_eq!(query_value(target, "continuation-token"), token, "{target}");
+            assert_eq!(bucket_of(line), "bkt-1");
+        }
+    }
+
+    #[tokio::test]
     async fn object_list_without_a_project_key_does_not_call_s3() {
         let mock = S3Mock::start(|_| head_missing()).await;
         let dir = crate::util::temp_dir();
