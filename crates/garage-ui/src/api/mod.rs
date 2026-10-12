@@ -4491,6 +4491,92 @@ mod tests {
         builder.body(Body::from(body.to_vec())).unwrap()
     }
 
+    fn node_info_hits(mock: &GarageMock) -> usize {
+        mock.requests()
+            .iter()
+            .filter(|line| line.contains("/v2/GetNodeInfo?"))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn startup_config_configured_endpoint_beats_connection_parameters() {
+        let kept =
+            S3Mock::start(|_line| list_xml(false, None, &[("kept.txt", 1, "abc")], &[])).await;
+        let other =
+            S3Mock::start(|_line| list_xml(false, None, &[("stolen.txt", 1, "def")], &[])).await;
+        let node = format!(
+            r#"{{"garageVersion":"v2.4.1","connectionParameters":{{"s3Endpoint":"{}","s3Region":"from-node"}}}}"#,
+            other.url
+        );
+        let admin = GarageMock::start(&node).await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", admin.url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("S3_ENDPOINT_URL", kept.url.as_str()),
+                ("S3_REGION", "eu-kept"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(response.body.contains("kept.txt"), "{}", response.body);
+        assert!(!response.body.contains("stolen.txt"), "{}", response.body);
+        assert!(!kept.requests().is_empty());
+        assert!(other.requests().is_empty(), "{:?}", other.requests());
+        assert_eq!(admin.hits(), 0);
+        assert_eq!(node_info_hits(&admin), 0);
+    }
+
+    #[tokio::test]
+    async fn startup_config_missing_endpoint_comes_from_node_info() {
+        let s3 =
+            S3Mock::start(|_line| list_xml(false, None, &[("from-node.txt", 2, "abc")], &[])).await;
+        let node = format!(
+            r#"{{"success":{{"node-a":{{"garageVersion":"v2.4.1","connectionParameters":{{"s3Endpoint":"{}","s3Region":"garage"}}}}}}}}"#,
+            s3.url
+        );
+        let admin = GarageMock::start(&node).await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", admin.url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (session, _) = login(&app).await;
+        let first = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+        assert!(first.body.contains("from-node.txt"), "{}", first.body);
+        let second = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(second.status, StatusCode::OK, "{}", second.body);
+        assert!(!s3.requests().is_empty());
+        assert_eq!(node_info_hits(&admin), 1, "{:?}", admin.requests());
+    }
+
     #[tokio::test]
     async fn object_list_pages_and_clamps_max_keys() {
         let mock = S3Mock::start(|line| {

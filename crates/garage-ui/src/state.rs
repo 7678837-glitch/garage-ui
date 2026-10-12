@@ -29,6 +29,12 @@ struct CachedGarageLink {
     link: GarageLink,
 }
 
+#[derive(Clone)]
+pub(crate) struct S3Probe {
+    pub endpoint: Option<String>,
+    pub region: Option<String>,
+}
+
 pub(crate) const UPLOAD_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -43,6 +49,7 @@ pub struct App {
     pub upload_buffer: Arc<Semaphore>,
     metrics: Arc<Metrics>,
     garage_link: Arc<Mutex<Option<CachedGarageLink>>>,
+    s3_probe: Arc<Mutex<Option<S3Probe>>>,
     credentials: Arc<Mutex<credentials::CredentialCache>>,
     pub key_id: Arc<String>,
     #[cfg(test)]
@@ -105,6 +112,19 @@ impl App {
 
     pub async fn clear_garage_link(&self) {
         *self.garage_link.lock().await = None;
+    }
+
+    pub(crate) async fn cached_s3_probe(
+        &self,
+        load: impl std::future::Future<Output = S3Probe>,
+    ) -> S3Probe {
+        let mut slot = self.s3_probe.lock().await;
+        if let Some(cached) = slot.clone() {
+            return cached;
+        }
+        let probed = load.await;
+        *slot = Some(probed.clone());
+        probed
     }
 
     pub(crate) async fn clear_credential_cache(&self, mutation: &credentials::KeyMutation) {
@@ -354,6 +374,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         upload_buffer: Arc::new(Semaphore::new(UPLOAD_BUFFER_BYTES)),
         metrics: Arc::new(Metrics::new()),
         garage_link: Arc::new(Mutex::new(None)),
+        s3_probe: Arc::new(Mutex::new(None)),
         credentials: Arc::new(Mutex::new(credentials::CredentialCache::new(60))),
         key_id: Arc::new(key_id),
         #[cfg(test)]

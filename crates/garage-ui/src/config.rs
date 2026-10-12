@@ -43,6 +43,8 @@ pub struct Settings {
     pub max_upload_bytes: u64,
     pub fanout_in_flight: NonZeroUsize,
     pub s3_region: String,
+    // None when S3_REGION was empty. s3_region then stays the "garage" default.
+    pub configured_s3_region: Option<String>,
     pub website_root_domain: String,
     pub public_s3_url: Option<String>,
     pub s3_endpoint_url: Option<String>,
@@ -173,6 +175,10 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     }
     let public_s3_url = endpoint_from(env, "S3_PUBLIC_ENDPOINT_URL", Some("PUBLIC_S3_URL"));
     let s3_endpoint_url = endpoint_from(env, "S3_ENDPOINT_URL", None);
+    let configured_s3_region = env
+        .get("S3_REGION")
+        .cloned()
+        .filter(|value| !value.is_empty());
     let garage_admin_url = endpoint_from(env, "API_BASE_URL", Some("GARAGE_ADMIN_URL"));
     let update_url = env
         .get("UPDATE_URL")
@@ -193,11 +199,10 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             json_body_limit: JSON_BODY_LIMIT,
             max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
             fanout_in_flight: fanout_in_flight(env.get("FANOUT_LIMIT").map(String::as_str)),
-            s3_region: env
-                .get("S3_REGION")
-                .cloned()
-                .filter(|value| !value.is_empty())
+            s3_region: configured_s3_region
+                .clone()
                 .unwrap_or_else(|| "garage".to_string()),
+            configured_s3_region,
             website_root_domain: env.get("WEBSITE_ROOT_DOMAIN").cloned().unwrap_or_default(),
             public_s3_url,
             s3_endpoint_url,
@@ -441,6 +446,7 @@ fn normalize_base(raw: &str) -> anyhow::Result<String> {
 fn read_dotenv() -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Ok(text) = std::fs::read_to_string(".env") else {
+        tracing::warn!("dotenv_missing");
         return map;
     };
     for line in text.lines() {
@@ -450,6 +456,7 @@ fn read_dotenv() -> HashMap<String, String> {
         }
         let line = line.strip_prefix("export ").unwrap_or(line);
         let Some((key, value)) = line.split_once('=') else {
+            tracing::warn!("dotenv_parse");
             continue;
         };
         let key = key.trim();
@@ -464,6 +471,9 @@ fn read_dotenv() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -885,5 +895,115 @@ mod tests {
             loaded.settings.garage_admin_timeout,
             Duration::from_secs(30)
         );
+    }
+
+    struct WarnLog(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for WarnLog {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("warn log").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn warn_text(body: impl FnOnce()) -> String {
+        let logs = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = Arc::clone(&logs);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(move || WarnLog(Arc::clone(&sink)))
+            .finish();
+        tracing::subscriber::with_default(subscriber, body);
+        String::from_utf8(logs.lock().expect("warn log").clone()).unwrap()
+    }
+
+    struct CwdGuard(PathBuf);
+
+    impl CwdGuard {
+        fn switch(dir: &Path) -> Self {
+            let previous = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(dir).expect("chdir");
+            Self(previous)
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: this test owns `key` for the process and restores it on drop.
+            // The startup_config_ filter runs with --test-threads=1.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: restores the value captured before this test mutated the process env.
+            unsafe {
+                match self.prev.as_deref() {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn startup_config_missing_dotenv_uses_process_environment() {
+        let dir = crate::util::temp_dir();
+        assert!(!dir.join(".env").exists());
+        let _cwd = CwdGuard::switch(&dir);
+        let _region = EnvGuard::set("S3_REGION", "from-process");
+        let mut loaded = None;
+        let logs = warn_text(|| {
+            loaded = Some(load_process().expect("load"));
+        });
+        let loaded = loaded.expect("loaded");
+        assert_eq!(loaded.settings.s3_region, "from-process");
+        assert!(logs.contains("dotenv_missing"), "{logs}");
+        assert!(!logs.contains("dotenv_parse"), "{logs}");
+    }
+
+    #[test]
+    fn startup_config_bad_line_keeps_valid_lines() {
+        let dir = crate::util::temp_dir();
+        std::fs::write(
+            dir.join(".env"),
+            "\n# comment\nS3_ENDPOINT_URL=http://127.0.0.1:3902\nNOT_A_PAIR\nS3_REGION=from-file\n",
+        )
+        .unwrap();
+        let _cwd = CwdGuard::switch(&dir);
+        let _region = EnvGuard::set("S3_REGION", "from-process");
+        let mut loaded = None;
+        let logs = warn_text(|| {
+            loaded = Some(load_process().expect("load"));
+        });
+        let loaded = loaded.expect("loaded");
+        assert_eq!(
+            loaded.settings.s3_endpoint_url.as_deref(),
+            Some("http://127.0.0.1:3902")
+        );
+        assert_eq!(loaded.settings.s3_region, "from-process");
+        assert_eq!(logs.matches("dotenv_parse").count(), 1, "{logs}");
+        assert!(!logs.contains("dotenv_missing"), "{logs}");
     }
 }
