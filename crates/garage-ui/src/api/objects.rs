@@ -864,6 +864,45 @@ fn object_filename(key: &str) -> &str {
         .unwrap_or("object")
 }
 
+fn invalid_range() -> ApiError {
+    ApiError::new(
+        StatusCode::RANGE_NOT_SATISFIABLE,
+        "range_not_satisfiable",
+        "range is invalid",
+    )
+}
+
+fn byte_range(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let mut values = headers.get_all("range").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(invalid_range());
+    }
+    let text = value.to_str().map_err(|_| invalid_range())?;
+    one_byte_range(text)
+        .map(|range| Some(range.to_string()))
+        .ok_or_else(invalid_range)
+}
+
+fn one_byte_range(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix("bytes=")?;
+    let (start, end) = rest.split_once('-')?;
+    if start.contains(',') || end.contains('-') || end.contains(',') {
+        return None;
+    }
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    let ok = if start.is_empty() {
+        digits(end) && !end.is_empty()
+    } else if end.is_empty() {
+        digits(start)
+    } else {
+        digits(start) && digits(end)
+    };
+    ok.then_some(value)
+}
+
 fn stream_object(
     transfer: Transfer,
     key: &str,
@@ -872,7 +911,12 @@ fn stream_object(
     let filename = object_filename(key);
     let policy = preview_policy(&opened.content_type, filename);
     let mut response = Response::new(Body::new(opened.body));
+    *response.status_mut() = opened.status;
     let headers = response.headers_mut();
+    if let Some(content_range) = opened.content_range.as_deref() {
+        let value = HeaderValue::from_str(content_range).map_err(|_| ApiError::internal())?;
+        headers.insert("content-range", value);
+    }
     if let Ok(value) = HeaderValue::from_str(&policy.content_type) {
         headers.insert("content-type", value);
     }
@@ -905,6 +949,7 @@ pub(crate) async fn object_metadata(
     Authed(current): Authed,
     Path((id, key)): Path<(String, String)>,
     Query(query): Query<ObjectViewQuery>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     // matchit does not allow `{*key}` followed by `/thumbnail`. That pattern conflicts with this route.
     // When the last segment is thumbnail, the key is the path before it. axum has already decoded the segments.
@@ -927,7 +972,8 @@ pub(crate) async fn object_metadata(
         }
         ObjectIntent::Transfer(transfer) => {
             require(&current.user, Op::ReadObjects)?;
-            let opened = objects::open(&app, &id, &key).await?;
+            let range = byte_range(&headers)?;
+            let opened = objects::open_ranged(&app, &id, &key, range).await?;
             stream_object(transfer, &key, opened)
         }
     }
