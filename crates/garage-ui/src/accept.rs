@@ -1089,10 +1089,19 @@ async fn preview_download_and_zip_follow_the_download_bit() {
         "private, no-store"
     );
 
-    let zip = exchange(&app, request("POST", "/api/zip-tokens", None, Some(&vera))).await;
+    let zip = exchange(
+        &app,
+        request(
+            "POST",
+            "/api/buckets/bkt-1/archive-token",
+            Some(&json!({ "keys": ["page.html"] }).to_string()),
+            Some(&vera),
+        ),
+    )
+    .await;
     assert_eq!(zip.status, StatusCode::OK, "{}", zip.body);
     assert_eq!(header(&zip.headers, "cache-control"), "private, no-store");
-    let zip_id = serde_json::from_str::<Value>(&zip.body).unwrap()["id"]
+    let zip_id = serde_json::from_str::<Value>(&zip.body).unwrap()["token"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1123,8 +1132,8 @@ async fn preview_download_and_zip_follow_the_download_bit() {
     let consume = exchange(
         &app,
         request(
-            "POST",
-            &format!("/api/zip-tokens/{zip_id}/consume"),
+            "GET",
+            &format!("/api/buckets/bkt-1/archive?token={zip_id}"),
             None,
             Some(&vera),
         ),
@@ -1146,8 +1155,8 @@ async fn preview_download_and_zip_follow_the_download_bit() {
     let gone = exchange(
         &app,
         request(
-            "POST",
-            &format!("/api/zip-tokens/{zip_id}/consume"),
+            "GET",
+            &format!("/api/buckets/bkt-1/archive?token={zip_id}"),
             None,
             Some(&vera),
         ),
