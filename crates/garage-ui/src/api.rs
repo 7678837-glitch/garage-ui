@@ -8399,6 +8399,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn demote_drops_the_user_session() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cam",
+                        "password": PASSWORD,
+                        "role": "admin"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let second = sign_in(&app, "Cam", PASSWORD).await;
+        let listed = exchange(&app, request("GET", "/api/users", None, Some(&admin))).await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let users: Vec<Value> = serde_json::from_str(&listed.body).unwrap();
+        let other_id = users
+            .iter()
+            .find(|user| user["username"] == "Cam")
+            .expect("user")["id"]
+            .as_i64()
+            .expect("id");
+        let demoted = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{other_id}"),
+                Some(&json!({ "role": "viewer" }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(demoted.status, StatusCode::OK, "{}", demoted.body);
+
+        let stale = exchange(&app, request("GET", "/api/config", None, Some(&second))).await;
+        assert_eq!(stale.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code_of(&stale.body), "unauthenticated");
+
+        let kept = exchange(&app, request("GET", "/api/config", None, Some(&admin))).await;
+        assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    }
+
+    #[tokio::test]
     async fn create_user_rejections_are_audited() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
