@@ -9,6 +9,7 @@ type AccessKey = {
   id: string;
   name: string | null;
   createBucket: boolean | null;
+  created: string | null;
 };
 
 type KeyPage = {
@@ -36,6 +37,7 @@ function parseKey(value: unknown): AccessKey {
     id: row.id,
     name: typeof row.name === "string" ? row.name : null,
     createBucket: parseCreateBucket(row),
+    created: typeof row.created === "string" && row.created.length > 0 ? row.created : null,
   };
 }
 
@@ -419,7 +421,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
   );
 }
 
-type KeySort = "id" | "name";
+type KeySort = "id" | "name" | "created";
 
 type KeyQuery = {
   filter: string;
@@ -427,7 +429,10 @@ type KeyQuery = {
 };
 
 function keySortFrom(value: string | null): KeySort {
-  return value === "name" ? "name" : "id";
+  if (value === "name" || value === "created") {
+    return value;
+  }
+  return "id";
 }
 
 function readKeyQuery(): KeyQuery {
@@ -454,10 +459,10 @@ function writeKeyQuery(query: KeyQuery) {
   } else {
     params.delete("keys");
   }
-  if (query.sort === "name") {
-    params.set("keysSort", "name");
-  } else {
+  if (query.sort === "id") {
     params.delete("keysSort");
+  } else {
+    params.set("keysSort", query.sort);
   }
   replaceListQuery(params);
 }
@@ -474,14 +479,31 @@ function keyMatches(accessKey: AccessKey, filter: string): boolean {
 }
 
 function orderedKeys(rows: AccessKey[], sort: KeySort): AccessKey[] {
-  if (sort === "id") {
-    return rows;
+  switch (sort) {
+    case "id":
+      return rows;
+    case "name":
+      return [...rows].sort((left, right) => {
+        const a = (left.name ?? "").toLowerCase();
+        const b = (right.name ?? "").toLowerCase();
+        return a.localeCompare(b);
+      });
+    case "created":
+      return [...rows].sort((left, right) => compareCreated(left.created, right.created));
   }
-  return [...rows].sort((left, right) => {
-    const a = (left.name ?? "").toLowerCase();
-    const b = (right.name ?? "").toLowerCase();
-    return a.localeCompare(b);
-  });
+}
+
+function compareCreated(left: string | null, right: string | null): number {
+  if (left === right) {
+    return 0;
+  }
+  if (left === null) {
+    return 1;
+  }
+  if (right === null) {
+    return -1;
+  }
+  return left < right ? -1 : 1;
 }
 
 export function Keys({ canManage = false }: { canManage?: boolean }) {
@@ -593,6 +615,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           >
             <option value="id">Id</option>
             <option value="name">Name</option>
+            <option value="created">Created</option>
           </select>
         </label>
         <p>Default order is Id.</p>

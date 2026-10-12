@@ -899,3 +899,39 @@ test("filters loaded keys from the query string and keeps that choice in the add
   expect(window.location.hash).toBe("#keys/stay");
   expect(calls).toBe(1);
 });
+
+test("sorts loaded keys by created time and keeps the choice in the address", async () => {
+  window.history.replaceState(null, "", "/?keep=1#keys/stay");
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls += 1;
+      return json({
+        items: [
+          { id: "later-key", name: "later", created: "2026-10-12T00:00:00Z" },
+          { id: "earlier-key", name: "earlier", created: "2026-01-02T00:00:00Z" },
+          { id: "undated-key", name: "undated" },
+        ],
+        hasMore: false,
+      });
+    }),
+  );
+  renderKeys();
+  expect(await screen.findByText("later-key")).toBeTruthy();
+  expect(keyRowText()[0]).toContain("later-key");
+  expect(keyRowText()[1]).toContain("earlier-key");
+  expect(keyRowText()[2]).toContain("undated-key");
+  const created = screen.getByRole("option", { name: "Created" }) as HTMLOptionElement;
+  expect(created.value).toBe("created");
+
+  fireEvent.change(screen.getByLabelText("Sort keys"), { target: { value: "created" } });
+  expect(keyRowText()[0]).toContain("earlier-key");
+  expect(keyRowText()[1]).toContain("later-key");
+  expect(keyRowText()[2]).toContain("undated-key");
+  expect(window.location.search).toContain("keysSort=created");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#keys/stay");
+  expect((screen.getByLabelText("Sort keys") as HTMLSelectElement).value).toBe("created");
+  expect(calls).toBe(1);
+});
