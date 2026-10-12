@@ -61,9 +61,19 @@ pub enum KeyMaterial {
     Provided(Vec<u8>),
 }
 
+pub enum Bootstrap {
+    Unset,
+    Half,
+    Ready {
+        username: String,
+        password_hash: String,
+    },
+}
+
 pub struct Loaded {
     pub settings: Settings,
     pub key: KeyMaterial,
+    pub bootstrap: Bootstrap,
 }
 
 impl Settings {
@@ -134,6 +144,7 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
     let metrics_token = optional_secret(env, "METRICS_TOKEN_FILE", "GARAGE_METRICS_TOKEN")?;
     let project_key = project_key(env)?;
     let key = session_key(env)?;
+    let bootstrap = bootstrap_account(env);
     let mut redact_secrets = Vec::new();
     if let Some(token) = garage_admin_token.clone() {
         redact_secrets.push(token);
@@ -154,6 +165,11 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
         && text.len() >= 8
     {
         redact_secrets.push(text.to_string());
+    }
+    if let Bootstrap::Ready { password_hash, .. } = &bootstrap
+        && password_hash.len() >= 8
+    {
+        redact_secrets.push(password_hash.clone());
     }
     let public_s3_url = endpoint_from(env, "S3_PUBLIC_ENDPOINT_URL", Some("PUBLIC_S3_URL"));
     let s3_endpoint_url = endpoint_from(env, "S3_ENDPOINT_URL", None);
@@ -194,7 +210,22 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             redact_secrets,
         },
         key,
+        bootstrap,
     })
+}
+
+fn bootstrap_account(env: &HashMap<String, String>) -> Bootstrap {
+    match (
+        nonempty(env, "GARAGE_UI_BOOTSTRAP_USERNAME"),
+        nonempty(env, "GARAGE_UI_BOOTSTRAP_PASSWORD_HASH"),
+    ) {
+        (None, None) => Bootstrap::Unset,
+        (Some(username), Some(password_hash)) => Bootstrap::Ready {
+            username: username.to_string(),
+            password_hash: password_hash.to_string(),
+        },
+        _ => Bootstrap::Half,
+    }
 }
 
 fn project_key(env: &HashMap<String, String>) -> anyhow::Result<Option<ProjectKey>> {

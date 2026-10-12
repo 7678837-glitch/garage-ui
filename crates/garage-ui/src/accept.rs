@@ -1317,6 +1317,86 @@ async fn garage_whitelist_blocks_before_upstream_and_strips_secret_query() {
     assert_eq!(code_of(&down.body), "garage_unavailable");
 }
 
+async fn boot_loaded(dir: &std::path::Path, extra: &[(&str, &str)]) -> anyhow::Result<App> {
+    let mut env = std::collections::HashMap::new();
+    env.insert("DATA_DIR".to_string(), dir.display().to_string());
+    for (key, value) in extra {
+        env.insert((*key).to_string(), (*value).to_string());
+    }
+    let mut loaded = crate::config::load_map(&env).expect("config");
+    loaded.settings.bcrypt_cost = 4;
+    state::boot_with(loaded, test_quota()).await
+}
+
+#[tokio::test]
+async fn bootstrap_admin_logs_in_once_and_setup_stays_closed() {
+    let username = "Mina";
+    let hash = crate::password::hash(PASSWORD, 4).expect("hash");
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("GARAGE_UI_BOOTSTRAP_USERNAME", username),
+            ("GARAGE_UI_BOOTSTRAP_PASSWORD_HASH", hash.as_str()),
+        ],
+        test_quota(),
+    )
+    .await;
+    let setup = exchange(
+        &app,
+        request(
+            "POST",
+            "/api/setup",
+            Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(setup.status, StatusCode::CONFLICT);
+    login_ok(&app, username, PASSWORD).await;
+
+    let again = state::test_app_with(
+        &dir,
+        &[
+            ("GARAGE_UI_BOOTSTRAP_USERNAME", username),
+            ("GARAGE_UI_BOOTSTRAP_PASSWORD_HASH", "not-a-bcrypt-hash"),
+        ],
+        test_quota(),
+    )
+    .await;
+    assert_eq!(crate::db::count_users(&again.db).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn bootstrap_admin_rejects_a_half_pair_or_a_bad_hash() {
+    let username = "planted-bootstrap-user";
+    let dir = crate::util::temp_dir();
+    let Err(err) = boot_loaded(&dir, &[("GARAGE_UI_BOOTSTRAP_USERNAME", username)]).await else {
+        panic!("half pair must fail");
+    };
+    let text = format!("{err:#}");
+    assert!(text.contains("启动账号需要成对配置，拒绝启动"));
+    assert!(!text.contains(username));
+
+    let hash = "not-a-bcrypt-hash";
+    let dir = crate::util::temp_dir();
+    let Err(err) = boot_loaded(
+        &dir,
+        &[
+            ("GARAGE_UI_BOOTSTRAP_USERNAME", username),
+            ("GARAGE_UI_BOOTSTRAP_PASSWORD_HASH", hash),
+        ],
+    )
+    .await
+    else {
+        panic!("bad hash must fail");
+    };
+    let text = format!("{err:#}");
+    assert!(text.contains("启动账号无法导入，拒绝启动"));
+    assert!(!text.contains(username));
+    assert!(!text.contains(hash));
+}
+
 fn spawn_upstream(listener: Arc<TcpListener>) -> tokio::task::JoinHandle<String> {
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();

@@ -330,6 +330,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
     let key_bytes = load_session_key(&loaded.settings.data_dir, loaded.key)?;
     let key_id = hex_encode(&key_bytes[..16]);
     let pool = db::open(&loaded.settings.data_dir.join("garage-ui.sqlite")).await?;
+    import_bootstrap(&pool, &loaded.bootstrap).await?;
     let cost = loaded.settings.bcrypt_cost;
     let dummy_password = util::random_bytes(32)?;
     let dummy_hash = password::hash_async(hex_encode(&dummy_password), cost)
@@ -358,6 +359,35 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         #[cfg(test)]
         log_sink: Arc::new(std::sync::Mutex::new(Vec::new())),
     })
+}
+
+async fn import_bootstrap(
+    pool: &sqlx::SqlitePool,
+    bootstrap: &config::Bootstrap,
+) -> anyhow::Result<()> {
+    match bootstrap {
+        config::Bootstrap::Unset => Ok(()),
+        config::Bootstrap::Half => anyhow::bail!("启动账号需要成对配置，拒绝启动"),
+        config::Bootstrap::Ready {
+            username,
+            password_hash,
+        } => {
+            if db::count_users(pool).await? > 0 {
+                return Ok(());
+            }
+            if crate::api::validate_username(username).is_err() || !is_bcrypt_hash(password_hash) {
+                anyhow::bail!("启动账号无法导入，拒绝启动");
+            }
+            db::insert_user(pool, username, password_hash, "admin", false, false)
+                .await
+                .map_err(|_| anyhow::anyhow!("启动账号无法导入，拒绝启动"))?;
+            Ok(())
+        }
+    }
+}
+
+fn is_bcrypt_hash(hash: &str) -> bool {
+    hash.starts_with("$2a$") || hash.starts_with("$2b$") || hash.starts_with("$2y$")
 }
 
 fn load_session_key(dir: &Path, material: KeyMaterial) -> anyhow::Result<Vec<u8>> {
