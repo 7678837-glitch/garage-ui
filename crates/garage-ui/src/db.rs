@@ -89,7 +89,24 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
             .execute(pool)
             .await?;
     }
+    // CREATE TABLE IF NOT EXISTS does not add columns on a database created before them.
+    for statement in ZIP_TOKEN_COLUMNS {
+        if let Err(error) = sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(pool)
+            .await
+            && !duplicate_column(&error)
+        {
+            return Err(error.into());
+        }
+    }
     Ok(())
+}
+
+fn duplicate_column(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(db) => db.message().contains("duplicate column"),
+        _ => false,
+    }
 }
 
 const SCHEMA: &[&str] = &[
@@ -128,6 +145,8 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS zip_tokens (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        bucket_id TEXT NOT NULL DEFAULT '',
+        keys_json TEXT NOT NULL DEFAULT '[]',
         used INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
     )",
@@ -406,13 +425,37 @@ pub async fn recent_audit(pool: &SqlitePool) -> Result<Vec<AuditRow>, sqlx::Erro
         .collect())
 }
 
-pub async fn insert_zip(pool: &SqlitePool, id: &str, user_id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO zip_tokens (id, user_id, used, created_at) VALUES (?, ?, 0, ?)")
-        .bind(id)
-        .bind(user_id)
-        .bind(now_secs())
-        .execute(pool)
-        .await?;
+const ZIP_TOKEN_COLUMNS: &[&str] = &[
+    "ALTER TABLE zip_tokens ADD COLUMN bucket_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE zip_tokens ADD COLUMN keys_json TEXT NOT NULL DEFAULT '[]'",
+];
+
+pub struct StoredZip {
+    pub user_id: i64,
+    pub bucket_id: String,
+    pub keys_json: String,
+    pub used: i64,
+    pub created_at: i64,
+}
+
+pub async fn insert_zip(
+    pool: &SqlitePool,
+    id: &str,
+    user_id: i64,
+    bucket_id: &str,
+    keys_json: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO zip_tokens (id, user_id, bucket_id, keys_json, used, created_at)
+         VALUES (?, ?, ?, ?, 0, ?)",
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(bucket_id)
+    .bind(keys_json)
+    .bind(now_secs())
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -424,22 +467,31 @@ pub async fn delete_unused_zip(pool: &SqlitePool, user_id: i64) -> Result<(), sq
     Ok(())
 }
 
-pub async fn zip_unused(pool: &SqlitePool, id: &str, user_id: i64) -> Result<bool, sqlx::Error> {
-    let found: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM zip_tokens WHERE id = ? AND user_id = ? AND used = 0")
-            .bind(id)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(found.is_some())
+pub async fn load_zip(pool: &SqlitePool, id: &str) -> Result<Option<StoredZip>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT user_id, bucket_id, keys_json, used, created_at FROM zip_tokens WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| StoredZip {
+        user_id: row.get("user_id"),
+        bucket_id: row.get("bucket_id"),
+        keys_json: row.get("keys_json"),
+        used: row.get("used"),
+        created_at: row.get("created_at"),
+    }))
 }
 
-pub async fn mark_zip_used(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE zip_tokens SET used = 1 WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+pub async fn claim_zip(pool: &SqlitePool, id: &str, user_id: i64) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE zip_tokens SET used = 1 WHERE id = ? AND user_id = ? AND used = 0",
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 fn user_from_row(row: &SqliteRow) -> User {

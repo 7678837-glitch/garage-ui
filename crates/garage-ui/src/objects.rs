@@ -275,6 +275,22 @@ async fn sign_get(
     Ok(signed.uri().to_string())
 }
 
+pub async fn read_all(app: &App, bucket_id: &str, key: &str) -> Result<Vec<u8>, ApiError> {
+    let opened = open(app, bucket_id, key).await?;
+    let mut body = std::pin::pin!(opened.body);
+    let mut data = Vec::new();
+    while let Some(next) =
+        std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
+    {
+        let frame = next.map_err(|_| ApiError::internal())?;
+        let Ok(chunk) = frame.into_data() else {
+            continue;
+        };
+        data.extend_from_slice(&chunk);
+    }
+    Ok(data)
+}
+
 pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();

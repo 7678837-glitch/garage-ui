@@ -11,6 +11,7 @@ mod http;
 mod limit;
 mod objects;
 mod password;
+mod zip;
 mod preview;
 mod proxy;
 mod redact;

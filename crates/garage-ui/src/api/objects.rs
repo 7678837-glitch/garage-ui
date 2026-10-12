@@ -111,13 +111,25 @@ async fn object_body(
     Ok(response)
 }
 
-pub(crate) async fn create_zip(State(app): State<App>, Authed(current): Authed) -> Result<Response, ApiError> {
+#[derive(Deserialize)]
+pub(crate) struct ArchiveTokenQuery {
+    token: String,
+}
+
+pub(crate) async fn create_archive_token(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
-    let id = hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?);
-    db::insert_zip(&app.db, &id, current.user.id)
+    let keys = archive_keys(&body)?;
+    let token = hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?);
+    let keys_json = serde_json::to_string(&keys).map_err(|_| ApiError::internal())?;
+    db::insert_zip(&app.db, &token, current.user.id, &id, &keys_json)
         .await
         .map_err(|_| ApiError::internal())?;
-    let mut response = Json(json!({ "id": id })).into_response();
+    let mut response = Json(json!({ "token": token })).into_response();
     response.headers_mut().insert(
         "cache-control",
         HeaderValue::from_static("private, no-store"),
@@ -125,27 +137,81 @@ pub(crate) async fn create_zip(State(app): State<App>, Authed(current): Authed) 
     Ok(response)
 }
 
-pub(crate) async fn consume_zip(
+pub(crate) async fn download_archive(
     State(app): State<App>,
     Authed(current): Authed,
     Path(id): Path<String>,
+    Query(query): Query<ArchiveTokenQuery>,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
-    let unused = db::zip_unused(&app.db, &id, current.user.id)
+    let Some(row) = db::load_zip(&app.db, &query.token)
         .await
-        .map_err(|_| ApiError::internal())?;
-    if !unused {
+        .map_err(|_| ApiError::internal())?
+    else {
+        return Err(ApiError::not_found());
+    };
+    if row.user_id != current.user.id {
+        return Err(ApiError::forbidden("forbidden", "Not allowed"));
+    }
+    if row.bucket_id != id || row.used != 0 {
         return Err(ApiError::not_found());
     }
-    db::mark_zip_used(&app.db, &id)
+    let age = crate::util::now_secs().saturating_sub(row.created_at);
+    if !crate::zip::token_is_fresh(age) {
+        return Err(ApiError::not_found());
+    }
+    let keys: Vec<String> =
+        serde_json::from_str(&row.keys_json).map_err(|_| ApiError::internal())?;
+    let claimed = db::claim_zip(&app.db, &query.token, current.user.id)
         .await
         .map_err(|_| ApiError::internal())?;
-    let mut response = Json(json!({ "ok": true })).into_response();
-    response.headers_mut().insert(
+    if !claimed {
+        return Err(ApiError::not_found());
+    }
+    let planned = crate::zip::archive_names(&keys);
+    let mut files = Vec::new();
+    let mut errors = Vec::new();
+    for entry in planned {
+        match objects::read_all(&app, &id, &entry.key).await {
+            Ok(bytes) => files.push((entry.name, bytes)),
+            Err(_) => errors.push(entry.key),
+        }
+    }
+    let bytes = crate::zip::pack_zip(&files, &errors)?;
+    let mut response = Response::new(Body::from(bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("application/zip"),
+    );
+    headers.insert(
         "cache-control",
         HeaderValue::from_static("private, no-store"),
     );
+    let disposition = util::content_disposition_attachment("archive.zip");
+    let value = HeaderValue::from_str(&disposition).map_err(|_| ApiError::internal())?;
+    headers.insert("content-disposition", value);
     Ok(response)
+}
+
+fn archive_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_keys())?;
+    let Some(keys) = value.get("keys").and_then(Value::as_array) else {
+        return Err(invalid_keys());
+    };
+    if keys.is_empty() {
+        return Err(ApiError::bad_request(
+            "keys_required",
+            "At least one key is required",
+        ));
+    }
+    keys.iter()
+        .map(|key| {
+            key.as_str()
+                .map(str::to_string)
+                .ok_or_else(invalid_keys)
+        })
+        .collect()
 }
 
 #[derive(Serialize)]

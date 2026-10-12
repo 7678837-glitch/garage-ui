@@ -63,8 +63,8 @@ pub(crate) use keys::delete_key;
 pub(crate) use keys::key_secret;
 pub(crate) use keys::list_keys;
 pub(crate) use keys::patch_key;
-pub(crate) use objects::consume_zip;
-pub(crate) use objects::create_zip;
+pub(crate) use objects::create_archive_token;
+pub(crate) use objects::download_archive;
 pub(crate) use objects::delete_bucket_object;
 pub(crate) use objects::delete_bucket_objects;
 pub(crate) use objects::download_object;
@@ -163,8 +163,11 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route("/api/objects/thumbnail", get(thumbnail_object))
-        .route("/api/zip-tokens", post(create_zip))
-        .route("/api/zip-tokens/{id}/consume", post(consume_zip))
+        .route(
+            "/api/buckets/{id}/archive-token",
+            post(create_archive_token),
+        )
+        .route("/api/buckets/{id}/archive", get(download_archive))
         .route("/api/share", post(share))
         .route("/api/cluster/health", get(cluster_health))
         .route("/api/cluster/status", get(cluster_status))
@@ -388,7 +391,7 @@ async fn record(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -9061,5 +9064,147 @@ mod tests {
         assert_eq!(refused_response.status, StatusCode::BAD_GATEWAY);
         assert_eq!(code_of(&refused_response.body), "garage_unavailable");
         assert!(!refused_response.body.contains(TOKEN));
+    }
+
+    async fn exchange_bytes(app: &App, request: Request<Body>) -> (StatusCode, Vec<u8>) {
+        let response = router(app.clone()).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .unwrap();
+        (status, bytes.to_vec())
+    }
+
+    fn drive_letter_prefix(name: &str) -> bool {
+        name.split(['/', '\\']).any(|segment| {
+            let bytes = segment.as_bytes();
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        })
+    }
+
+    fn collision_suffix(name: &str) -> bool {
+        let file = name.rsplit('/').next().unwrap_or(name);
+        if file.ends_with("-2") {
+            return true;
+        }
+        file.rsplit_once('.')
+            .is_some_and(|(stem, _)| stem.ends_with("-2"))
+    }
+
+    #[tokio::test]
+    async fn archive_token_rejects_reuse_and_cleans_parent_segments() {
+        let mock = S3Mock::start(|line| {
+            let key = object_key_of(line);
+            if key.contains("missing") {
+                return head_missing();
+            }
+            if key.contains("..") {
+                return object_bytes("application/octet-stream", "parent-secret");
+            }
+            object_bytes("application/octet-stream", "drive-secret")
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let blocked = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(&json!({ "keys": ["../secret.txt"] }).to_string()),
+                Some(&blocked),
+            ),
+        )
+        .await;
+        assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.body);
+
+        let created_user = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": "viewer horse",
+                        "role": "viewer",
+                        "can_download": true
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created_user.status, StatusCode::CREATED, "{}", created_user.body);
+        let owner = sign_in(&app, "Cara", "viewer horse").await;
+        let issued = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(
+                    &json!({
+                        "keys": ["../secret.txt", "C:/secret.txt", "missing.txt"]
+                    })
+                    .to_string(),
+                ),
+                Some(&owner),
+            ),
+        )
+        .await;
+        assert_eq!(issued.status, StatusCode::OK, "{}", issued.body);
+        let token = serde_json::from_str::<Value>(&issued.body).unwrap()["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let archive_path = format!("/api/buckets/bkt-1/archive?token={token}");
+        let other = exchange(&app, request("GET", &archive_path, None, Some(&admin))).await;
+        assert_eq!(other.status, StatusCode::FORBIDDEN, "{}", other.body);
+
+        let (status, bytes) = exchange_bytes(
+            &app,
+            request("GET", &archive_path, None, Some(&owner)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        let mut names = Vec::new();
+        let mut errors = String::new();
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).unwrap();
+            let name = file.name().unwrap().into_owned();
+            if name == "_errors.txt" {
+                file.read_to_string(&mut errors).unwrap();
+            }
+            names.push(name);
+        }
+        let mut secret = archive.by_name("secret.txt").unwrap();
+        let mut secret_body = String::new();
+        secret.read_to_string(&mut secret_body).unwrap();
+        assert_eq!(secret_body, "parent-secret");
+        assert!(names.iter().any(|name| name == "secret.txt"), "{names:?}");
+        assert!(names.iter().any(|name| collision_suffix(name)), "{names:?}");
+        assert!(
+            names
+                .iter()
+                .all(|name| !name.contains("..") && !drive_letter_prefix(name)),
+            "{names:?}"
+        );
+        assert!(errors.contains("missing.txt"), "{errors}");
+        assert!(
+            names
+                .iter()
+                .filter(|name| name.as_str() != "_errors.txt")
+                .all(|name| !name.contains("missing")),
+            "{names:?}"
+        );
+
+        let again = exchange(&app, request("GET", &archive_path, None, Some(&owner))).await;
+        assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.body);
+        assert!(!crate::zip::token_is_fresh(60));
+        assert!(crate::zip::token_is_fresh(59));
     }
 }
