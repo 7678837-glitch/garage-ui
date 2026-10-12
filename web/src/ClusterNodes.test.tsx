@@ -62,7 +62,7 @@ function session(role: "admin" | "viewer") {
 
 function installFetch(
   role: "admin" | "viewer",
-  statusResponse: () => Response,
+  statusResponse: () => Response | Promise<Response>,
   connectResponse?: () => Response | Promise<Response>,
   previewResponse?: () => Response | Promise<Response>,
   historyResponse?: () => Response | Promise<Response>,
