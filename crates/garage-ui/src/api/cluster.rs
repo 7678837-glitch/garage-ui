@@ -242,6 +242,45 @@ pub(crate) async fn post_repair(
     worker_node(&app, posted, &id).await
 }
 
+fn invalid_blocks() -> ApiError {
+    ApiError::bad_request("invalid_blocks", "block hashes are required")
+}
+
+fn block_hashes(body: &[u8]) -> Result<Vec<String>, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_blocks())?;
+    if !value.is_array() {
+        return Err(invalid_blocks());
+    }
+    let hashes: Vec<String> = serde_json::from_value(value).map_err(|_| invalid_blocks())?;
+    if hashes.is_empty() || hashes.iter().any(String::is_empty) {
+        return Err(invalid_blocks());
+    }
+    Ok(hashes)
+}
+
+pub(crate) async fn post_purge_blocks(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::RunOps)?;
+    let hashes = block_hashes(&body)?;
+    let payload = serde_json::to_vec(&hashes).map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "PurgeBlocks",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
 async fn worker_node(app: &App, response: Response, id: &str) -> Result<Response, ApiError> {
     if !response.status().is_success() {
         return Ok(response);

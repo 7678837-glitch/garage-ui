@@ -65,6 +65,7 @@ pub(crate) use cluster::connect_cluster;
 pub(crate) use cluster::garage;
 pub(crate) use cluster::get_worker_variable;
 pub(crate) use cluster::node_statistics;
+pub(crate) use cluster::post_purge_blocks;
 pub(crate) use cluster::post_repair;
 pub(crate) use cluster::put_worker_variable;
 pub(crate) use cluster::stage_layout;
@@ -203,6 +204,7 @@ pub fn routes(app: App) -> Router<App> {
             "/api/nodes/{id}/worker-variables",
             get(get_worker_variable).put(put_worker_variable),
         )
+        .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
         .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/stage", post(stage_layout))
@@ -4457,6 +4459,85 @@ mod tests {
         assert_eq!(
             crate::db::recent_audit(&app.db).await.unwrap().len(),
             rows_before_viewer.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_blocks_rejects_a_viewer() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":{"blocksPurged":1,"objectsDeleted":0,"uploadsDeleted":0,"versionsDeleted":0,"blockRefsPurged":0}},"error":{}}"#
+                .to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let posted = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/n1/blocks/purge",
+                Some(r#"["h1","h2"]"#),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&posted.body).unwrap(),
+            json!({
+                "blocksPurged": 1,
+                "objectsDeleted": 0,
+                "uploadsDeleted": 0,
+                "versionsDeleted": 0,
+                "blockRefsPurged": 0
+            })
+        );
+        assert_worker_post(
+            &cluster_calls(&mock, "PurgeBlocks"),
+            "/v2/PurgeBlocks?node=n1",
+            json!(["h1", "h2"]),
+        );
+
+        let calls_before_reject = cluster_calls(&mock, "PurgeBlocks").len();
+        for body in [r#"{}"#, "[]", "[1]", r#"[""]"#, r#"["h1",""]"#] {
+            let rejected = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/nodes/n1/blocks/purge",
+                    Some(body),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &rejected,
+                StatusCode::BAD_REQUEST,
+                "invalid_blocks",
+                "block hashes are required",
+            );
+        }
+        assert_eq!(
+            cluster_calls(&mock, "PurgeBlocks").len(),
+            calls_before_reject
+        );
+
+        let viewer = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/n1/blocks/purge",
+                Some(r#"["h1"]"#),
+                Some(&viewer),
+            )),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            cluster_calls(&mock, "PurgeBlocks").len(),
+            calls_before_reject
         );
     }
 
