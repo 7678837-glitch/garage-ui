@@ -579,6 +579,22 @@ mod tests {
         assert!(!token.as_bytes().contains(&b'\n'));
     }
 
+    #[test]
+    fn secret_file_strips_a_trailing_crlf_and_keeps_an_interior_newline() {
+        let dir = crate::util::temp_dir();
+        let path = dir.join("admin.key");
+        let raw = b"admin-token-line1\nrest-of-key\r\n";
+        std::fs::write(&path, raw).unwrap();
+        let loaded = load_map(&map(&[("API_ADMIN_KEY_FILE", path.to_str().unwrap())])).unwrap();
+        let token = loaded.settings.garage_admin_token.expect("admin token");
+        assert!(raw.ends_with(b"\r\n"));
+        let expected = &raw[..raw.len() - 2];
+        assert!(expected.len() >= 16);
+        assert_eq!(expected.iter().filter(|byte| **byte == b'\n').count(), 1);
+        assert!(!expected.ends_with(b"\n") && !expected.ends_with(b"\r"));
+        assert_eq!(token.as_bytes(), expected);
+    }
+
     #[tokio::test]
     async fn maybe_check_updates_with_no_url_performs_no_connect() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
