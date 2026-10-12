@@ -2387,7 +2387,12 @@ async fn object_metadata(
         ObjectIntent::Meta => {
             require(&current.user, Op::ViewObjects)?;
             let meta = objects::metadata(&app, &id, &key).await?;
-            Ok(Json(meta).into_response())
+            let mut response = Json(meta).into_response();
+            response.headers_mut().insert(
+                "cache-control",
+                HeaderValue::from_static("private, no-store"),
+            );
+            Ok(response)
         }
         ObjectIntent::Transfer(transfer) => {
             require(&current.user, Op::ReadObjects)?;
@@ -10356,6 +10361,31 @@ mod tests {
         )
         .await;
         assert_error(&missing, StatusCode::NOT_FOUND, "not_found", "Not found");
+    }
+
+    #[tokio::test]
+    async fn object_metadata_is_private_no_store() {
+        let mock = S3Mock::start(|_| head_ok()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(
+            header_text(&response, "cache-control"),
+            Some("private, no-store")
+        );
+        let body: Value = serde_json::from_str(&response.body).expect("metadata json");
+        assert_eq!(body["key"], "note.txt");
     }
 
     #[tokio::test]
