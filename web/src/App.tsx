@@ -53,6 +53,7 @@ type Health = {
 type SessionStatus = AuthStatus & {
   garage_version: string | null;
   garage_write_blocked: boolean;
+  tls_insecure?: boolean;
 };
 
 function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
@@ -248,7 +249,7 @@ function Breadcrumb({
               href={`#${crumb.id}`}
               className="underline"
               onClick={(event) => {
-                // href 只提供链接角色。点击必须走 select，才能沿用未保存离开确认。
+                // The href only provides the link role. Clicks must call select so the unsaved-leave confirmation still applies.
                 event.preventDefault();
                 onSelect(crumb.id);
               }}
@@ -294,10 +295,10 @@ function garageBannerOn(cache: QueryCache, held: ReadonlySet<string>): boolean {
 function GarageBanner() {
   const client = useQueryClient();
   const cache = client.getQueryCache();
-  // 没有 data 时 fetch 会清掉 error 和 fetchFailureReason，重试间隔里 error 仍是 null。
-  // 横幅若只读 state.error，这两段时间会卸掉。记下尚未空闲恢复的查询。
+  // A fetch with no data clears error and fetchFailureReason, and error stays null through the retry gap.
+  // Reading only state.error would drop the banner in both of those windows. Remember queries that are not idle yet.
   const held = useRef(new Set<string>());
-  // 横幅看的是整份 query cache。只订阅本组件自己的 query 会漏掉别的区块。
+  // The banner reads the whole query cache. A subscription to only this component's query would miss other sections.
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
       for (const query of cache.getAll()) {
@@ -344,7 +345,7 @@ function Home({ status }: { status: SessionStatus }) {
     queryFn: () => api<Health>("/healthz"),
   });
   const { hash, section, select } = useHashSection(status.role ?? "");
-  // 窄屏只决定初次是否收起。挂上 resize 监听会在用户点开 Menu 之后又把它关掉。
+  // A narrow viewport decides only the initial collapsed state. A resize listener would close Menu again after the user opens it.
   const [menuOpen, setMenuOpen] = useState(() => {
     if (typeof window.matchMedia !== "function") {
       return true;
@@ -360,7 +361,7 @@ function Home({ status }: { status: SessionStatus }) {
   const newPassword = form.watch("new_password") ?? "";
   const passwordDirty = currentPassword.length > 0 || newPassword.length > 0;
   useEffect(() => {
-    // 改密表单只在概览里挂载。这段 effect 挂在 Home 上，离开概览时要自己撤掉脏标记。
+    // The password form mounts only on the overview. This effect lives on Home, so leaving the overview has to clear the dirty flag itself.
     setFormDirty("password", section === "overview" && passwordDirty);
     return () => setFormDirty("password", false);
   }, [passwordDirty, section]);
@@ -386,7 +387,7 @@ function Home({ status }: { status: SessionStatus }) {
   const passwordPhase = savePhase(change.isPending, change.isError, change.isSuccess);
   const passwordStatus = saveStatus(passwordPhase, passwordDirty, "Password updated");
   const admin = status.role === "admin";
-  // 管理员忽略 download 位。只读用户要这位才看得到预览和下载。
+  // An admin ignores the download bit. A read-only user sees preview and download only when that bit is set.
   const canTransfer = admin || status.can_download === true;
   return (
     <div className="flex flex-col gap-6 sm:flex-row">
@@ -409,6 +410,9 @@ function Home({ status }: { status: SessionStatus }) {
             <div className="grid max-w-sm gap-6">
               {status.garage_write_blocked === true ? (
                 <p role="alert">Garage v2.3.0 or newer is required</p>
+              ) : null}
+              {status.tls_insecure === true ? (
+                <p role="alert">TLS certificate verification is off.</p>
               ) : null}
               <p>{healthText}</p>
               <form
@@ -492,7 +496,7 @@ function clearSignedIn(client: QueryClient): void {
 
 export function App() {
   const client = useQueryClient();
-  // 子请求可能在 effect 之前返回。钩子要在 useQuery 之前挂上，卸载时再拆掉。
+  // A child request can return before the effect runs. Attach the hook before useQuery, and detach it on unmount.
   bindUnauthenticated(() => clearSignedIn(client));
   useEffect(() => {
     bindUnauthenticated(() => clearSignedIn(client));

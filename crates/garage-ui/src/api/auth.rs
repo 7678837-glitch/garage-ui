@@ -337,6 +337,7 @@ pub(crate) async fn status(
         "can_share": current.as_ref().map(|item| effective_share(&item.user)),
         "garage_version": garage_version,
         "garage_write_blocked": garage_write_blocked,
+        "tls_insecure": app.settings.tls_insecure,
     })))
 }
 

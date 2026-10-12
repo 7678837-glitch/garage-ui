@@ -610,6 +610,50 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(await screen.findByText("Keys are unavailable")).toBeTruthy();
 });
 
+test("shows a TLS warning while verification is off", async () => {
+  async function signIn(tlsInsecure: boolean) {
+    cleanup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/capabilities")) {
+          return capabilitiesResponse();
+        }
+        if (url.includes("/api/auth/status")) {
+          return new Response(
+            JSON.stringify({
+              initialized: true,
+              authenticated: true,
+              username: "Ada",
+              role: "admin",
+              can_download: true,
+              can_share: true,
+              garage_version: "v2.4.1",
+              garage_write_blocked: false,
+              tls_insecure: tlsInsecure,
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/api/cluster/status")) {
+          return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }),
+    );
+    renderApp();
+    expect(await screen.findByText("Ada · admin")).toBeTruthy();
+  }
+
+  await signIn(true);
+  expect(screen.getByRole("alert").textContent).toBe("TLS certificate verification is off.");
+
+  await signIn(false);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("TLS certificate verification is off.")).toBeNull();
+});
+
 test("shows user management for an admin and locks that signed-in row", async () => {
   vi.stubGlobal(
     "fetch",
