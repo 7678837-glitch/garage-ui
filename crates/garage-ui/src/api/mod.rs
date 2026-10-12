@@ -65,6 +65,7 @@ pub(crate) use cluster::connect_cluster;
 pub(crate) use cluster::garage;
 pub(crate) use cluster::get_worker_variable;
 pub(crate) use cluster::node_statistics;
+pub(crate) use cluster::post_repair;
 pub(crate) use cluster::put_worker_variable;
 pub(crate) use cluster::stage_layout;
 pub(crate) use keys::create_key;
@@ -202,6 +203,7 @@ pub fn routes(app: App) -> Router<App> {
             "/api/nodes/{id}/worker-variables",
             get(get_worker_variable).put(put_worker_variable),
         )
+        .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
@@ -4332,6 +4334,130 @@ mod tests {
         )
         .await;
         assert_error(&gone, StatusCode::BAD_GATEWAY, "garage_error", "down");
+    }
+
+    #[tokio::test]
+    async fn repair_tables_writes_an_audit_row() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":null},"error":{}}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let posted = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/n1/repair",
+                Some(r#"{"repairType":"tables"}"#),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+        assert_eq!(posted.body, "null");
+        assert_worker_post(
+            &cluster_calls(&mock, "LaunchRepairOperation"),
+            "/v2/LaunchRepairOperation?node=n1",
+            json!({ "repairType": "tables" }),
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "v2/LaunchRepairOperation");
+        assert_eq!(row.target, "LaunchRepairOperation");
+        assert_eq!(row.status, 200);
+
+        let scrub = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/n1/repair",
+                Some(r#"{"repairType":{"scrub":"start"}}"#),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(scrub.status, StatusCode::OK, "{}", scrub.body);
+        assert_eq!(scrub.body, "null");
+        let launches = cluster_calls(&mock, "LaunchRepairOperation");
+        assert_eq!(
+            launches.len(),
+            2,
+            "{:?}",
+            launches
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&launches[1].body).unwrap(),
+            json!({ "repairType": { "scrub": "start" } })
+        );
+
+        let calls_before_reject = launches.len();
+        let rows_before_reject = crate::db::recent_audit(&app.db).await.unwrap();
+        for body in [
+            r#"{}"#,
+            r#"{"repairType":"tables","extra":true}"#,
+            r#""tables""#,
+            r#"["tables"]"#,
+            r#"{"repairType":"nope"}"#,
+            r#"{"repairType":{"scrub":"nope"}}"#,
+        ] {
+            let rejected = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/nodes/n1/repair",
+                    Some(body),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_error(
+                &rejected,
+                StatusCode::BAD_REQUEST,
+                "invalid_repair",
+                "repairType is required",
+            );
+        }
+        assert_eq!(
+            cluster_calls(&mock, "LaunchRepairOperation").len(),
+            calls_before_reject
+        );
+        assert_eq!(
+            crate::db::recent_audit(&app.db).await.unwrap().len(),
+            rows_before_reject.len()
+        );
+
+        let viewer = viewer_session(&app, &admin).await;
+        let rows_before_viewer = crate::db::recent_audit(&app.db).await.unwrap();
+        let denied = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/n1/repair",
+                Some(r#"{"repairType":"tables"}"#),
+                Some(&viewer),
+            )),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            cluster_calls(&mock, "LaunchRepairOperation").len(),
+            calls_before_reject
+        );
+        assert_eq!(
+            crate::db::recent_audit(&app.db).await.unwrap().len(),
+            rows_before_viewer.len()
+        );
     }
 
     #[tokio::test]
