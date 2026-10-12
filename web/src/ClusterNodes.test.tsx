@@ -65,6 +65,7 @@ function installFetch(
   statusResponse: () => Response,
   connectResponse?: () => Response | Promise<Response>,
   previewResponse?: () => Response | Promise<Response>,
+  historyResponse?: () => Response | Promise<Response>,
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -101,6 +102,9 @@ function installFetch(
     }
     if (url === "/api/layout/preview") {
       return previewResponse ? previewResponse() : new Response("no", { status: 500 });
+    }
+    if (url === "/api/layout/history") {
+      return historyResponse ? historyResponse() : new Response("no", { status: 500 });
     }
     return new Response("no", { status: 500 });
   });
@@ -916,6 +920,83 @@ test("apply stays disabled until preview succeeds", async () => {
   expect(screen.queryByText(stale)).toBeNull();
   expect(screen.queryByText(staged)).toBeNull();
   expect(applyPosts()).toHaveLength(0);
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/layout/apply"))).toBe(
+    false,
+  );
+});
+
+function paragraphText(item: Element | null): string[] {
+  return Array.from(item?.querySelectorAll("p") ?? []).map((node) => node.textContent ?? "");
+}
+
+test("history shows each version and its sync status", async () => {
+  const versions = [
+    { version: 3, status: "Current", storageNodes: 2, gatewayNodes: 1 },
+    { version: 2, status: "Draining", storageNodes: 2, gatewayNodes: 0 },
+  ];
+  const responses = [
+    json({
+      versions,
+      updateTrackers: { n1: { ack: 3, sync: 3, syncAck: 2 } },
+    }),
+    json({ versions, updateTrackers: null }),
+    new Response("not-json", { status: 500 }),
+  ];
+  const fetchMock = installFetch(
+    "admin",
+    () =>
+      json({
+        nodes: [{ id: "node-up", hostname: "alpha", isUp: true, draining: false }],
+      }),
+    undefined,
+    undefined,
+    () => {
+      const next = responses.shift();
+      return next ?? new Response("no", { status: 500 });
+    },
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+
+  const historyCalls = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/history");
+  const historyButton = screen.getByRole("button", { name: "Layout history" });
+  expect(historyButton.closest("li")).toBeNull();
+  expect(screen.getAllByRole("listitem").every((item) => !item.contains(historyButton))).toBe(
+    true,
+  );
+  expect(historyCalls()).toHaveLength(0);
+  expect(screen.queryByText("Current")).toBeNull();
+  expect(screen.queryByText("n1")).toBeNull();
+
+  await act(async () => {
+    fireEvent.click(historyButton);
+  });
+  expect(historyCalls()).toHaveLength(1);
+  const init = historyCalls()[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("GET");
+  expect(init?.credentials).toBe("include");
+  expect(init?.body ?? null).toBeNull();
+  expect(paragraphText(screen.getByText("Current").closest("li"))).toEqual(["3", "Current"]);
+  expect(paragraphText(screen.getByText("Draining").closest("li"))).toEqual(["2", "Draining"]);
+  expect(paragraphText(screen.getByText("n1").closest("li"))).toEqual(["n1", "3", "3", "2"]);
+
+  await act(async () => {
+    fireEvent.click(historyButton);
+  });
+  expect(historyCalls()).toHaveLength(2);
+  expect(paragraphText(screen.getByText("Current").closest("li"))).toEqual(["3", "Current"]);
+  expect(paragraphText(screen.getByText("Draining").closest("li"))).toEqual(["2", "Draining"]);
+  expect(screen.queryByText("n1")).toBeNull();
+
+  await act(async () => {
+    fireEvent.click(historyButton);
+  });
+  expect(historyCalls()).toHaveLength(3);
+  expect(screen.getByText("Layout history failed").tagName).toBe("P");
+  expect(screen.queryByText("Current")).toBeNull();
+  expect(screen.queryByText("Draining")).toBeNull();
+  expect(screen.queryByText("n1")).toBeNull();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/layout/apply"))).toBe(
     false,
   );
