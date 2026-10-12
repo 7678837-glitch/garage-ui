@@ -49,6 +49,8 @@ pub struct Settings {
     pub public_s3_url: Option<String>,
     pub s3_endpoint_url: Option<String>,
     pub garage_admin_url: Option<String>,
+    pub tls_insecure: bool,
+    pub tls_ca_pem: Option<Vec<u8>>,
     pub update_url: Option<String>,
     pub base_tag: String,
     pub garage_admin_token: Option<String>,
@@ -180,6 +182,8 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
         .cloned()
         .filter(|value| !value.is_empty());
     let garage_admin_url = endpoint_from(env, "API_BASE_URL", Some("GARAGE_ADMIN_URL"));
+    let tls_insecure = env.get("GARAGE_TLS_INSECURE").map(String::as_str) == Some("1");
+    let tls_ca_pem = read_tls_ca(env)?;
     let update_url = env
         .get("UPDATE_URL")
         .map(|value| value.trim().to_string())
@@ -207,6 +211,8 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
             public_s3_url,
             s3_endpoint_url,
             garage_admin_url,
+            tls_insecure,
+            tls_ca_pem,
             update_url,
             garage_admin_token,
             metrics_token,
@@ -351,6 +357,16 @@ pub fn strip_trailing_newlines(mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.pop();
     }
     bytes
+}
+
+fn read_tls_ca(env: &HashMap<String, String>) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(path) = nonempty(env, "GARAGE_TLS_CA_FILE") else {
+        return Ok(None);
+    };
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) => anyhow::bail!("failed to read TLS CA file: {path}: {}", error.kind()),
+    }
 }
 
 fn read_secret_file(path: &Path) -> anyhow::Result<Vec<u8>> {

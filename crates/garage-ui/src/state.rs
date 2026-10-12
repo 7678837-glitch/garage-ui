@@ -356,12 +356,19 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
     let dummy_hash = password::hash_async(hex_encode(&dummy_password), cost)
         .await
         .map_err(|_| anyhow::anyhow!("无法初始化口令校验"))?;
-    let http = reqwest::Client::builder()
+    let mut http = reqwest::Client::builder()
         .connect_timeout(loaded.settings.garage_admin_connect_timeout)
         .timeout(loaded.settings.garage_admin_timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context_client()?;
+        .redirect(reqwest::redirect::Policy::none());
+    if loaded.settings.tls_insecure {
+        tracing::warn!("tls_insecure");
+        http = http.danger_accept_invalid_certs(true);
+    }
+    if let Some(pem) = &loaded.settings.tls_ca_pem {
+        let certificate = reqwest::Certificate::from_pem(pem).context_client()?;
+        http = http.add_root_certificate(certificate);
+    }
+    let http = http.build().context_client()?;
     Ok(App {
         db: pool,
         settings: Arc::new(loaded.settings),
@@ -494,7 +501,270 @@ pub async fn test_app(dir: &Path) -> App {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::{Arc, Mutex};
+
     use super::GarageLink;
+
+    struct WarnLog(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for WarnLog {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("warn log").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn env_with(dir: &Path, extra: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        let mut env = std::collections::HashMap::new();
+        env.insert("DATA_DIR".to_string(), dir.display().to_string());
+        for (key, value) in extra {
+            env.insert((*key).to_string(), (*value).to_string());
+        }
+        env
+    }
+
+    async fn boot_logged(mut loaded: crate::config::Loaded) -> (super::App, String) {
+        loaded.settings.bcrypt_cost = 4;
+        let logs = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = Arc::clone(&logs);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(move || WarnLog(Arc::clone(&sink)))
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let app = super::boot_with(loaded, crate::limit::test_quota())
+            .await
+            .expect("boot");
+        let text = String::from_utf8(logs.lock().expect("warn log").clone()).unwrap();
+        (app, text)
+    }
+
+    const TLS_SERVER: &str = r#"
+import http.server
+import ssl
+import sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(sys.argv[1], sys.argv[2])
+server.socket = context.wrap_socket(server.socket, server_side=True)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"#;
+
+    struct TlsProbe {
+        child: Child,
+        port: u16,
+        ca: PathBuf,
+    }
+
+    fn openssl(args: &[&str]) {
+        let output = Command::new("openssl")
+            .args(args)
+            .output()
+            .expect("openssl");
+        assert!(
+            output.status.success(),
+            "openssl {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    impl TlsProbe {
+        fn start() -> Self {
+            let dir = crate::util::temp_dir();
+            let ca = dir.join("ca.pem");
+            let ca_key = dir.join("ca.key");
+            let server_key = dir.join("server.key");
+            let server_cert = dir.join("server.pem");
+            let csr = dir.join("server.csr");
+            let ca_s = ca.to_str().expect("ca path");
+            let ca_key_s = ca_key.to_str().expect("ca key path");
+            let server_key_s = server_key.to_str().expect("server key path");
+            let server_cert_s = server_cert.to_str().expect("server cert path");
+            let csr_s = csr.to_str().expect("csr path");
+            openssl(&[
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                ca_key_s,
+                "-out",
+                ca_s,
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=GarageTestCA",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+            ]);
+            openssl(&[
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                server_key_s,
+                "-out",
+                csr_s,
+                "-nodes",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1",
+                "-addext",
+                "extendedKeyUsage=serverAuth",
+            ]);
+            openssl(&[
+                "x509",
+                "-req",
+                "-in",
+                csr_s,
+                "-CA",
+                ca_s,
+                "-CAkey",
+                ca_key_s,
+                "-CAcreateserial",
+                "-out",
+                server_cert_s,
+                "-days",
+                "1",
+                "-copy_extensions",
+                "copy",
+            ]);
+            let mut child = Command::new("python3")
+                .arg("-c")
+                .arg(TLS_SERVER)
+                .arg(&server_cert)
+                .arg(&server_key)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("python");
+            let stdout = child.stdout.take().expect("python stdout");
+            let mut line = String::new();
+            BufReader::new(stdout)
+                .read_line(&mut line)
+                .expect("python port");
+            let port = line.trim().parse().unwrap_or_else(|_| {
+                let mut err = String::new();
+                if let Some(stderr) = child.stderr.take() {
+                    let _ = BufReader::new(stderr).read_to_string(&mut err);
+                }
+                panic!("python port from {line:?}: {err}");
+            });
+            Self { child, port, ca }
+        }
+    }
+
+    impl Drop for TlsProbe {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    async fn fetch_status(client: &reqwest::Client, port: u16) -> Result<u16, String> {
+        match client
+            .get(format!("https://127.0.0.1:{port}/"))
+            .send()
+            .await
+        {
+            Ok(response) => Ok(response.status().as_u16()),
+            Err(error) => {
+                let mut text = error.to_string();
+                let mut source = std::error::Error::source(&error);
+                while let Some(inner) = source {
+                    text.push_str(": ");
+                    text.push_str(&inner.to_string());
+                    source = std::error::Error::source(inner);
+                }
+                Err(text)
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tls_insecure_is_off_unless_the_switch_is_one_and_a_missing_ca_fails() {
+        let missing = crate::util::temp_dir().join("missing-ca.pem");
+        let missing_path = missing.display().to_string();
+        assert!(!missing.exists());
+        let Err(err) = crate::config::load_map(&env_with(
+            &crate::util::temp_dir(),
+            &[("GARAGE_TLS_CA_FILE", missing_path.as_str())],
+        )) else {
+            panic!("missing CA file must fail");
+        };
+        let text = format!("{err:#}");
+        assert!(text.contains(&missing_path), "{text}");
+
+        let probe = TlsProbe::start();
+        let ca = probe.ca.display().to_string();
+
+        for value in [None, Some(""), Some("0")] {
+            let dir = crate::util::temp_dir();
+            let mut pairs = Vec::new();
+            if let Some(value) = value {
+                pairs.push(("GARAGE_TLS_INSECURE", value));
+            }
+            let loaded = crate::config::load_map(&env_with(&dir, &pairs)).expect("load");
+            let (app, logs) = boot_logged(loaded).await;
+            let err = fetch_status(&app.http, probe.port)
+                .await
+                .expect_err("verification stays on");
+            assert!(err.contains("certificate"), "{value:?}: {err}");
+            assert!(!logs.contains("tls_insecure"), "{value:?}: {logs}");
+        }
+
+        let trusted = crate::config::load_map(&env_with(
+            &crate::util::temp_dir(),
+            &[("GARAGE_TLS_CA_FILE", ca.as_str())],
+        ))
+        .expect("ca file");
+        let (app, logs) = boot_logged(trusted).await;
+        assert_eq!(
+            fetch_status(&app.http, probe.port)
+                .await
+                .expect("custom CA"),
+            200
+        );
+        assert!(!logs.contains("tls_insecure"), "{logs}");
+
+        let loaded = crate::config::load_map(&env_with(
+            &crate::util::temp_dir(),
+            &[("GARAGE_TLS_INSECURE", "1")],
+        ))
+        .expect("load");
+        let (app, logs) = boot_logged(loaded).await;
+        assert_eq!(
+            fetch_status(&app.http, probe.port)
+                .await
+                .expect("skip accepts the server"),
+            200
+        );
+        assert!(logs.contains("tls_insecure"), "{logs}");
+    }
 
     #[test]
     fn reported_version_blocks_only_a_parsed_release_below_2_3_0() {
