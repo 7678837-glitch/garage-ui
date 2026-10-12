@@ -17,7 +17,9 @@ use axum::http::{HeaderValue, StatusCode};
 use serde::Serialize;
 use tokio::sync::Semaphore;
 
+use crate::db;
 use crate::error::ApiError;
+use crate::proxy;
 use crate::state::App;
 use crate::state::credentials::{self, BucketCredential, CredentialSources, Operation};
 
@@ -203,6 +205,74 @@ pub async fn metadata(app: &App, bucket_id: &str, key: &str) -> Result<ObjectMet
 pub struct ObjectStream {
     pub content_type: String,
     pub body: SdkBody,
+}
+
+pub async fn presign_get(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    ttl_secs: u64,
+) -> Result<String, ApiError> {
+    // 发出去的链接必须签在公共地址上。内网端点不能出现在这个 URL 里。
+    let endpoint = app
+        .settings
+        .public_s3_url
+        .clone()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::not_implemented(
+                "share_unavailable",
+                "Public S3 address is not configured",
+            )
+        })?;
+    let region = app.settings.s3_region.clone();
+    let bucket = bucket_id.to_string();
+    let object_key = key.to_string();
+    let sources = sources(app, bucket_id).await;
+    let signed_bucket = bucket.clone();
+    let attempted = app
+        .read_credential(&bucket, sources, move |credential| {
+            let client = s3_client(&region, &endpoint, &credential);
+            let bucket = signed_bucket.clone();
+            let object_key = object_key.clone();
+            async move {
+                match sign_get(&client, &bucket, &object_key, ttl_secs).await {
+                    Ok(url) => Operation::Done(Ok(url)),
+                    Err(failure) => Operation::Done(Err(failure)),
+                }
+            }
+        })
+        .await;
+    match attempted {
+        Ok(Ok(url)) => Ok(url),
+        Ok(Err(_)) => Err(ApiError::internal()),
+        Err(credentials::ReadFailure::NoUsableKey(missing)) => Err(ApiError::new(
+            StatusCode::from_u16(missing.status()).expect("412"),
+            missing.code(),
+            missing.message(),
+        )),
+        Err(credentials::ReadFailure::Forbidden) => Err(ApiError::internal()),
+    }
+}
+
+async fn sign_get(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    ttl_secs: u64,
+) -> Result<String, S3Failure> {
+    let config = aws_sdk_s3::presigning::PresigningConfig::expires_in(
+        std::time::Duration::from_secs(ttl_secs),
+    )
+    .map_err(|_| S3Failure::Local)?;
+    let signed = client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .presigned(config)
+        .await
+        .map_err(|_| S3Failure::Local)?;
+    Ok(signed.uri().to_string())
 }
 
 pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
@@ -1193,7 +1263,7 @@ where
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unavailable("garage_unavailable", "Garage is unavailable"))?;
     let region = app.settings.s3_region.clone();
-    let sources = sources(app);
+    let sources = sources(app, &bucket_id).await;
     let notes = Arc::new(Mutex::new(None::<String>));
     let notes_for_call = Arc::clone(&notes);
     let attempted = app
@@ -1235,14 +1305,44 @@ where
     }
 }
 
-fn sources(app: &App) -> CredentialSources {
+async fn sources(app: &App, bucket_id: &str) -> CredentialSources {
+    let project_key = app.settings.project_key.as_ref().map(|key| {
+        BucketCredential::new(key.access_key_id.clone(), key.secret_access_key.clone())
+    });
+    // 项目 key 优先。没有它时才看 explicit_key，不从任意读写 key 里挑。
+    let explicit_key = if project_key.is_some() {
+        None
+    } else {
+        explicit_credential(app, bucket_id).await
+    };
     CredentialSources {
-        project_key: app.settings.project_key.as_ref().map(|key| {
-            BucketCredential::new(key.access_key_id.clone(), key.secret_access_key.clone())
-        }),
-        explicit_key: None,
+        project_key,
+        explicit_key,
         read_write_keys: Vec::new(),
     }
+}
+
+async fn explicit_credential(app: &App, bucket_id: &str) -> Option<BucketCredential> {
+    // 库里只留 access key id。密钥每次向 Garage 现取，避免把 secret 写进 sqlite。
+    let access_key_id = db::bucket_key(&app.db, bucket_id).await.ok().flatten()?;
+    let secret = key_secret(app, &access_key_id).await?;
+    Some(BucketCredential::new(access_key_id, secret))
+}
+
+async fn key_secret(app: &App, access_key_id: &str) -> Option<String> {
+    let response = proxy::fetch_key_secret(app, access_key_id).await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value
+        .get("secretAccessKey")
+        .and_then(serde_json::Value::as_str)
+        .filter(|secret| !secret.is_empty())
+        .map(str::to_string)
 }
 
 fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Client {

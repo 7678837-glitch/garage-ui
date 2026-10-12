@@ -1428,3 +1428,58 @@ test("keeps Download and hides the viewer until object metadata loads", async ()
   expect((await screen.findByText("loaded body")).tagName).toBe("PRE");
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
 });
+
+test("shares one object after an admin chooses the bucket key", async () => {
+  const calls: { url: string; method: string; body: string | null }[] = [];
+  let chosen = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const body = typeof init?.body === "string" ? init.body : null;
+      calls.push({ url, method, body });
+      if (url.startsWith("/api/auth/status")) {
+        return json({ can_share: true, role: "admin" });
+      }
+      if (url.startsWith("/api/keys")) {
+        return json({ items: [{ id: "CHOSEN" }], hasMore: false });
+      }
+      if (method === "PUT" && url === "/api/buckets/bkt-1/credential") {
+        chosen = true;
+        return json({ access_key_id: "CHOSEN" });
+      }
+      if (method === "POST" && url === "/api/share") {
+        return json({
+          url: "http://127.0.0.1:3901/bkt-1/a.txt?X-Amz-Expires=3600",
+          expires_in: 3600,
+          website_url: "https://bkt-1.web.example",
+        });
+      }
+      if (!chosen && url.includes("/api/buckets/bkt-1/objects")) {
+        return json(
+          { code: "no_usable_key", message: "This bucket has no usable read-write key" },
+          412,
+        );
+      }
+      return json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects();
+  expect(await screen.findByText("no_usable_key")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Share for 1 hour" })).toBeNull();
+  fireEvent.change(await screen.findByLabelText("Bucket key"), { target: { value: "CHOSEN" } });
+  fireEvent.click(screen.getByRole("button", { name: "Use this key" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Share for 1 hour" }));
+  expect(
+    await screen.findByText("http://127.0.0.1:3901/bkt-1/a.txt?X-Amz-Expires=3600"),
+  ).toBeTruthy();
+  expect(screen.getByText("https://bkt-1.web.example")).toBeTruthy();
+  expect(calls.find((call) => call.url === "/api/share")?.body).toBe(
+    JSON.stringify({ ttl_seconds: 3600, bucket: "bkt-1", key: "a.txt" }),
+  );
+  expect(calls.find((call) => call.method === "PUT")?.body).toBe(
+    JSON.stringify({ access_key_id: "CHOSEN" }),
+  );
+});

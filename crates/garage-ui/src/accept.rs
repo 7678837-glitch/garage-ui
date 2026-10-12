@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -1254,8 +1254,12 @@ async fn share_and_upload_stop_before_unimplemented_work() {
         ),
     )
     .await;
-    assert_eq!(not_ready.status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(code_of(&not_ready.body), "share_not_ready");
+    assert_eq!(not_ready.status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(code_of(&not_ready.body), "no_usable_key");
+    assert_eq!(
+        serde_json::from_str::<Value>(&not_ready.body).unwrap()["message"],
+        "This bucket has no usable read-write key"
+    );
     assert!(!not_ready.body.contains("http"));
 }
 
@@ -1554,6 +1558,421 @@ async fn bootstrap_admin_rejects_a_half_pair_or_a_bad_hash() {
     assert!(text.contains("启动账号无法导入，拒绝启动"));
     assert!(!text.contains(username));
     assert!(!text.contains(hash));
+}
+
+fn share_body(bucket: &str, key: &str, ttl_seconds: u64) -> String {
+    json!({ "ttl_seconds": ttl_seconds, "bucket": bucket, "key": key }).to_string()
+}
+
+async fn post_share(
+    app: &App,
+    session: &Session,
+    bucket: &str,
+    key: &str,
+    ttl_seconds: u64,
+) -> Exchange {
+    exchange(
+        app,
+        request(
+            "POST",
+            "/api/share",
+            Some(&share_body(bucket, key, ttl_seconds)),
+            Some(session),
+        ),
+    )
+    .await
+}
+
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
+async fn serve_json(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut tmp = [0_u8; 2048];
+                loop {
+                    let Ok(read) = socket.read(&mut tmp).await else {
+                        return;
+                    };
+                    if read == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&tmp[..read]);
+                    if buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                    if buf.len() > 65536 {
+                        return;
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{port}"), task)
+}
+
+#[tokio::test]
+async fn share_presigns_a_question_mark_key() {
+    const QUESTION: &str = "a?b#c%20d=e";
+    const QUESTION_PATH: &str = "a%3Fb%23c%2520d%3De";
+    const CHINESE: &str = "照片.txt";
+    const CHINESE_PATH: &str = "%E7%85%A7%E7%89%87.txt";
+    const SECRET: &str = "project-secret-value";
+    let (admin_url, admin_task) = serve_json(
+        r#"{"id":"photos","websiteAccess":{"enabled":true,"indexDocument":"index.html"}}"#,
+    )
+    .await;
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("PUBLIC_S3_URL", "http://127.0.0.1:3901"),
+            ("S3_REGION", "garage"),
+            ("S3_ACCESS_KEY_ID", "PROJECT"),
+            ("S3_SECRET_ACCESS_KEY", SECRET),
+            ("WEBSITE_ROOT_DOMAIN", "https://{bucket}.web.example"),
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    let created = exchange(
+        &app,
+        request(
+            "POST",
+            "/api/users",
+            Some(
+                &json!({
+                    "username": "Vera",
+                    "password": OTHER_PASSWORD,
+                    "role": "viewer"
+                })
+                .to_string(),
+            ),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let vera = login_ok(&app, "Vera", OTHER_PASSWORD).await;
+    let denied = post_share(&app, &vera, "photos", QUESTION, 3600).await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    assert_eq!(code_of(&denied.body), "forbidden");
+
+    let vera_id = user_id(&app, &ada, "Vera").await;
+    let grant = exchange(
+        &app,
+        request(
+            "PATCH",
+            &format!("/api/users/{vera_id}"),
+            Some(&json!({ "can_download": true, "can_share": true }).to_string()),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(grant.status, StatusCode::OK, "{}", grant.body);
+    let shared_by_viewer = post_share(&app, &vera, "photos", "note.txt", 3600).await;
+    assert_eq!(
+        shared_by_viewer.status,
+        StatusCode::OK,
+        "{}",
+        shared_by_viewer.body
+    );
+
+    let signed = post_share(&app, &ada, "photos", QUESTION, 3600).await;
+    assert_eq!(signed.status, StatusCode::OK, "{}", signed.body);
+    let body: Value = serde_json::from_str(&signed.body).unwrap();
+    let url = body["url"].as_str().expect("presigned url");
+    assert!(url.starts_with("http://127.0.0.1:3901/photos/"), "{url}");
+    assert!(url_path(url).contains(QUESTION_PATH), "{url}");
+    assert!(!url_path(url).contains('?'), "{url}");
+    assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"), "{url}");
+    assert!(url.contains("X-Amz-Expires=3600"), "{url}");
+    assert_eq!(body["expires_in"], 3600);
+    assert_eq!(body["website_url"], "https://photos.web.example");
+    assert!(!signed.body.contains(SECRET));
+    let rows = crate::db::recent_audit(&app.db).await.unwrap();
+    let recorded = rows
+        .iter()
+        .find(|row| row.path == "/api/share" && row.target.contains(QUESTION))
+        .expect("share audit");
+    assert_eq!(recorded.username, "Ada");
+    assert!(recorded.target.contains("photos"));
+    assert!(recorded.target.contains("3600"));
+    assert_eq!(recorded.result, "success");
+    assert_eq!(recorded.status, 200);
+
+    let chinese = post_share(&app, &ada, "photos", CHINESE, 24 * 60 * 60).await;
+    assert_eq!(chinese.status, StatusCode::OK, "{}", chinese.body);
+    let chinese_body: Value = serde_json::from_str(&chinese.body).unwrap();
+    let chinese_url = chinese_body["url"].as_str().unwrap();
+    assert!(
+        url_path(chinese_url).contains(CHINESE_PATH),
+        "{chinese_url}"
+    );
+    assert!(chinese_url.contains("X-Amz-Expires=86400"), "{chinese_url}");
+
+    let capped = post_share(&app, &ada, "photos", "plain.txt", 99_999_999).await;
+    assert_eq!(capped.status, StatusCode::OK, "{}", capped.body);
+    let capped_body: Value = serde_json::from_str(&capped.body).unwrap();
+    let capped_url = capped_body["url"].as_str().unwrap();
+    assert!(capped_url.contains("X-Amz-Expires=604800"), "{capped_url}");
+    assert_eq!(capped_body["expires_in"], 7 * 24 * 60 * 60);
+    let capped_audit = crate::db::recent_audit(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|row| row.target.contains("plain.txt"))
+        .expect("capped audit");
+    assert!(capped_audit.target.contains("604800"));
+    assert!(!capped_audit.target.contains("99999999"));
+
+    for index in 0..7 {
+        let padded = post_share(&app, &ada, "photos", &format!("pad-{index}"), 3600).await;
+        assert_eq!(padded.status, StatusCode::OK, "{}", padded.body);
+    }
+    let blocked = post_share(&app, &ada, "photos", "once-more", 3600).await;
+    assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(code_of(&blocked.body), "rate_limited");
+    assert!(!header(&blocked.headers, "retry-after").is_empty());
+
+    let closed = state::test_app(&dir.join("closed")).await;
+    let ada = setup_admin(&closed).await;
+    let unavailable = post_share(&closed, &ada, "photos", QUESTION, 3600).await;
+    assert_eq!(unavailable.status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(code_of(&unavailable.body), "share_unavailable");
+    assert!(!unavailable.body.contains("http"));
+    let closed_audit: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit WHERE path = '/api/share'")
+            .fetch_one(&closed.db)
+            .await
+            .unwrap();
+    assert_eq!(closed_audit, 0);
+    admin_task.abort();
+}
+
+fn empty_list_http() -> String {
+    let body = r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><KeyCount>0</KeyCount><IsTruncated>false</IsTruncated></ListBucketResult>"#;
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+async fn capture_requests(
+    response_for: impl Fn(&str) -> String + Send + Sync + 'static,
+) -> (
+    String,
+    Arc<Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen_task = Arc::clone(&seen);
+    let response_for = Arc::new(response_for);
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let seen_task = Arc::clone(&seen_task);
+            let response_for = Arc::clone(&response_for);
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut tmp = [0_u8; 4096];
+                let header_end = loop {
+                    let Ok(read) = socket.read(&mut tmp).await else {
+                        return;
+                    };
+                    if read == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&tmp[..read]);
+                    if let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break pos;
+                    }
+                    if buf.len() > 64 * 1024 {
+                        return;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                let mut body = buf[header_end + 4..].to_vec();
+                while body.len() < length {
+                    let Ok(read) = socket.read(&mut tmp).await else {
+                        return;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&tmp[..read]);
+                }
+                seen_task.lock().expect("captured").push(headers.clone());
+                let response = response_for(&headers);
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{port}"), seen, task)
+}
+
+#[tokio::test]
+async fn missing_bucket_key_returns_412_and_is_not_cached() {
+    const SECRET: &str = "chosen-secret-value";
+    const MESSAGE: &str = "This bucket has no usable read-write key";
+    let (s3_url, s3_seen, s3_task) = capture_requests(|_| empty_list_http()).await;
+    let (admin_url, admin_task) = serve_json(
+        r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value"}"#,
+    )
+    .await;
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("S3_ENDPOINT_URL", s3_url.as_str()),
+            ("S3_REGION", "garage"),
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    let created = exchange(
+        &app,
+        request(
+            "POST",
+            "/api/users",
+            Some(
+                &json!({
+                    "username": "Vera",
+                    "password": OTHER_PASSWORD,
+                    "role": "viewer"
+                })
+                .to_string(),
+            ),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let vera = login_ok(&app, "Vera", OTHER_PASSWORD).await;
+
+    for _ in 0..2 {
+        let missing = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&ada)),
+        )
+        .await;
+        assert_eq!(
+            missing.status,
+            StatusCode::PRECONDITION_FAILED,
+            "{}",
+            missing.body
+        );
+        assert_eq!(code_of(&missing.body), "no_usable_key");
+        let body: Value = serde_json::from_str(&missing.body).unwrap();
+        assert_eq!(body["message"], MESSAGE);
+    }
+    assert!(s3_seen.lock().expect("s3").is_empty());
+
+    let viewer_put = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-1/credential",
+            Some(&json!({ "access_key_id": "CHOSEN" }).to_string()),
+            Some(&vera),
+        ),
+    )
+    .await;
+    assert_eq!(
+        viewer_put.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        viewer_put.body
+    );
+
+    let chosen = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-1/credential",
+            Some(&json!({ "access_key_id": "CHOSEN" }).to_string()),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(chosen.status, StatusCode::OK, "{}", chosen.body);
+    assert!(!chosen.body.contains(SECRET));
+
+    let listed = exchange(
+        &app,
+        request("GET", "/api/buckets/bkt-1/objects", None, Some(&ada)),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    let captured = s3_seen.lock().expect("s3").clone();
+    assert!(
+        captured
+            .iter()
+            .any(|headers| headers.contains("Credential=CHOSEN/")),
+        "{captured:?}"
+    );
+    assert!(
+        captured.iter().all(|headers| !headers.contains(SECRET)),
+        "{captured:?}"
+    );
+
+    let access_key_id: String = sqlx::query_scalar(
+        "SELECT access_key_id FROM bucket_keys WHERE bucket_id = 'bkt-1'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(access_key_id, "CHOSEN");
+    sqlx::query("PRAGMA wal_checkpoint(FULL)")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for name in ["garage-ui.sqlite", "garage-ui.sqlite-wal", "garage-ui.sqlite-shm"] {
+        let path = dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !bytes.windows(SECRET.len()).any(|window| window == SECRET.as_bytes()),
+            "{name} stored the key secret"
+        );
+    }
+    s3_task.abort();
+    admin_task.abort();
 }
 
 fn spawn_upstream(listener: Arc<TcpListener>) -> tokio::task::JoinHandle<String> {

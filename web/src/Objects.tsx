@@ -78,6 +78,11 @@ type DeleteFailure = {
 
 const PAGE_LIMIT = "100";
 const UNAVAILABLE = "Objects are unavailable";
+const SHARE_TIERS = [
+  { label: "Share for 1 hour", seconds: 3600 },
+  { label: "Share for 24 hours", seconds: 86400 },
+  { label: "Share for 7 days", seconds: 604800 },
+] as const;
 
 const initialBrowse: BrowseState = {
   next: null,
@@ -331,6 +336,37 @@ function InlineBody({
   }
 }
 
+function parseCanShare(value: unknown): boolean {
+  return isRecord(value) && value.can_share === true;
+}
+
+function parseKeyIds(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return value.items.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(UNAVAILABLE);
+    }
+    return requiredString(item, "id");
+  });
+}
+
+function parseShare(
+  key: string,
+  value: unknown,
+): { key: string; url: string; website: string | null } {
+  if (!isRecord(value)) {
+    throw new Error(UNAVAILABLE);
+  }
+  const website = value.website_url;
+  return {
+    key,
+    url: requiredString(value, "url"),
+    website: typeof website === "string" && website.length > 0 ? website : null,
+  };
+}
+
 function failureOf(error: unknown): Failure {
   if (error instanceof ApiError) {
     return { message: error.message, code: error.code };
@@ -477,6 +513,12 @@ export function Objects({
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
   const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [keyChoice, setKeyChoice] = useState("");
+  const [shareLink, setShareLink] = useState<{
+    key: string;
+    url: string;
+    website: string | null;
+  } | null>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
@@ -503,8 +545,23 @@ export function Objects({
     if (pendingDelete !== null) {
       setPendingDelete(null);
     }
+    if (shareLink !== null) {
+      setShareLink(null);
+    }
   }
   const searching = search !== null;
+  // 分享位只在对象页读取。调用方没有这个字段，不能改上层组件去传。
+  const session = useQuery({
+    queryKey: ["auth-status"],
+    queryFn: async () => {
+      try {
+        return parseCanShare(await readJson("/api/auth/status"));
+      } catch {
+        return false;
+      }
+    },
+  });
+  const canShare = session.data === true;
   const list = useQuery({
     queryKey: ["bucket-objects", bucketId, prefix, pageToken],
     queryFn: () => readJson(listPath(bucketId, prefix, pageToken)).then(parsePage),
@@ -576,6 +633,34 @@ export function Objects({
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
   const previewKey = canTransfer ? singleKey : null;
+  const shareObject = useMutation({
+    mutationFn: async (ttl: number) => {
+      const key = singleKey;
+      if (key === null) {
+        throw new Error("Select one object");
+      }
+      const body = await api<unknown>("/api/share", {
+        method: "POST",
+        body: JSON.stringify({ ttl_seconds: ttl, bucket: bucketId, key }),
+      });
+      return parseShare(key, body);
+    },
+    onSuccess: (link) => {
+      setShareLink(link);
+    },
+  });
+  const chooseKey = useMutation({
+    mutationFn: async (accessKeyId: string) => {
+      await api(`${bucketUrl(bucketId)}/credential`, {
+        method: "PUT",
+        body: JSON.stringify({ access_key_id: accessKeyId }),
+      });
+    },
+    onSuccess: async () => {
+      setKeyChoice("");
+      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+    },
+  });
   const previewMeta = useQuery({
     queryKey: ["bucket-object", bucketId, previewKey],
     queryFn: () => readJson(metadataPath(bucketId, previewKey ?? "")).then(parseMeta),
@@ -599,6 +684,12 @@ export function Objects({
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
   const metaFailure = selected !== null && meta.isError ? failureOf(meta.error) : null;
   const failure = listFailure ?? searchFailure;
+  const needsKey = canWrite && listFailure?.code === "no_usable_key";
+  const keyChoices = useQuery({
+    queryKey: ["access-keys", bucketId],
+    queryFn: () => readJson("/api/keys?limit=100").then(parseKeyIds),
+    enabled: needsKey,
+  });
   const showFailure = failure !== null && !isGarageDown(failure);
   const showMeta = metaFailure !== null && !isGarageDown(metaFailure);
   const showRows = visible.length > 0 && (searching ? found.isSuccess : page !== null);
@@ -746,6 +837,45 @@ export function Objects({
       ) : null}
       {showFailure && failure ? <p>{failure.message}</p> : null}
       {showFailure && failure?.code ? <p>{failure.code}</p> : null}
+      {needsKey ? (
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (keyChoice.length === 0 || chooseKey.isPending) {
+              return;
+            }
+            chooseKey.mutate(keyChoice);
+          }}
+        >
+          <label className="block text-sm">
+            Bucket key
+            <select
+              className="mt-1 border border-neutral-300 px-2 py-1"
+              value={keyChoice}
+              onChange={(event) => {
+                setKeyChoice(event.target.value);
+              }}
+            >
+              <option value="">Select a key</option>
+              {(keyChoices.data ?? []).map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="submit"
+            disabled={keyChoice.length === 0 || chooseKey.isPending}
+          >
+            Use this key
+          </button>
+          {keyChoices.isError ? <p>{failureOf(keyChoices.error).message}</p> : null}
+          {chooseKey.error instanceof Error ? <p>{chooseKey.error.message}</p> : null}
+        </form>
+      ) : null}
       {showMeta && metaFailure ? <p>{metaFailure.message}</p> : null}
       {showMeta && metaFailure?.code ? <p>{metaFailure.code}</p> : null}
       {showFailure || showMeta ? (
@@ -803,6 +933,28 @@ export function Objects({
               Download
             </a>
           ) : null}
+          {canShare && singleKey !== null
+            ? SHARE_TIERS.map((tier) => (
+                <button
+                  key={tier.seconds}
+                  className="border border-neutral-900 px-3 py-1 text-left"
+                  type="button"
+                  onClick={() => {
+                    shareObject.reset();
+                    shareObject.mutate(tier.seconds);
+                  }}
+                >
+                  {tier.label}
+                </button>
+              ))
+            : null}
+          {shareLink !== null && shareLink.key === singleKey ? (
+            <>
+              <p>{shareLink.url}</p>
+              {shareLink.website !== null ? <p>{shareLink.website}</p> : null}
+            </>
+          ) : null}
+          {shareObject.error instanceof Error ? <p>{shareObject.error.message}</p> : null}
           {copyNote === "copied" ? <p>Copied</p> : null}
           {copyNote === "manual" ? (
             <>

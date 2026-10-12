@@ -131,6 +131,10 @@ const SCHEMA: &[&str] = &[
         used INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
     )",
+    "CREATE TABLE IF NOT EXISTS bucket_keys (
+        bucket_id TEXT PRIMARY KEY,
+        access_key_id TEXT NOT NULL
+    )",
 ];
 
 pub async fn count_users(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
@@ -334,6 +338,29 @@ pub async fn delete_user_sessions(pool: &SqlitePool, user_id: i64) -> Result<(),
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn set_bucket_key(
+    pool: &SqlitePool,
+    bucket_id: &str,
+    access_key_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO bucket_keys (bucket_id, access_key_id) VALUES (?, ?)
+         ON CONFLICT(bucket_id) DO UPDATE SET access_key_id = excluded.access_key_id",
+    )
+    .bind(bucket_id)
+    .bind(access_key_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn bucket_key(pool: &SqlitePool, bucket_id: &str) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT access_key_id FROM bucket_keys WHERE bucket_id = ?")
+        .bind(bucket_id)
+        .fetch_optional(pool)
+        .await
 }
 
 pub async fn insert_audit(pool: &SqlitePool, event: AuditEvent<'_>) -> Result<(), sqlx::Error> {

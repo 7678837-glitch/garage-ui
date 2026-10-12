@@ -23,7 +23,7 @@ use crate::proxy::{self, confirmed};
 use crate::session::{
     self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
 };
-use crate::state::App;
+use crate::state::{self, App};
 use crate::util::{self, hex_encode, random_bytes};
 use crate::version;
 
@@ -71,6 +71,7 @@ pub fn routes(app: App) -> Router<App> {
             post(add_bucket_alias).delete(remove_bucket_alias),
         )
         .route("/api/buckets/{id}/quotas", put(put_bucket_quotas))
+        .route("/api/buckets/{id}/credential", put(put_bucket_credential))
         .route(
             "/api/buckets/{id}/permissions",
             post(grant_bucket_permissions).delete(revoke_bucket_permissions),
@@ -1194,6 +1195,29 @@ async fn delete_bucket(
     post_garage(&app, &current, &headers, "DeleteBucket", Some(&query), &[]).await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BucketCredentialBody {
+    access_key_id: String,
+}
+
+async fn put_bucket_credential(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    Json(body): Json<BucketCredentialBody>,
+) -> Result<Json<Value>, ApiError> {
+    require(&current.user, Op::ChangeBucketKeys)?;
+    db::set_bucket_key(&app.db, &id, &body.access_key_id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    app.clear_credential_cache(&state::credentials::KeyMutation::AllowBucketKey {
+        bucket_id: id,
+    })
+    .await;
+    Ok(Json(json!({ "access_key_id": body.access_key_id })))
+}
+
 async fn put_bucket_quotas(
     State(app): State<App>,
     Authed(current): Authed,
@@ -2115,39 +2139,118 @@ async fn consume_zip(
     Ok(response)
 }
 
+#[derive(Serialize)]
+struct ShareLink {
+    url: String,
+    expires_in: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    website_url: Option<String>,
+}
+
 async fn share(
     State(app): State<App>,
     Authed(current): Authed,
     Json(body): Json<ShareBody>,
 ) -> Result<Response, ApiError> {
-    // 上限现在就截断。链接本身还没做，响应里不放地址。
-    let ttl = access::cap_share_ttl(body.ttl_seconds);
-    let _request = (ttl, body.bucket, body.key);
-    if access::permits(current.user.actor(), Op::Share) {
-        if app.settings.share_enabled() {
-            return Err(ApiError::not_implemented(
-                "share_not_ready",
-                "Share links are not available",
-            ));
-        }
+    if let Err(wait) = app.limits.share(&current.user.username) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "rate_limited",
+            "rate_limited",
+            "POST",
+            "/api/share",
+            "",
+            429,
+        )
+        .await?;
+        return Err(ApiError::rate_limited(wait.as_secs()));
+    }
+    if !access::permits(current.user.actor(), Op::Share) {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "denied",
+            "forbidden",
+            "POST",
+            "/api/share",
+            "",
+            403,
+        )
+        .await?;
+        return Err(ApiError::forbidden("forbidden", "Not allowed"));
+    }
+    if !app.settings.share_enabled() {
         return Err(ApiError::not_implemented(
             "share_unavailable",
             "Public S3 address is not configured",
         ));
     }
+    // 超过 7 天的秒数在签名前截断，审计记截断后的值。
+    let ttl = access::cap_share_ttl(body.ttl_seconds);
+    let url = objects::presign_get(&app, &body.bucket, &body.key, ttl).await?;
+    let website_url = share_website(&app, &current, &body.bucket).await;
+    let target = format!("{}\n{}\n{ttl}", body.bucket, body.key);
     record(
         &app,
         &current.user.username,
         &current.ip,
-        "denied",
-        "forbidden",
+        "success",
+        "ok",
         "POST",
         "/api/share",
-        "",
-        403,
+        &target,
+        200,
     )
     .await?;
-    Err(ApiError::forbidden("forbidden", "Not allowed"))
+    Ok(Json(ShareLink {
+        url,
+        expires_in: ttl,
+        website_url,
+    })
+    .into_response())
+}
+
+async fn share_website(app: &App, current: &Current, bucket_id: &str) -> Option<String> {
+    let template = app.settings.website_root_domain.as_str();
+    // 没有 {bucket} 的根域名不是网站模板，不把它当成公开地址。
+    if !template.contains("{bucket}") {
+        return None;
+    }
+    let query = format!("id={}", percent_encode(bucket_id));
+    let response = proxy::dispatch(
+        app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetBucketInfo",
+        Some(&query),
+        &[],
+        &HeaderMap::new(),
+    )
+    .await
+    .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .ok()?;
+    let value = serde_json::from_slice::<Value>(&bytes).ok()?;
+    if !website_enabled(&value) {
+        return None;
+    }
+    Some(template.replace("{bucket}", bucket_id))
+}
+
+fn website_enabled(value: &Value) -> bool {
+    match &value["websiteAccess"] {
+        Value::Bool(enabled) => *enabled,
+        Value::Object(fields) => fields.get("enabled").and_then(Value::as_bool) == Some(true),
+        _ => false,
+    }
 }
 
 fn upload_content_type(headers: &HeaderMap) -> Option<String> {

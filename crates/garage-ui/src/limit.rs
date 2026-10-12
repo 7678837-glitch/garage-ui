@@ -14,6 +14,7 @@ pub struct Limits {
     login: Limiter,
     init: Limiter,
     password: Limiter,
+    share: Limiter,
     clock: DefaultClock,
 }
 
@@ -23,6 +24,7 @@ impl Limits {
             login: RateLimiter::keyed(quota),
             init: RateLimiter::keyed(quota),
             password: RateLimiter::keyed(quota),
+            share: RateLimiter::keyed(quota),
             clock: DefaultClock::default(),
         }
     }
@@ -38,6 +40,10 @@ impl Limits {
 
     pub fn password(&self, username: &str) -> Result<(), Duration> {
         self.hit(&self.password, &username.to_lowercase())
+    }
+
+    pub fn share(&self, username: &str) -> Result<(), Duration> {
+        self.hit(&self.share, &username.to_lowercase())
     }
 
     fn hit(&self, limiter: &Limiter, key: &str) -> Result<(), Duration> {
