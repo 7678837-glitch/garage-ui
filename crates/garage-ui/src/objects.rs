@@ -1399,10 +1399,12 @@ fn s3_client(
         .retry_config(RetryConfig::standard().with_max_attempts(1))
         .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
         .response_checksum_validation(ResponseChecksumValidation::WhenRequired);
-    if tls_insecure {
+    if tls_insecure && endpoint.starts_with("https://") {
         config = config.http_client(skip_verify_client());
-    } else if let Some(pem) = tls_ca_pem {
-        config = config.http_client(ca_trust_client(pem));
+    } else if !tls_insecure {
+        if let Some(pem) = tls_ca_pem {
+            config = config.http_client(ca_trust_client(pem));
+        }
     }
     Client::from_conf(config.build())
 }
@@ -1516,481 +1518,169 @@ impl aws_smithy_runtime_api::client::http::HttpClient for SkipVerifyClient {
 impl aws_smithy_runtime_api::client::http::HttpConnector for SkipVerifyConnector {
     fn call(
         &self,
-        mut request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+        request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
     ) -> aws_smithy_runtime_api::client::http::HttpConnectorFuture {
         let config = std::sync::Arc::clone(&self.config);
         let connect_timeout = self.connect_timeout;
         let read_timeout = self.read_timeout;
         aws_smithy_runtime_api::client::http::HttpConnectorFuture::new(async move {
-            dispatch(&mut request, &config, connect_timeout, read_timeout)
-                .await
-                .map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::TimedOut {
-                        aws_smithy_runtime_api::client::result::ConnectorError::timeout(Box::new(
-                            error,
-                        ))
-                    } else {
-                        aws_smithy_runtime_api::client::result::ConnectorError::io(Box::new(error))
-                    }
-                })
+            send_https(request, config, connect_timeout, read_timeout).await
         })
     }
 }
 
-async fn dispatch(
-    request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest,
-    config: &std::sync::Arc<rustls::ClientConfig>,
+async fn send_https(
+    request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    config: std::sync::Arc<rustls::ClientConfig>,
     connect_timeout: Option<std::time::Duration>,
     read_timeout: Option<std::time::Duration>,
-) -> std::io::Result<aws_smithy_runtime_api::http::Response> {
-    let uri = request.uri().to_string();
-    let (https, host, port, lookup) = endpoint_parts(&uri)?;
-    let body = request_bytes(request).await?;
-    let encoded = encode_request(request, &host, &port, https, &body)?;
-    let work = async {
-        let mut tcp = connect_tcp(&lookup, connect_timeout).await?;
-        let raw = if https {
-            tls_exchange(&mut tcp, config, &host, &encoded).await?
-        } else {
-            plain_exchange(&mut tcp, &encoded).await?
-        };
-        http_response(&raw)
-    };
-    match read_timeout {
-        Some(limit) => match tokio::time::timeout(limit, work).await {
-            Ok(result) => result,
-            Err(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "read timeout",
-            )),
-        },
-        None => work.await,
-    }
+) -> Result<
+    aws_smithy_runtime_api::client::orchestrator::HttpResponse,
+    aws_smithy_runtime_api::client::result::ConnectorError,
+> {
+    let mut request = request.try_into_http1x().map_err(user_error)?;
+    let host = request
+        .uri()
+        .host()
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| {
+            user_error(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing host",
+            ))
+        })?
+        .to_string();
+    let port = request.uri().port_u16().unwrap_or(443);
+    let origin = origin_form(request.uri())?;
+    *request.uri_mut() = origin;
+    ensure_host(&mut request, &host, port)?;
+
+    let (mut sender, connection) = bounded(connect_timeout, "connect timeout", async {
+        let stream = connect_tls(&host, port, &config).await?;
+        let io = hyper_util::rt::TokioIo::new(stream);
+        hyper::client::conn::http1::handshake(io)
+            .await
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))
+    })
+    .await?;
+    // The response body is still streaming after this function returns.
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let response = bounded(read_timeout, "read timeout", async move {
+        sender.ready().await?;
+        sender.send_request(request).await
+    })
+    .await?;
+    let response = response.map(SdkBody::from_body_1_x);
+    aws_smithy_runtime_api::client::orchestrator::HttpResponse::try_from(response).map_err(user_error)
 }
 
-fn endpoint_parts(uri: &str) -> std::io::Result<(bool, String, String, String)> {
-    let https = uri.starts_with("https://");
-    let rest = uri.split_once("://").map(|(_, rest)| rest).unwrap_or(uri);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    if authority.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "missing authority",
-        ));
-    }
-    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
-        let Some((host, rest)) = rest.split_once(']') else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "bad ipv6 authority",
-            ));
-        };
-        (host.to_string(), rest.strip_prefix(':').filter(|port| !port.is_empty()).map(str::to_string))
-    } else {
-        match authority.rsplit_once(':') {
-            Some((host, port)) if !host.is_empty() && !port.is_empty() => {
-                (host.to_string(), Some(port.to_string()))
-            }
-            _ => (authority.to_string(), None),
-        }
+fn origin_form(
+    uri: &hyper::Uri,
+) -> Result<hyper::Uri, aws_smithy_runtime_api::client::result::ConnectorError> {
+    let path = uri.path();
+    let path = if path.is_empty() { "/" } else { path };
+    let target = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path.to_string(),
     };
-    let port = port.unwrap_or_else(|| if https { "443" } else { "80" }.to_string());
+    target.parse().map_err(user_error)
+}
+
+fn ensure_host(
+    request: &mut hyper::Request<SdkBody>,
+    host: &str,
+    port: u16,
+) -> Result<(), aws_smithy_runtime_api::client::result::ConnectorError> {
+    if request.headers().contains_key(hyper::header::HOST) {
+        return Ok(());
+    }
+    let value = if host.contains(':') {
+        if port == 443 {
+            format!("[{host}]")
+        } else {
+            format!("[{host}]:{port}")
+        }
+    } else if port == 443 {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    };
+    let value = hyper::header::HeaderValue::from_str(&value).map_err(user_error)?;
+    request.headers_mut().insert(hyper::header::HOST, value);
+    Ok(())
+}
+
+async fn connect_tls(
+    host: &str,
+    port: u16,
+    config: &std::sync::Arc<rustls::ClientConfig>,
+) -> std::io::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
     let lookup = if host.contains(':') {
         format!("[{host}]:{port}")
     } else {
         format!("{host}:{port}")
     };
-    Ok((https, host, port, lookup))
-}
-
-async fn connect_tcp(lookup: &str, timeout: Option<std::time::Duration>) -> std::io::Result<tokio::net::TcpStream> {
-    let connect = async {
-        let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
-        let mut found = false;
-        for address in tokio::net::lookup_host(lookup).await? {
-            found = true;
-            match tokio::net::TcpStream::connect(address).await {
-                Ok(stream) => return Ok(stream),
-                Err(error) => last = error,
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    let mut tcp = None;
+    for address in tokio::net::lookup_host(&lookup).await? {
+        match tokio::net::TcpStream::connect(address).await {
+            Ok(stream) => {
+                tcp = Some(stream);
+                break;
             }
-        }
-        if found {
-            Err(last)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no address",
-            ))
-        }
-    };
-    match timeout {
-        Some(limit) => match tokio::time::timeout(limit, connect).await {
-            Ok(result) => result,
-            Err(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "connect timeout",
-            )),
-        },
-        None => connect.await,
-    }
-}
-
-async fn request_bytes(request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest) -> std::io::Result<Vec<u8>> {
-    let body = request.take_body();
-    if let Some(bytes) = body.bytes() {
-        return Ok(bytes.to_vec());
-    }
-    let mut out = Vec::new();
-    let mut body = std::pin::pin!(body);
-    while let Some(frame) = std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await {
-        let frame = frame.map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-        out.extend_from_slice(&data);
-    }
-    Ok(out)
-}
-
-fn encode_request(
-    request: &mut aws_smithy_runtime_api::client::orchestrator::HttpRequest,
-    host: &str,
-    port: &str,
-    https: bool,
-    body: &[u8],
-) -> std::io::Result<Vec<u8>> {
-    let path = request.uri_mut().path().to_string();
-    let query = request.uri_mut().query().unwrap_or("").to_string();
-    let path = if path.is_empty() { "/" } else { path.as_str() };
-    let target = if query.is_empty() {
-        path.to_string()
-    } else {
-        format!("{path}?{query}")
-    };
-    let mut head = format!("{} {target} HTTP/1.1\r\n", request.method());
-    let mut saw_host = false;
-    let mut saw_length = false;
-    let mut saw_connection = false;
-    for (name, value) in request.headers().iter() {
-        if name.eq_ignore_ascii_case("host") {
-            saw_host = true;
-        } else if name.eq_ignore_ascii_case("content-length") {
-            saw_length = true;
-        } else if name.eq_ignore_ascii_case("connection") {
-            saw_connection = true;
-        }
-        head.push_str(name);
-        head.push_str(": ");
-        head.push_str(value);
-        head.push_str("\r\n");
-    }
-    if !saw_host {
-        let value = if (https && port == "443") || (!https && port == "80") {
-            if host.contains(':') {
-                format!("[{host}]")
-            } else {
-                host.to_string()
-            }
-        } else if host.contains(':') {
-            format!("[{host}]:{port}")
-        } else {
-            format!("{host}:{port}")
-        };
-        head.push_str("host: ");
-        head.push_str(&value);
-        head.push_str("\r\n");
-    }
-    if !saw_length {
-        head.push_str(&format!("content-length: {}\r\n", body.len()));
-    }
-    if !saw_connection {
-        head.push_str("connection: close\r\n");
-    }
-    head.push_str("\r\n");
-    let mut bytes = head.into_bytes();
-    bytes.extend_from_slice(body);
-    Ok(bytes)
-}
-
-async fn plain_exchange(tcp: &mut tokio::net::TcpStream, request: &[u8]) -> std::io::Result<Vec<u8>> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    tcp.write_all(request).await?;
-    let mut raw = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        if decode_http(&raw, false)?.is_some() {
-            return Ok(raw);
-        }
-        let read = tcp.read(&mut buf).await?;
-        if read == 0 {
-            if decode_http(&raw, true)?.is_some() {
-                return Ok(raw);
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "response closed",
-            ));
-        }
-        raw.extend_from_slice(&buf[..read]);
-    }
-}
-
-async fn tls_exchange(
-    tcp: &mut tokio::net::TcpStream,
-    config: &std::sync::Arc<rustls::ClientConfig>,
-    host: &str,
-    request: &[u8],
-) -> std::io::Result<Vec<u8>> {
-    let name = rustls::pki_types::ServerName::try_from(host.to_string())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name"))?;
-    let mut conn = rustls::ClientConnection::new(std::sync::Arc::clone(config), name)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    handshake(tcp, &mut conn).await?;
-    write_plain(tcp, &mut conn, request).await?;
-    read_plain_http(tcp, &mut conn).await
-}
-
-async fn handshake(
-    tcp: &mut tokio::net::TcpStream,
-    conn: &mut rustls::ClientConnection,
-) -> std::io::Result<()> {
-    while conn.is_handshaking() {
-        flush_tls(tcp, conn).await?;
-        if !conn.wants_read() {
-            if conn.wants_write() {
-                continue;
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "tls handshake stalled",
-            ));
-        }
-        if pull_tls(tcp, conn).await? == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "tls handshake closed",
-            ));
+            Err(error) => last = error,
         }
     }
-    flush_tls(tcp, conn).await
-}
-
-async fn flush_tls(
-    tcp: &mut tokio::net::TcpStream,
-    conn: &mut rustls::ClientConnection,
-) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    while conn.wants_write() {
-        let mut cipher = Vec::new();
-        let wrote = conn.write_tls(&mut cipher)?;
-        if wrote == 0 || cipher.is_empty() {
-            break;
-        }
-        tcp.write_all(&cipher).await?;
-    }
-    Ok(())
-}
-
-async fn pull_tls(
-    tcp: &mut tokio::net::TcpStream,
-    conn: &mut rustls::ClientConnection,
-) -> std::io::Result<usize> {
-    use tokio::io::AsyncReadExt;
-    let mut buf = [0u8; 16 * 1024];
-    let read = tcp.read(&mut buf).await?;
-    if read == 0 {
-        let _ = conn.read_tls(&mut &[][..])?;
-        return Ok(0);
-    }
-    let mut offset = 0;
-    while offset < read {
-        let wrote = conn.read_tls(&mut &buf[offset..read])?;
-        if wrote == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "tls buffer full",
-            ));
-        }
-        offset += wrote;
-    }
-    conn.process_new_packets()
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    Ok(read)
-}
-
-async fn write_plain(
-    tcp: &mut tokio::net::TcpStream,
-    conn: &mut rustls::ClientConnection,
-    data: &[u8],
-) -> std::io::Result<()> {
-    let mut offset = 0;
-    while offset < data.len() {
-        match conn.writer().write(&data[offset..]) {
-            Ok(0) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
-                    "tls writer",
-                ))
-            }
-            Ok(wrote) => offset += wrote,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error),
-        }
-        flush_tls(tcp, conn).await?;
-    }
-    flush_tls(tcp, conn).await
-}
-
-async fn read_plain_http(
-    tcp: &mut tokio::net::TcpStream,
-    conn: &mut rustls::ClientConnection,
-) -> std::io::Result<Vec<u8>> {
-    let mut raw = Vec::new();
-    loop {
-        drain_plain(conn, &mut raw)?;
-        if decode_http(&raw, false)?.is_some() {
-            return Ok(raw);
-        }
-        if pull_tls(tcp, conn).await? == 0 {
-            drain_plain(conn, &mut raw)?;
-            if decode_http(&raw, true)?.is_some() {
-                return Ok(raw);
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "response closed",
-            ));
-        }
-    }
-}
-
-fn drain_plain(conn: &mut rustls::ClientConnection, out: &mut Vec<u8>) -> std::io::Result<()> {
-    use std::io::Read;
-
-    let mut buf = [0u8; 8192];
-    loop {
-        match conn.reader().read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(read) => out.extend_from_slice(&buf[..read]),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn http_response(raw: &[u8]) -> std::io::Result<aws_smithy_runtime_api::http::Response> {
-    let message = decode_http(raw, true)?.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "response closed")
+    let tcp = tcp.ok_or(last)?;
+    let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name")
     })?;
-    let status = aws_smithy_runtime_api::http::StatusCode::try_from(message.status)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    let mut response = aws_smithy_runtime_api::http::Response::new(status, SdkBody::from(message.body));
-    for (name, value) in message.headers {
-        let _ = response.headers_mut().try_insert(name, value);
-    }
-    Ok(response)
+    tokio_rustls::TlsConnector::from(std::sync::Arc::clone(config))
+        .connect(name, tcp)
+        .await
 }
 
-struct HttpMessage {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-}
-
-fn decode_http(raw: &[u8], eof: bool) -> std::io::Result<Option<HttpMessage>> {
-    let Some(split) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
-        if eof {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "http headers",
-            ));
-        }
-        return Ok(None);
+async fn bounded<T, E>(
+    limit: Option<std::time::Duration>,
+    label: &'static str,
+    work: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, aws_smithy_runtime_api::client::result::ConnectorError>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let result = match limit {
+        Some(limit) => match tokio::time::timeout(limit, work).await {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(timeout_error(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    label,
+                )))
+            }
+        },
+        None => work.await,
     };
-    let head = std::str::from_utf8(&raw[..split])
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let mut lines = head.split("\r\n");
-    let status = lines
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "http status"))?;
-    let mut headers = Vec::new();
-    let mut length = None;
-    let mut chunked = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let name = name.trim();
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
-            length = value.parse().ok();
-        } else if name.eq_ignore_ascii_case("transfer-encoding")
-            && value.to_ascii_lowercase().contains("chunked")
-        {
-            chunked = true;
-        }
-        headers.push((name.to_string(), value.to_string()));
-    }
-    let rest = &raw[split + 4..];
-    let body = if chunked {
-        match decode_chunks(rest) {
-            Some(body) => body,
-            None if eof => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "http chunks",
-                ))
-            }
-            None => return Ok(None),
-        }
-    } else if let Some(length) = length {
-        if rest.len() < length {
-            if eof {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "http body",
-                ));
-            }
-            return Ok(None);
-        }
-        rest[..length].to_vec()
-    } else if eof {
-        rest.to_vec()
-    } else {
-        return Ok(None);
-    };
-    Ok(Some(HttpMessage {
-        status,
-        headers,
-        body,
-    }))
+    result.map_err(io_error)
 }
 
-fn decode_chunks(mut rest: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    loop {
-        let line_end = rest.windows(2).position(|window| window == b"\r\n")?;
-        let line = std::str::from_utf8(&rest[..line_end]).ok()?;
-        let size = usize::from_str_radix(line.split(';').next()?.trim(), 16).ok()?;
-        rest = &rest[line_end + 2..];
-        if size == 0 {
-            if rest.is_empty() || rest.starts_with(b"\r\n") {
-                return Some(out);
-            }
-            return rest
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .map(|_| out);
-        }
-        if rest.len() < size + 2 || &rest[size..size + 2] != b"\r\n" {
-            return None;
-        }
-        out.extend_from_slice(&rest[..size]);
-        rest = &rest[size + 2..];
-    }
+fn io_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::io(Box::new(error))
+}
+
+fn user_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::user(Box::new(error))
+}
+
+fn timeout_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::timeout(Box::new(error))
 }
 
 fn s3_error(status: u16, message: String) -> ApiError {
