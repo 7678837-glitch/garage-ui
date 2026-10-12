@@ -1,16 +1,15 @@
+use std::collections::VecDeque;
 use std::io::Write;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 
-use axum::Json;
-use axum::body::{Body, Bytes, HttpBody};
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, patch, post, put};
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::{Value, json};
+use super::Authed;
+use super::percent_encode;
+use super::record;
+use super::require;
+use super::status;
+use super::thumb;
 use crate::access::{self, Op};
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
@@ -22,12 +21,15 @@ use crate::session::{
 };
 use crate::state::{self, App};
 use crate::util::{self, hex_encode, random_bytes};
-use super::Authed;
-use super::percent_encode;
-use super::record;
-use super::require;
-use super::status;
-use super::thumb;
+use axum::Json;
+use axum::body::{Body, Bytes, HttpBody};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{any, get, patch, post, put};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::{Value, json};
 
 #[derive(Deserialize)]
 pub(crate) struct NameQuery {
@@ -173,7 +175,7 @@ pub(crate) async fn download_archive(
         return Err(ApiError::not_found());
     }
     let planned = crate::zip::archive_names(&keys);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = archive_queue();
     let bucket = id.clone();
     let app = app.clone();
     // The handler returns this response before the task opens the next object.
@@ -182,10 +184,7 @@ pub(crate) async fn download_archive(
     });
     let mut response = Response::new(Body::new(ZipChunks { rx }));
     let headers = response.headers_mut();
-    headers.insert(
-        "content-type",
-        HeaderValue::from_static("application/zip"),
-    );
+    headers.insert("content-type", HeaderValue::from_static("application/zip"));
     headers.insert(
         "cache-control",
         HeaderValue::from_static("private, no-store"),
@@ -200,14 +199,19 @@ async fn write_archive(
     app: App,
     bucket: String,
     planned: Vec<crate::zip::PlannedFile>,
-    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
+    tx: ArchiveTx,
 ) -> Result<(), ApiError> {
-    let mut archive = crate::zip::ArchiveSink::new(ChunkWriter { tx });
+    let mut archive = crate::zip::ArchiveSink::new(ChunkWriter { tx: tx.clone() });
     let mut errors = Vec::new();
+    let mut names = Vec::new();
     for entry in planned {
         match objects::open(&app, &bucket, &entry.key).await {
             Ok(opened) => {
+                tx.ready(crate::zip::header_room(&entry.name))
+                    .await
+                    .map_err(|_| ApiError::internal())?;
                 archive.begin_file(&entry.name)?;
+                names.push(entry.name);
                 let mut object_body = std::pin::pin!(opened.body);
                 while let Some(next) =
                     std::future::poll_fn(|cx| HttpBody::poll_frame(object_body.as_mut(), cx)).await
@@ -216,17 +220,220 @@ async fn write_archive(
                     let Ok(chunk) = frame.into_data() else {
                         continue;
                     };
-                    archive.write_bytes(&chunk)?;
+                    write_queued(&mut archive, &tx, &chunk).await?;
                 }
             }
             Err(_) => errors.push(entry.key),
         }
     }
-    archive.finish(&errors)
+    if !errors.is_empty() {
+        tx.ready(crate::zip::header_room("_errors.txt"))
+            .await
+            .map_err(|_| ApiError::internal())?;
+        archive.begin_file("_errors.txt")?;
+        names.push("_errors.txt".to_string());
+        let note = errors.join("\n");
+        write_queued(&mut archive, &tx, note.as_bytes()).await?;
+        write_queued(&mut archive, &tx, b"\n").await?;
+    }
+    tx.ready(crate::zip::closing_room(&names))
+        .await
+        .map_err(|_| ApiError::internal())?;
+    archive.finish()
+}
+
+async fn write_queued(
+    archive: &mut crate::zip::ArchiveSink<ChunkWriter>,
+    tx: &ArchiveTx,
+    bytes: &[u8],
+) -> Result<(), ApiError> {
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let n = rest.len().min(crate::zip::ARCHIVE_WRITE_MAX);
+        tx.ready(n).await.map_err(|_| ApiError::internal())?;
+        archive.write_bytes(&rest[..n])?;
+        rest = &rest[n..];
+    }
+    Ok(())
+}
+
+const ARCHIVE_QUEUE_CAP: usize = 64 * 1024 * 1024;
+
+fn archive_queue() -> (ArchiveTx, ArchiveRx) {
+    let shared = Arc::new(Mutex::new(ArchiveQueue {
+        chunks: VecDeque::new(),
+        queued: 0,
+        accepted: 0,
+        senders: 1,
+        closed: false,
+        recv_waker: None,
+        send_waker: None,
+    }));
+    (
+        ArchiveTx {
+            shared: Arc::clone(&shared),
+        },
+        ArchiveRx { shared },
+    )
+}
+
+struct ArchiveQueue {
+    chunks: VecDeque<Bytes>,
+    queued: usize,
+    // Bytes reserved by the current write before they sit in `chunks`.
+    accepted: usize,
+    senders: usize,
+    closed: bool,
+    recv_waker: Option<Waker>,
+    send_waker: Option<Waker>,
+}
+
+#[derive(Debug)]
+enum ArchivePush {
+    Full,
+    Closed,
+}
+
+struct ArchiveTx {
+    shared: Arc<Mutex<ArchiveQueue>>,
+}
+
+struct ArchiveRx {
+    shared: Arc<Mutex<ArchiveQueue>>,
+}
+
+impl Clone for ArchiveTx {
+    fn clone(&self) -> Self {
+        self.lock().senders += 1;
+        Self {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+impl Drop for ArchiveTx {
+    fn drop(&mut self) {
+        let mut queue = self.lock();
+        queue.senders -= 1;
+        if queue.senders == 0 {
+            queue.closed = true;
+            let waker = queue.recv_waker.take();
+            drop(queue);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+}
+
+impl Drop for ArchiveRx {
+    fn drop(&mut self) {
+        let mut queue = self.lock();
+        queue.closed = true;
+        let waker = queue.send_waker.take();
+        drop(queue);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+}
+
+impl ArchiveTx {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ArchiveQueue> {
+        self.shared.lock().expect("archive queue")
+    }
+
+    fn retained(queue: &ArchiveQueue) -> usize {
+        queue.queued.saturating_add(queue.accepted)
+    }
+
+    fn try_push(&self, bytes: Bytes) -> Result<(), ArchivePush> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        self.reserve(bytes.len())?;
+        self.commit(bytes);
+        Ok(())
+    }
+
+    fn reserve(&self, n: usize) -> Result<(), ArchivePush> {
+        if n > crate::zip::ARCHIVE_WRITE_MAX {
+            return Err(ArchivePush::Full);
+        }
+        let mut queue = self.lock();
+        if queue.closed {
+            return Err(ArchivePush::Closed);
+        }
+        if Self::retained(&queue).saturating_add(n) > ARCHIVE_QUEUE_CAP {
+            return Err(ArchivePush::Full);
+        }
+        queue.accepted += n;
+        Ok(())
+    }
+
+    fn commit(&self, bytes: Bytes) {
+        let mut queue = self.lock();
+        let n = bytes.len();
+        queue.accepted = queue.accepted.saturating_sub(n);
+        queue.queued += n;
+        queue.chunks.push_back(bytes);
+        let waker = queue.recv_waker.take();
+        drop(queue);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    async fn ready(&self, n: usize) -> Result<(), ArchivePush> {
+        std::future::poll_fn(|cx| self.poll_ready(cx, n)).await
+    }
+
+    fn poll_ready(&self, cx: &mut Context<'_>, n: usize) -> Poll<Result<(), ArchivePush>> {
+        if n > ARCHIVE_QUEUE_CAP {
+            return Poll::Ready(Err(ArchivePush::Full));
+        }
+        let mut queue = self.lock();
+        if queue.closed {
+            return Poll::Ready(Err(ArchivePush::Closed));
+        }
+        if Self::retained(&queue).saturating_add(n) <= ARCHIVE_QUEUE_CAP {
+            return Poll::Ready(Ok(()));
+        }
+        queue.send_waker = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+impl ArchiveRx {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ArchiveQueue> {
+        self.shared.lock().expect("archive queue")
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Bytes>> {
+        let mut queue = self.lock();
+        if let Some(bytes) = queue.chunks.pop_front() {
+            queue.queued = queue.queued.saturating_sub(bytes.len());
+            let waker = queue.send_waker.take();
+            drop(queue);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+            return Poll::Ready(Some(bytes));
+        }
+        if queue.closed || queue.senders == 0 {
+            return Poll::Ready(None);
+        }
+        queue.recv_waker = Some(cx.waker().clone());
+        Poll::Pending
+    }
+
+    async fn recv(&mut self) -> Option<Bytes> {
+        std::future::poll_fn(|cx| self.poll_recv(cx)).await
+    }
 }
 
 struct ZipChunks {
-    rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
+    rx: ArchiveRx,
 }
 
 impl HttpBody for ZipChunks {
@@ -246,7 +453,7 @@ impl HttpBody for ZipChunks {
 }
 
 struct ChunkWriter {
-    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
+    tx: ArchiveTx,
 }
 
 impl Write for ChunkWriter {
@@ -254,14 +461,26 @@ impl Write for ChunkWriter {
         if buf.is_empty() {
             return Ok(0);
         }
-        self.tx.send(Bytes::copy_from_slice(buf)).map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "archive client closed")
-        })?;
-        Ok(buf.len())
+        let n = buf.len().min(crate::zip::ARCHIVE_WRITE_MAX);
+        // Count the copy before it is queued. A full queue returns here and does not wait.
+        self.tx.reserve(n).map_err(push_error)?;
+        self.tx.commit(Bytes::copy_from_slice(&buf[..n]));
+        Ok(n)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+fn push_error(error: ArchivePush) -> std::io::Error {
+    match error {
+        ArchivePush::Full => {
+            std::io::Error::new(std::io::ErrorKind::WouldBlock, "archive queue full")
+        }
+        ArchivePush::Closed => {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "archive client closed")
+        }
     }
 }
 
@@ -277,11 +496,7 @@ fn archive_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
         ));
     }
     keys.iter()
-        .map(|key| {
-            key.as_str()
-                .map(str::to_string)
-                .ok_or_else(invalid_keys)
-        })
+        .map(|key| key.as_str().map(str::to_string).ok_or_else(invalid_keys))
         .collect()
 }
 
@@ -837,4 +1052,31 @@ fn delete_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
         out.push(key.to_string());
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Bytes;
+
+    use super::archive_queue;
+
+    #[tokio::test]
+    async fn archive_queue_holds_at_most_64mb() {
+        let (tx, mut rx) = archive_queue();
+        let chunk = Bytes::from(vec![0_u8; 256 * 1024]);
+        let cap = 67_108_864_usize;
+        let mut accepted = 0_usize;
+        while accepted < cap {
+            tx.try_push(chunk.clone()).expect("chunk within 64 MiB");
+            accepted += chunk.len();
+        }
+        assert!(accepted <= cap, "accepted {accepted} bytes");
+        assert!(
+            tx.try_push(chunk.clone()).is_err(),
+            "extra chunk was accepted"
+        );
+        let taken = rx.recv().await.expect("queued chunk");
+        assert_eq!(taken.len(), chunk.len());
+        assert!(tx.try_push(chunk).is_ok());
+    }
 }

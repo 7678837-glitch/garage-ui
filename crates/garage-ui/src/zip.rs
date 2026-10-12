@@ -26,6 +26,22 @@ pub(crate) fn archive_names(keys: &[String]) -> Vec<PlannedFile> {
         .collect()
 }
 
+pub(crate) const ARCHIVE_WRITE_MAX: usize = 256 * 1024;
+
+pub(crate) fn header_room(name: &str) -> usize {
+    // Previous data descriptor, local header, and name. Slack covers a zip64 extra field.
+    16 + 30 + name.len() + 32
+}
+
+pub(crate) fn closing_room(names: &[String]) -> usize {
+    // Last data descriptor, one central header per name, and the end records.
+    let mut room: usize = 16 + 22 + 128;
+    for name in names {
+        room = room.saturating_add(46 + name.len() + 32);
+    }
+    room
+}
+
 pub(crate) struct ArchiveSink<W: Write> {
     writer: zip::ZipWriter<zip::write::StreamWriter<W>>,
 }
@@ -49,12 +65,7 @@ impl<W: Write> ArchiveSink<W> {
             .map_err(|_| ApiError::internal())
     }
 
-    pub(crate) fn finish(mut self, errors: &[String]) -> Result<(), ApiError> {
-        if !errors.is_empty() {
-            self.begin_file("_errors.txt")?;
-            self.write_bytes(errors.join("\n").as_bytes())?;
-            self.write_bytes(b"\n")?;
-        }
+    pub(crate) fn finish(self) -> Result<(), ApiError> {
         self.writer.finish().map_err(|_| ApiError::internal())?;
         Ok(())
     }
