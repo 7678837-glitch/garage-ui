@@ -41,6 +41,7 @@ pub(crate) use auth::logout;
 pub(crate) use auth::public_config;
 pub(crate) use auth::setup;
 pub(crate) use auth::status;
+pub(crate) use buckets::abort_multipart_uploads;
 pub(crate) use buckets::add_bucket_alias;
 pub(crate) use buckets::cleanup_uploads;
 pub(crate) use buckets::create_bucket;
@@ -146,7 +147,7 @@ pub fn routes(app: App) -> Router<App> {
         )
         .route(
             "/api/buckets/{id}/multipart",
-            get(list_multipart_uploads),
+            get(list_multipart_uploads).delete(abort_multipart_uploads),
         )
         .route(
             "/api/buckets/{id}/cleanup-uploads",
@@ -2455,6 +2456,159 @@ mod tests {
         .await;
         assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
         assert_eq!(cleanup_calls(&admin).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn abort_one_leaves_the_other_and_an_empty_body_aborts_the_rest() {
+        let aborted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let recorded = Arc::clone(&aborted);
+        let s3 = S3Mock::start(move |line| {
+            if line.contains("uploadId=") {
+                let id = query_value(request_target(line), "uploadId")
+                    .map(percent_decode)
+                    .unwrap_or_default();
+                if id == "nope" {
+                    return head_missing();
+                }
+                recorded.lock().expect("aborted uploads").push(id);
+                return delete_ok();
+            }
+            if line.contains("uploads") {
+                let gone = recorded.lock().expect("aborted uploads").clone();
+                let pending: Vec<_> = [
+                    ("old.bin", "up-old", "2000-01-01T00:00:00Z"),
+                    ("new.bin", "up-new", "2000-01-02T00:00:00Z"),
+                ]
+                .into_iter()
+                .filter(|(_, id, _)| !gone.iter().any(|seen| seen == id))
+                .collect();
+                return multipart_uploads_xml(&pending);
+            }
+            head_missing()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &s3.url, true).await;
+        let (session, _) = login(&app).await;
+        let abort_lines = |mock: &S3Mock| {
+            mock.requests()
+                .into_iter()
+                .filter(|line| line.contains("uploadId="))
+                .collect::<Vec<_>>()
+        };
+
+        let missing = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/multipart",
+                Some(r#"{"key":"missing","uploadId":"nope"}"#),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(&missing, StatusCode::NOT_FOUND, "not_found", "Not found");
+        assert!(
+            s3.requests().iter().any(|line| line.contains("uploadId=nope")),
+            "missing upload was not sent to S3: {:?}",
+            s3.requests()
+        );
+        assert!(
+            aborted.lock().expect("aborted uploads").is_empty(),
+            "404 was recorded as a successful abort: {:?}",
+            aborted.lock().expect("aborted uploads")
+        );
+
+        let one = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/multipart",
+                Some(r#"{"key":"old.bin","uploadId":"up-old"}"#),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(one.status, StatusCode::OK, "{}", one.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&one.body).unwrap(),
+            json!({ "aborted": 1 })
+        );
+        let lines = abort_lines(&s3);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("up-old") && !line.contains("up-new"))
+                .count(),
+            1,
+            "{lines:?}"
+        );
+        assert!(
+            s3.requests().iter().all(|line| !line.contains("uploads")),
+            "aborting one upload listed first: {:?}",
+            s3.requests()
+        );
+
+        let listed = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/multipart", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!({
+                "uploads": [{
+                    "key": "new.bin",
+                    "uploadId": "up-new",
+                    "initiated": "2000-01-02T00:00:00Z"
+                }]
+            })
+        );
+
+        let before = abort_lines(&s3);
+        let rest = exchange(
+            &app,
+            request("DELETE", "/api/buckets/bkt-1/multipart", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(rest.status, StatusCode::OK, "{}", rest.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&rest.body).unwrap(),
+            json!({ "aborted": 1 })
+        );
+        let lines = abort_lines(&s3);
+        assert_eq!(lines.len(), before.len() + 1, "{lines:?}");
+        assert!(
+            lines[before.len()].contains("up-new"),
+            "{lines:?}"
+        );
+
+        let empty = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/multipart", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(empty.status, StatusCode::OK, "{}", empty.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&empty.body).unwrap(),
+            json!({ "uploads": [] })
+        );
+
+        let viewer = viewer_session(&app, &session).await;
+        let kept = abort_lines(&s3).len();
+        let denied = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/multipart",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(abort_lines(&s3).len(), kept);
     }
 
     #[tokio::test]

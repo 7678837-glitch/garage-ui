@@ -438,6 +438,72 @@ pub(crate) async fn list_multipart_uploads(
     Ok(Json(json!({ "uploads": uploads })))
 }
 
+enum AbortTarget {
+    All,
+    One { key: String, upload_id: String },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AbortOne {
+    key: String,
+    #[serde(rename = "uploadId")]
+    upload_id: String,
+}
+
+fn invalid_upload() -> ApiError {
+    ApiError::bad_request("invalid_upload", "key and uploadId are required")
+}
+
+fn abort_target(body: &[u8]) -> Result<AbortTarget, ApiError> {
+    if body.is_empty() {
+        return Ok(AbortTarget::All);
+    }
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_upload())?;
+    match value {
+        Value::Object(map) if map.is_empty() => Ok(AbortTarget::All),
+        Value::Object(map) => {
+            let one: AbortOne =
+                serde_json::from_value(Value::Object(map)).map_err(|_| invalid_upload())?;
+            Ok(AbortTarget::One {
+                key: one.key,
+                upload_id: one.upload_id,
+            })
+        }
+        _ => Err(invalid_upload()),
+    }
+}
+
+pub(crate) async fn abort_multipart_uploads(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    require(&current.user, Op::WriteObjects)?;
+    let aborted = match abort_target(&body)? {
+        AbortTarget::All => {
+            let uploads = objects::list_multipart_uploads(&app, &id).await?;
+            let mut aborted = 0u64;
+            for upload in uploads {
+                // One failed AbortMultipartUpload must not fail the rest, and it does not count.
+                if objects::abort_incomplete_upload(&app, &id, &upload.key, &upload.upload_id)
+                    .await
+                    .is_ok()
+                {
+                    aborted += 1;
+                }
+            }
+            aborted
+        }
+        AbortTarget::One { key, upload_id } => {
+            objects::abort_incomplete_upload(&app, &id, &key, &upload_id).await?;
+            1
+        }
+    };
+    Ok(Json(json!({ "aborted": aborted })))
+}
+
 pub(crate) async fn cleanup_uploads(
     State(app): State<App>,
     Authed(current): Authed,
