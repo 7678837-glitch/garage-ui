@@ -8263,6 +8263,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn password_change_drops_the_other_session() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session_a, _) = login(&app).await;
+        let logged_in = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(logged_in.status, StatusCode::OK, "{}", logged_in.body);
+        let session_b = session_from(&logged_in.headers);
+        let changed = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/change-password",
+                Some(
+                    &json!({
+                        "current_password": PASSWORD,
+                        "new_password": "updated horse"
+                    })
+                    .to_string(),
+                ),
+                Some(&session_a),
+            ),
+        )
+        .await;
+        assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+        let replacement = session_from(&changed.headers);
+        assert_ne!(replacement.id, session_a.id);
+
+        let other = exchange(&app, request("GET", "/api/config", None, Some(&session_b))).await;
+        assert_eq!(other.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code_of(&other.body), "unauthenticated");
+
+        let stale = exchange(&app, request("GET", "/api/config", None, Some(&session_a))).await;
+        assert_eq!(stale.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code_of(&stale.body), "unauthenticated");
+
+        let current =
+            exchange(&app, request("GET", "/api/config", None, Some(&replacement))).await;
+        assert_eq!(current.status, StatusCode::OK, "{}", current.body);
+    }
+
+    #[tokio::test]
     async fn create_user_rejections_are_audited() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
