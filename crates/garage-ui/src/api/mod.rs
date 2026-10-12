@@ -356,7 +356,7 @@ async fn hash_password(password: &str, cost: u32) -> Result<String, ApiError> {
         .map_err(|_| ApiError::internal())
 }
 
-// 参数就是审计表的列。收成另一个结构和里面的 AuditEvent 重复。
+// The arguments are the audit-table columns. Another struct would repeat AuditEvent.
 #[allow(clippy::too_many_arguments)]
 async fn record(
     app: &App,
@@ -5274,6 +5274,121 @@ mod tests {
         assert_eq!(bucket_of(&seen[1]), "bkt-1");
         assert_eq!(object_key_of(&seen[1]), "missing");
         assert!(seen[1].starts_with("DELETE "), "{}", seen[1]);
+    }
+
+    #[tokio::test]
+    async fn alias_with_ampersand_and_equals_still_browses_uploads_and_deletes() {
+        let admin_body = r#"{"id":"bkt-1","globalAliases":[],"localAliases":[{"accessKeyId":"GK-list","alias":"a&b=c"}]}"#;
+        let admin = Upstream::start(UpstreamReply::Ok(admin_body.to_string())).await;
+        let s3 = S3Mock::start(|line| {
+            if line.starts_with("PUT ") {
+                return put_ok("etag-1");
+            }
+            if line.starts_with("DELETE ") {
+                return delete_ok();
+            }
+            list_xml(false, None, &[("note.txt", 5, "abc")], &[])
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", admin.url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("S3_ENDPOINT_URL", s3.url.as_str()),
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (session, _) = login(&app).await;
+
+        let detail = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(detail.status, StatusCode::OK, "{}", detail.body);
+        assert_eq!(detail.body, admin_body);
+        let details = bucket_info_calls(&admin);
+        assert_eq!(
+            details.len(),
+            1,
+            "{:?}",
+            details
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            details[0]
+                .line
+                .contains("GET /v2/GetBucketInfo?id=bkt-1 "),
+            "{}",
+            details[0].line
+        );
+
+        let listed = exchange(
+            &app,
+            request("GET", "/api/buckets/bkt-1/objects", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!({
+                "prefix": "",
+                "entries": [
+                    {"kind": "object", "key": "note.txt", "size": 5, "etag": "abc", "lastModified": "2026-10-11T00:00:00Z"}
+                ],
+                "next": null
+            })
+        );
+
+        let uploaded = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/note.txt",
+                b"hello",
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(uploaded.status, StatusCode::CREATED, "{}", uploaded.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&uploaded.body).unwrap(),
+            json!({ "key": "note.txt", "etag": "etag-1", "size": 5 })
+        );
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                "/api/buckets/bkt-1/objects/note.txt",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+        assert_eq!(removed.body, "");
+
+        let seen = s3.requests();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(seen[0].starts_with("GET "), "{}", seen[0]);
+        assert!(seen[1].starts_with("PUT "), "{}", seen[1]);
+        assert!(seen[2].starts_with("DELETE "), "{}", seen[2]);
+        for line in &seen {
+            assert_eq!(bucket_of(line), "bkt-1", "{line}");
+            assert!(!line.contains("a&b=c"), "{line}");
+            assert!(!line.contains("a%26b%3Dc"), "{line}");
+        }
+        assert_eq!(object_key_of(&seen[1]), "note.txt");
+        assert_eq!(object_key_of(&seen[2]), "note.txt");
     }
 
     fn recursive_pages(prefix: &str) -> Vec<Vec<String>> {
