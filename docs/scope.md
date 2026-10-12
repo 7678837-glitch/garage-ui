@@ -1,60 +1,60 @@
-# 目标、范围与最小版本
+# Goals, scope, and the minimum version
 
-## 1. 目标与范围
+## 1. Goals and scope
 
-### 1.1 目标
+### 1.1 Goals
 
-本项目是 Garage（S3 兼容分布式对象存储）的自托管 Web 管理台：单个 Rust 二进制内嵌前端单页应用，面向集群管理员和只读运维人员，提供集群、布局、桶、密钥、对象的日常管理能力。
+This project is a self-hosted web admin UI for Garage (an S3-compatible distributed object store). One Rust binary embeds the frontend single-page application. It is for cluster administrators and read-only operators, and it provides day-to-day management of the cluster, the layout, buckets, keys, and objects.
 
-本阶段目标：
+Goals of this phase:
 
-1. 安全默认：开箱即需登录，任何响应都不泄露集群密钥，对象预览不能成为脚本注入入口。
-2. 正确：桶寻址、凭据缓存、删除、容量、编码等行为按 [correctness.md](correctness.md) 实现，每条都有自动化测试。
-3. 对齐 Garage：只支持 Garage v2.3.0 及以上（推荐 v2.4.1），覆盖 Admin API v2 的全部 46 个端点，并通过能力探测使用 main-v2 未发布的列表接口。
-4. 可维护：可重复构建、锁定工具链版本、CI 全绿、依赖漏洞清零、类型从 Garage OpenAPI 生成。
+1. Safe by default. Login is required out of the box. No response leaks a cluster secret. Object preview cannot be an entry point for script injection.
+2. Correct. Bucket addressing, the credential cache, deletion, capacity, encoding, and the related behavior are implemented as [correctness.md](correctness.md) requires. Each item has an automated test.
+3. Aligned with Garage. Support only Garage v2.3.0 and later (v2.4.1 is recommended). Cover all 46 Admin API v2 endpoints, and use the unpublished main-v2 list APIs through a capability probe.
+4. Maintainable. Builds are repeatable, toolchain versions are pinned, CI is fully green, dependency vulnerabilities are at zero, and types are generated from the Garage OpenAPI document.
 
-### 1.2 范围内
+### 1.2 In scope
 
-- 集群健康、状态、统计、布局（含预览、历史、跳过死节点）。
-- 桶：增删改、别名、配额、网站访问、CORS、生命周期、权限。
-- 密钥：增删改、导入、允许建桶、过期时间。
-- 对象：浏览、上传、下载、删除、批量操作、分享、未完成上传清理。
-- 运维：Worker、修复任务、块错误、元数据快照、受限管理令牌、指标。
-- 本项目自身：多用户与角色、会话、审计日志、配置，以及管理台的容器化部署（`linux/amd64` 与 `linux/arm64`）。
+- Cluster health, status, statistics, and layout (including preview, history, and skipping dead nodes).
+- Buckets: create, delete, update, aliases, quotas, website access, CORS, lifecycle, and permissions.
+- Keys: create, delete, update, import, allow bucket creation, and expiration.
+- Objects: browse, upload, download, delete, bulk actions, sharing, and cleanup of incomplete uploads.
+- Operations: Workers, repair tasks, block errors, metadata snapshots, restricted admin tokens, and metrics.
+- This project itself: multiple users and roles, sessions, the audit log, configuration, and containerized deployment of the admin UI (`linux/amd64` and `linux/arm64`).
 
-### 1.3 范围外
+### 1.3 Out of scope
 
-- 不实现 Garage 不支持的 S3 特性（见 [features-data.md](features-data.md) 的 5.24）。
-- 不做 Garage 节点的安装、升级或配置文件编辑。本地容器里的 Garage 只用于测试、评估和示例部署。
-- 不提供匿名访问模式。
-- 外部身份源（OIDC/LDAP）列为远期可选项，不在本阶段交付。
+- Do not implement S3 features that Garage does not support (see 5.24 of [features-data.md](features-data.md)).
+- Do not install a Garage node, upgrade one, or edit a Garage configuration file. Garage in a local container is only for tests, evaluation, and the example deployment.
+- Do not offer an anonymous access mode.
+- An external identity source (OIDC or LDAP) is listed as a later option. It is not delivered in this phase.
 
-## 8. 最小版本
+## 8. The minimum version
 
-最小版本是第一个可对外交付的版本，满足以下全部条件即可发布，其余功能按 [roadmap.md](roadmap.md) 后续阶段交付。
+The minimum version is the first version that can be delivered outside the project. It may be released once every condition below is met. The other features are delivered in the later phases of [roadmap.md](roadmap.md).
 
-### 8.1 必含功能
+### 8.1 Required features
 
-| 模块 | 范围 |
+| Module | Scope |
 |---|---|
-| 账户 | 初始化向导、登录/退出、改密码；管理员与只读两种角色，以及可授予只读用户的下载、分享权限位（3.1、3.4、3.5、3.19） |
-| 安全基线 | [security.md](security.md) 全部 P0：默认鉴权、密钥不泄露、示例无密钥、浏览器不持 Garage 令牌、CSRF、限流、端点白名单代理、安全头、请求体上限、对象 no-store |
-| 集群 | 健康、状态、集群统计（5.9、5.10 不含指标面板） |
-| 桶 | 分页列表、创建、删除、别名、配额、权限授予/撤销（5.1、5.18、5.19） |
-| 密钥 | 分页列表、创建、删除、改名、允许建桶、查看 secret（二次确认）（5.7） |
-| 对象 | 分页浏览、前缀导航、安全预览、流式下载、流式上传（含分片）、单个与批量删除、递归删除（5.2–5.4） |
-| 界面 | 导航与页面结构（5.25）、统一交互状态（5.26）、确认流程分级（5.27）、凭据一次性显示与复制（5.31）、列表筛选排序与对象多选（5.30）、上传面板（5.33）、浅色/深色主题与基础无障碍（5.35） |
-| 版本 | v2.3.0 最低版本自检；列表接口能力探测；关于页显示版本与能力（5.36） |
-| 交付 | 非 root 只读根文件系统镜像（`linux/amd64` 与 `linux/arm64`）、compose 示例（无密钥）、CI 全绿、对 v2.3.x 与 v2.4.1 的 E2E |
+| Account | Setup wizard, log in and log out, change password. Two roles, administrator and read-only, plus download and share permission bits that can be granted to a read-only user (3.1, 3.4, 3.5, 3.19). |
+| Security baseline | Every P0 in [security.md](security.md): authentication by default, secrets are not leaked, examples contain no secrets, the browser does not hold a Garage token, CSRF, rate limiting, an endpoint allowlist proxy, security headers, a request-body limit, and `no-store` on objects. |
+| Cluster | Health, status, and cluster statistics (5.9, and 5.10 without the metrics panel). |
+| Buckets | Paginated list, create, delete, aliases, quotas, and grant or revoke permissions (5.1, 5.18, 5.19). |
+| Keys | Paginated list, create, delete, rename, allow bucket creation, and view the secret (a second confirmation) (5.7). |
+| Objects | Paginated browsing, prefix navigation, safe preview, streamed download, streamed upload (including multipart), single and batch delete, and recursive delete (5.2 through 5.4). |
+| UI | Navigation and page structure (5.25), shared interaction states (5.26), graded confirmation (5.27), one-time display and copy of a credential (5.31), list filtering and sorting and object multi-select (5.30), the upload panel (5.33), light and dark themes and basic accessibility (5.35). |
+| Version | A self-check that v2.3.0 is the minimum version, a capability probe of the list APIs, and an About page that shows the version and the capabilities (5.36). |
+| Delivery | A non-root image with a read-only root filesystem (`linux/amd64` and `linux/arm64`), a compose example with no secrets, CI fully green, and E2E against v2.3.x and v2.4.1. |
 
-### 8.2 不在最小版本内
+### 8.2 Not in the minimum version
 
-布局编辑与变更流程（5.28）、管理令牌与作用域选择器（5.34）、概览容量排行与自动刷新（5.29，最小版只做健康与统计卡片）、对象预览查看器的区间读取与切换（5.32，最小版只做白名单内联预览）、Worker/修复/块错误/快照、CORS 与生命周期、分享链接、ZIP 批量下载、缩略图、审计页面（审计写入仍在最小版本内）、i18n、Helm、多集群、外部身份源。
+Layout editing and the change flow (5.28). Admin tokens and the scope picker (5.34). Overview capacity ranking and auto-refresh (5.29; the minimum version does only the health and statistics cards). Range reads and switching in the object preview viewer (5.32; the minimum version does only allowlisted inline preview). Workers, repair, block errors, and snapshots. CORS and lifecycle. Share links. ZIP bulk download. Thumbnails. The audit page (audit writes are still in the minimum version). i18n, Helm, multiple clusters, and an external identity source.
 
-### 8.3 最小版本的质量门槛
+### 8.3 Quality bar for the minimum version
 
-- 第 3 章每条 P0 都有自动化测试；后端覆盖率不低于 80%，安全相关包不低于 95%。
-- Rust 依赖可达漏洞 0；前端生产依赖 high 及以上 0；密钥扫描 0。
-- 1 万个桶、单前缀 10 万个对象的模拟数据下，列表首屏 2 秒内，无每对象额外请求。
-- 256 MB 内存限制下完成 5 GB 上传与下载（测试时将上传上限显式调高）。
-- 估算：32.75 人日。算法见 [roadmap.md](roadmap.md) 末尾。该数字来自原稿，未因换成 Rust / Bun 重算。最小版范围按 8.1 定稿，不做裁剪。
+- Every P0 in chapter 3 has an automated test. Backend coverage is at least 80%. Security-related packages are at least 95%.
+- Reachable vulnerabilities in Rust dependencies are 0. High and above in frontend production dependencies are 0. The secret scan is 0.
+- With simulated data of 10,000 buckets and 100,000 objects under a single prefix, the first screen of a list appears within 2 seconds, and there is no extra request per object.
+- A 5 GB upload and a 5 GB download complete under a 256 MB memory limit (the test raises the upload limit explicitly).
+- Estimate: 32.75 person-days. The algorithm is at the end of [roadmap.md](roadmap.md). That number comes from the original draft. It was not recomputed for the switch to Rust and Bun. The minimum-version scope is fixed by 8.1. Do not cut it down.
