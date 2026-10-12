@@ -1,86 +1,86 @@
-# 集群、布局与运维
+# Cluster, layout, and operations
 
-角色缩写：A=管理员，V=只读。运维页面只对管理员开放，见 [security.md](security.md) 的 3.19。
+Role abbreviations: A = administrator, V = read-only. Operations pages are open only to an administrator. See 3.19 of [security.md](security.md).
 
-## 5.8 布局
+## 5.8 Layout
 
-最小版不包含布局编辑与变更流程（5.28，见 [scope.md](scope.md) 的 8.2）。本条的预览、历史、跳过死节点在阶段 4。
+The minimum version does not include layout editing or the change flow (5.28, see 8.2 of [scope.md](scope.md)). Preview, history, and skip dead nodes for this item are in phase 4.
 
-- 需求：节点角色分配与修改（zone、capacity、tags；capacity 为空即网关节点）、移除；布局参数 `zoneRedundancy`（`"maximum"` 或至少 N 个 zone）的查看与修改；暂存变更列表（来自 `GetClusterLayout` 的 `stagedRoleChanges` 与 `stagedParameters`）；应用前必须先调用预览并展示预览结果（v2.4+ 展示结构化统计，v2.3 展示文本）；预览返回错误分支时显示错误并禁止应用；应用（version = 当前 + 1）或撤销全部暂存变更；布局历史；跳过死节点（A，强确认，说明风险；需传入当前版本号，并单独选择是否 `allowMissingData`，选中时再加一次强确认，说明可能丢失数据）。
-- 接口：`GET /api/layout`；`POST /api/layout/stage`；`POST /api/layout/preview`；`POST /api/layout/apply`；`POST /api/layout/revert`；`GET /api/layout/history`；`POST /api/layout/skip-dead-nodes`。
-- Garage：`GetClusterLayout`、`UpdateClusterLayout`、`PreviewClusterLayoutChanges`、`ApplyClusterLayout`、`RevertClusterLayout`、`GetClusterLayoutHistory`、`ClusterLayoutSkipDeadNodes`。
+- Requirement: Assign and change node roles (zone, capacity, tags; an empty capacity means a gateway node), and remove a role. View and change the layout parameter `zoneRedundancy` (`"maximum"`, or at least N zones). A list of staged changes (from `stagedRoleChanges` and `stagedParameters` on `GetClusterLayout`). Before apply, call preview and show the preview result (v2.4 and later show structured statistics, v2.3 shows text). When preview returns the error branch, show the error and forbid apply. Apply (version = current + 1), or revert every staged change. Layout history. Skip dead nodes (A, a strong confirmation, and a statement of the risk. Pass the current version. Separately choose whether `allowMissingData` is set. When it is selected, add one more strong confirmation that says data may be lost).
+- API: `GET /api/layout`; `POST /api/layout/stage`; `POST /api/layout/preview`; `POST /api/layout/apply`; `POST /api/layout/revert`; `GET /api/layout/history`; `POST /api/layout/skip-dead-nodes`.
+- Garage: `GetClusterLayout`, `UpdateClusterLayout`, `PreviewClusterLayoutChanges`, `ApplyClusterLayout`, `RevertClusterLayout`, `GetClusterLayoutHistory`, `ClusterLayoutSkipDeadNodes`.
 
-验收：未执行预览或预览返回错误时「应用」按钮不可用；容量精度满足 [correctness.md](correctness.md) 的 4.4；历史页显示各版本与同步状态。
+Acceptance: The "Apply" button is disabled when preview has not been run, or when preview returns an error. Capacity precision meets 4.4 of [correctness.md](correctness.md). The history page shows each version and its sync status.
 
-## 5.9 集群健康
+## 5.9 Cluster health
 
-- 需求：首页卡片显示状态、已知节点数、已连接节点数、存储节点数与在线数（`storageNodesUp`）、分区状态；节点列表与连接节点。
-- 接口：`GET /api/cluster/health`；`GET /api/cluster/status`；`POST /api/cluster/connect`（A）。
-- Garage：`GetClusterHealth`、`GetClusterStatus`、`GetNodeInfo`、`ConnectClusterNodes`。
+- Requirement: The home-page card shows status, the number of known nodes, the number of connected nodes, the number of storage nodes and how many are up (`storageNodesUp`), and partition status. A node list, and connect nodes.
+- API: `GET /api/cluster/health`; `GET /api/cluster/status`; `POST /api/cluster/connect` (A).
+- Garage: `GetClusterHealth`, `GetClusterStatus`, `GetNodeInfo`, `ConnectClusterNodes`.
 
-验收：v2.3.x 与 v2.4.1 下数字均正确；Garage 不可达时显示错误而非白屏。
+Acceptance: The numbers are correct on both v2.3.x and v2.4.1. When Garage is unreachable, show an error instead of a blank screen.
 
-## 5.10 统计指标
+## 5.10 Statistics
 
-- 需求：集群与节点统计（容量、可用空间、桶数、对象数、总量）；可选的 Prometheus 指标汇总（S3 请求数、错误数、块读写字节）。说明：Garage 的 `/metrics` 在配置了 `metrics_token`（或要求令牌）时，接受 `metrics_token` 或作用域包含 `Metrics`（或 `*`）的管理令牌；两者都未配置时无需令牌。本项目按此顺序取用：单独配置的 `metrics_token`、本项目管理令牌；都不可用时指标面板显示提示。
-- 接口：`GET /api/cluster/statistics`；`GET /api/nodes/{id}/statistics`；`GET /api/metrics`。
-- Garage：`GetClusterStatistics`、`GetNodeStatistics`、`/metrics`。
+- Requirement: Cluster and node statistics (capacity, free space, bucket count, object count, total amount). An optional Prometheus metrics summary (S3 request count, error count, block read and write bytes). Note: when Garage's `/metrics` is configured with `metrics_token` (or requires a token), it accepts `metrics_token` or an admin token whose scope contains `Metrics` (or `*`). When neither is configured, no token is required. This project tries them in this order: a separately configured `metrics_token`, then this project's admin token. When neither can be used, the metrics panel shows a notice.
+- API: `GET /api/cluster/statistics`; `GET /api/nodes/{id}/statistics`; `GET /api/metrics`.
+- Garage: `GetClusterStatistics`, `GetNodeStatistics`, `/metrics`.
 
-验收：Prometheus 文本解析单测；空响应各项为 0。
+Acceptance: A unit test parses Prometheus text. Every field of an empty response is 0.
 
-最小版交付健康、状态、集群统计，不含指标面板。`GET /api/metrics` 与 Prometheus 解析留到阶段 4。
+The minimum version delivers health, status, and cluster statistics, and does not include the metrics panel. `GET /api/metrics` and Prometheus parsing wait until phase 4.
 
-## 5.11 Worker 与修复任务
+## 5.11 Workers and repair tasks
 
-阶段 5，不在最小版本内。
+Phase 5. Not included in the minimum version.
 
-- 需求：按节点（单个节点 ID 或全部节点）列出 Worker（状态、错误、进度），可只看忙碌或只看出错的；查看详情；读取全部或单个 Worker 变量，设置变量（变量名与值均为字符串，A）；发起修复任务（A，强确认，目标为单个节点或全部节点），类型取自 Garage 定义：`tables`、`blocks`、`versions`、`multipartUploads`、`blockRefs`、`blockRc`、`rebalance`、`aliases`、`clearResyncQueue`，以及 `scrub` 的 `start`、`pause`、`resume`、`cancel`。
-- 接口：`GET /api/nodes/{id}/workers`；`GET /api/nodes/{id}/workers/{wid}`；`GET`/`PUT /api/nodes/{id}/worker-variables`；`POST /api/nodes/{id}/repair`。
-- Garage：`ListWorkers`、`GetWorkerInfo`、`GetWorkerVariable`、`SetWorkerVariable`、`LaunchRepairOperation`。
+- Requirement: List Workers by node (one node ID, or every node), with status, errors, and progress. The list can show only busy workers, or only workers in error. View detail. Read every Worker variable, or one Worker variable, and set a variable (the variable name and the value are both strings, A). Start a repair task (A, a strong confirmation, targeted at one node or every node). The type comes from the Garage definition: `tables`, `blocks`, `versions`, `multipartUploads`, `blockRefs`, `blockRc`, `rebalance`, `aliases`, `clearResyncQueue`, and `start`, `pause`, `resume`, and `cancel` of `scrub`.
+- API: `GET /api/nodes/{id}/workers`; `GET /api/nodes/{id}/workers/{wid}`; `GET`/`PUT /api/nodes/{id}/worker-variables`; `POST /api/nodes/{id}/repair`.
+- Garage: `ListWorkers`, `GetWorkerInfo`, `GetWorkerVariable`, `SetWorkerVariable`, `LaunchRepairOperation`.
 
-验收：设置变量后再次读取为新值；修复任务写审计。
+Acceptance: After a variable is set, reading it again returns the new value. A repair task writes an audit record.
 
-## 5.12 块错误
+## 5.12 Block errors
 
-阶段 5，不在最小版本内。
+Phase 5. Not included in the minimum version.
 
-- 需求：按节点列出块错误；按块哈希查看块信息（需指定节点）；重试同步（指定块哈希，或「全部重试」）；清除块（A，强确认，说明会导致对象数据丢失；一次可提交多个块哈希）。
-- 接口：`GET /api/nodes/{id}/block-errors`；`GET /api/nodes/{id}/blocks/{hash}`；`POST /api/nodes/{id}/blocks/retry`；`POST /api/nodes/{id}/blocks/purge`。
-- Garage：`ListBlockErrors`、`GetBlockInfo`、`RetryBlockResync`、`PurgeBlocks`。
+- Requirement: List block errors by node. View block information by block hash (a node must be specified). Retry resync (a specified block hash, or "retry all"). Purge blocks (A, a strong confirmation, stating that object data will be lost. One request may submit multiple block hashes).
+- API: `GET /api/nodes/{id}/block-errors`; `GET /api/nodes/{id}/blocks/{hash}`; `POST /api/nodes/{id}/blocks/retry`; `POST /api/nodes/{id}/blocks/purge`.
+- Garage: `ListBlockErrors`, `GetBlockInfo`, `RetryBlockResync`, `PurgeBlocks`.
 
-验收：只读角色调用清除返回 403；清除需要输入块哈希确认。
+Acceptance: A read-only role calling purge returns 403. Purge requires typing the block hash to confirm.
 
-## 5.13 元数据快照
+## 5.13 Metadata snapshots
 
-阶段 5，不在最小版本内。
+Phase 5. Not included in the minimum version.
 
-- 需求：对指定节点或全部节点创建元数据快照（A）。
-- 接口：`POST /api/nodes/{id}/metadata-snapshot`。
-- Garage：`CreateMetadataSnapshot`。
+- Requirement: Create a metadata snapshot for a specified node, or for every node (A).
+- API: `POST /api/nodes/{id}/metadata-snapshot`.
+- Garage: `CreateMetadataSnapshot`.
 
-验收：操作成功提示并写审计。
+Acceptance: A successful operation shows a notice and writes an audit record.
 
-## 5.28 布局变更流程
+## 5.28 Layout change flow
 
-依赖 5.8，不在最小版本内。接入工作含在阶段 4 与阶段 3A 的估算中。
+Depends on 5.8. Not included in the minimum version. The work to wire it in is included in the estimates for phase 4 and phase 3A.
 
-- 需求：布局页面按步骤引导：
-  1. 查看当前布局（节点、zone、容量、标签、角色）与「暂存变更」列表；
-  2. 编辑：分配、修改、移除节点角色，变更进入暂存区，可逐条撤回；
-  3. 预览：调用预览接口，展示新布局与数据迁移结果（v2.4+ 用结构化统计做表格，v2.3 显示文本）；
-  4. 应用：高风险确认，自动填入当前版本 + 1；
-  5. 跟踪：应用后显示进度跟踪（各节点同步到新版本的状态，参照布局历史），直至全部完成；有节点长时间离线时提供「跳过死节点」入口并说明风险。
-- 任何时候可「撤销全部暂存变更」。
+- Requirement: The layout page guides the user through steps.
+  1. View the current layout (nodes, zone, capacity, tags, role) and the "staged changes" list.
+  2. Edit. Assign, change, or remove a node role. The change enters the staging area and can be withdrawn one by one.
+  3. Preview. Call the preview API. Show the new layout and the data-migration result (v2.4 and later use structured statistics as a table, v2.3 shows text).
+  4. Apply. A high-risk confirmation. Fill in the current version + 1 automatically.
+  5. Track. After apply, show progress tracking (each node's status of syncing to the new version, following layout history) until every node is done. When a node stays offline for a long time, offer a "skip dead nodes" entry and state the risk.
+- At any time, "revert all staged changes" is available.
 
-验收：未预览不可应用；应用后跟踪视图在全部节点同步后显示完成；撤销后暂存区为空。
+Acceptance: Apply is not available before preview. After apply, the tracking view shows complete once every node has synced. After revert, the staging area is empty.
 
-## 5.29 概览页与容量可视化
+## 5.29 Overview page and capacity visualization
 
-最小版只做健康与统计卡片。排行、自动刷新和审计小部件随后续阶段接入。
+The minimum version does only the health and statistics cards. Ranking, auto-refresh, and the audit widget are wired in with later phases.
 
-- 需求：概览页包含健康卡片、集群容量（已用/可用，按节点分布）、桶数量与对象总数、按桶容量排行（前 N 个，其余合并为「其他」，桶多或很小时仍可读）、最近的审计事件（管理员；[features-access.md](features-access.md) 的 5.21 查询接口交付后启用）。
-- 按桶容量排行与按容量排序依赖每个桶的详情：能力探测到 `ListBucketsInfo` 时直接使用；否则由后台任务以有界并发（[correctness.md](correctness.md) 的 4.11）定期汇总（默认 10 分钟，可配置）并缓存，界面标注数据时间，不随 30 秒刷新触发全量请求。
-- 桶列表与详情显示配额使用率进度条（容量和对象数），达到 80% 和 95% 时分别以警告色和错误色标出。
-- 数据自动刷新（默认 30 秒，可暂停），页面不可见时停止刷新。
+- Requirement: The overview page contains a health card, cluster capacity (used and free, distributed by node), the bucket count and the total object count, a ranking of buckets by capacity (the top N, with the rest merged as "Other", still readable when there are many buckets or when the buckets are very small), and recent audit events (administrators; enabled after the 5.21 query API in [features-access.md](features-access.md) is delivered).
+- Ranking buckets by capacity, and sorting by capacity, depend on each bucket's detail. When the capability probe finds `ListBucketsInfo`, use it directly. Otherwise a background task summarizes on a schedule with bounded concurrency (4.11 of [correctness.md](correctness.md)), default 10 minutes, configurable, and caches the result. The UI labels the time of the data. A 30-second refresh does not trigger a full fetch.
+- The bucket list and the bucket detail show a quota-usage progress bar (capacity and object count). At 80% mark it with the warning color. At 95% mark it with the error color.
+- Data refreshes automatically (default 30 seconds, and the refresh can be paused). When the page is not visible, stop refreshing.
 
-验收：1000 个桶时排行图仍可读；配额阈值着色有组件测试；切到后台标签页后不再发请求。
+Acceptance: With 1000 buckets, the ranking chart is still readable. Quota-threshold colors have a component test. After switching to a background tab, no further request is sent.
