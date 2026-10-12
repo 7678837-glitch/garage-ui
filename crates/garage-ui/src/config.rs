@@ -183,21 +183,39 @@ pub fn load_map(env: &HashMap<String, String>) -> anyhow::Result<Loaded> {
 }
 
 fn project_key(env: &HashMap<String, String>) -> anyhow::Result<Option<ProjectKey>> {
-    let access_key_id = nonempty(env, "S3_ACCESS_KEY_ID");
-    let secret_access_key = nonempty(env, "S3_SECRET_ACCESS_KEY");
+    let access_key_id = project_key_side(env, "S3_ACCESS_KEY_ID_FILE", "S3_ACCESS_KEY_ID")?;
+    let secret_access_key =
+        project_key_side(env, "S3_SECRET_ACCESS_KEY_FILE", "S3_SECRET_ACCESS_KEY")?;
     match (access_key_id, secret_access_key) {
         (None, None) => Ok(None),
         (Some(access_key_id), Some(secret_access_key)) => {
-            if is_placeholder(access_key_id) || is_placeholder(secret_access_key) {
+            if is_placeholder(&access_key_id) || is_placeholder(&secret_access_key) {
                 anyhow::bail!("密钥与文档占位符相同，拒绝启动");
             }
             Ok(Some(ProjectKey {
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
+                access_key_id,
+                secret_access_key,
             }))
         }
         _ => anyhow::bail!("对象存储密钥需要成对配置，拒绝启动"),
     }
+}
+
+fn project_key_side(
+    env: &HashMap<String, String>,
+    file_key: &str,
+    value_key: &str,
+) -> anyhow::Result<Option<String>> {
+    let Some(path) = nonempty(env, file_key) else {
+        return Ok(nonempty(env, value_key).map(str::to_string));
+    };
+    let bytes = strip_trailing_newlines(read_secret_file(Path::new(path))?);
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("密钥无法解析，拒绝启动"))
 }
 
 fn nonempty<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
@@ -722,5 +740,91 @@ mod tests {
         assert!(text.contains("密钥与文档占位符相同，拒绝启动"), "{text}");
         assert!(!text.contains(planted), "{text}");
         assert!(!text.contains("REPLACE-ME"), "{text}");
+    }
+
+    #[test]
+    fn project_key_file_wins_and_strips_a_trailing_crlf() {
+        let dir = crate::util::temp_dir();
+        let access_path = dir.join("access.key");
+        let secret_path = dir.join("secret.key");
+        let access_raw = b" gk\n";
+        let secret_raw = b"alpha\nbeta\r\n";
+        std::fs::write(&access_path, access_raw).unwrap();
+        std::fs::write(&secret_path, secret_raw).unwrap();
+        let access_expected = &access_raw[..access_raw.len() - 1];
+        let secret_expected = &secret_raw[..secret_raw.len() - 2];
+        assert!(access_expected.len() < 16);
+        assert!(access_expected.starts_with(b" "));
+        assert!(secret_raw.ends_with(b"\r\n"));
+        assert_eq!(
+            secret_expected
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
+            1
+        );
+        let env_access = "env-access-other";
+        let env_secret = "env-secret-other";
+        let loaded = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID_FILE", access_path.to_str().unwrap()),
+            ("S3_SECRET_ACCESS_KEY_FILE", secret_path.to_str().unwrap()),
+            ("S3_ACCESS_KEY_ID", env_access),
+            ("S3_SECRET_ACCESS_KEY", env_secret),
+        ]))
+        .unwrap();
+        let pair = loaded.settings.project_key.expect("pair");
+        assert!(
+            pair.access_key_id.as_bytes() == access_expected
+                && pair.secret_access_key.as_bytes() == secret_expected,
+            "loaded pair diverged from stripped file bytes"
+        );
+        assert!(
+            pair.access_key_id != env_access && pair.secret_access_key != env_secret,
+            "env values were loaded"
+        );
+
+        let blank_access = dir.join("blank-access.key");
+        let blank_secret = dir.join("blank-secret.key");
+        std::fs::write(&blank_access, b"\r\n").unwrap();
+        std::fs::write(&blank_secret, b"\r\n").unwrap();
+        let blank = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID_FILE", blank_access.to_str().unwrap()),
+            ("S3_SECRET_ACCESS_KEY_FILE", blank_secret.to_str().unwrap()),
+            ("S3_ACCESS_KEY_ID", env_access),
+            ("S3_SECRET_ACCESS_KEY", env_secret),
+        ]))
+        .unwrap();
+        assert!(blank.settings.project_key.is_none());
+
+        let spaced = load_map(&map(&[
+            ("S3_ACCESS_KEY_ID", " gk 1"),
+            ("S3_SECRET_ACCESS_KEY", "sec ret-value"),
+        ]))
+        .unwrap();
+        let spaced_pair = spaced.settings.project_key.expect("pair");
+        assert_eq!(spaced_pair.access_key_id, " gk 1");
+        assert_eq!(spaced_pair.secret_access_key, "sec ret-value");
+    }
+
+    #[test]
+    fn project_key_file_missing_names_the_path_only() {
+        let dir = crate::util::temp_dir();
+        let missing = dir.join("absent-s3.key");
+        let path = missing.to_str().unwrap();
+        let env_access = "only-env-access-9f3a";
+        let env_secret = "only-env-value-7c2e";
+        assert!(!missing.exists());
+        assert!(!path.contains(env_access) && !path.contains(env_secret));
+        let Err(err) = load_map(&map(&[
+            ("S3_SECRET_ACCESS_KEY_FILE", path),
+            ("S3_ACCESS_KEY_ID", env_access),
+            ("S3_SECRET_ACCESS_KEY", env_secret),
+        ])) else {
+            panic!("missing secret file must fail");
+        };
+        let text = format!("{err:#}");
+        assert!(text.contains(path), "{text}");
+        assert!(!text.contains(env_access), "{text}");
+        assert!(!text.contains(env_secret), "{text}");
     }
 }
