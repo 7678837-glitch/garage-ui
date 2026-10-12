@@ -1,67 +1,67 @@
-# 身份、密钥、令牌与审计
+# Identity, keys, tokens, and audit
 
-角色缩写：A=管理员，V=只读。
+Role abbreviations: A = administrator, V = read-only.
 
-## 5.7 密钥
+## 5.7 Keys
 
-- 需求：分页列表、创建（新建时名称限字母数字 `_` `-`；导入或已有密钥的名称原样显示，不做校验）、导入、改名、设置过期时间或设为永不过期（`neverExpires`）、允许建桶（`allow.createBucket`）开关、删除、查看 secret（A，二次确认，审计）。
-- 接口：`GET`/`POST /api/keys`；`GET`/`PATCH`/`DELETE /api/keys/{id}`；`POST /api/keys/import`；`POST /api/keys/{id}/secret`（A）。
-- Garage：`ListKeysInfo` 或 `ListKeys`、`GetKeyInfo`、`CreateKey`、`ImportKey`、`UpdateKey`（`name`、`expiration`、`allow.createBucket`、`deny.createBucket`）、`DeleteKey`。
+- Requirement: A paginated list. Create (a new name is limited to letters, digits, `_`, and `-`. The name of an imported key, or of a key that already exists, is shown as-is and is not validated). Import. Rename. Set an expiration time, or set the key to never expire (`neverExpires`). A switch for allowing bucket creation (`allow.createBucket`). Delete. View the secret (A, a second confirmation, and an audit record).
+- API: `GET`/`POST /api/keys`; `GET`/`PATCH`/`DELETE /api/keys/{id}`; `POST /api/keys/import`; `POST /api/keys/{id}/secret` (A).
+- Garage: `ListKeysInfo` or `ListKeys`, `GetKeyInfo`, `CreateKey`, `ImportKey`, `UpdateKey` (`name`, `expiration`, `allow.createBucket`, `deny.createBucket`), `DeleteKey`.
 
-验收：开启允许建桶后，该 key 可通过 S3 创建桶；删除 key 后浏览凭据缓存失效（见 [correctness.md](correctness.md) 的 4.2）。
+Acceptance: After allowing bucket creation is turned on, that key can create a bucket through S3. After the key is deleted, the browse credential cache is invalid (see 4.2 of [correctness.md](correctness.md)).
 
-最小版的密钥范围以 [scope.md](scope.md) 的 8.1 为准：分页列表、创建、删除、改名、允许建桶、查看 secret。阶段 2B 的估算行还写了导入和过期时间；8.1 写明最小版范围按该表定稿。验收最小版时以 8.1 这几项为准。
+The key scope of the minimum version follows 8.1 of [scope.md](scope.md): paginated list, create, delete, rename, allow bucket creation, and view the secret. The phase 2B estimate row also names import and expiration. 8.1 states that the minimum-version scope is fixed by that table. When accepting the minimum version, those 8.1 items are what counts.
 
-## 5.15 受限管理令牌
+## 5.15 Restricted admin tokens
 
-不在最小版本内。
+Not included in the minimum version.
 
-- 需求：列出、创建、修改、删除 Garage 管理令牌（`name`、`expiration`、`scope`）；创建时 secret 只显示一次；对 scope 包含 `CreateAdminToken` 或 `*` 的令牌明确警示其等同全权；显示本项目当前所用令牌的信息。scope 取值为 Admin API 端点名、`Metrics` 或 `*`。`ListAdminTokens` 会把配置文件中的 `admin_token`、`metrics_token` 作为只读条目列出：界面标注「来自配置文件」，不提供修改和删除。
-- 接口：`GET`/`POST /api/admin-tokens`；`GET`/`PATCH`/`DELETE /api/admin-tokens/{id}`；`GET /api/admin-tokens/current`。
-- Garage：`ListAdminTokens`、`GetAdminTokenInfo`、`CreateAdminToken`、`UpdateAdminToken`、`DeleteAdminToken`、`GetCurrentAdminTokenInfo`。
+- Requirement: List, create, update, and delete Garage admin tokens (`name`, `expiration`, `scope`). On create, the secret is shown only once. A token whose scope contains `CreateAdminToken` or `*` is clearly warned as equivalent to full authority. Show the information of the token this project is currently using. A scope value is an Admin API endpoint name, `Metrics`, or `*`. `ListAdminTokens` lists `admin_token` and `metrics_token` from the configuration file as read-only entries. The UI labels them "from the configuration file" and does not offer update or delete.
+- API: `GET`/`POST /api/admin-tokens`; `GET`/`PATCH`/`DELETE /api/admin-tokens/{id}`; `GET /api/admin-tokens/current`.
+- Garage: `ListAdminTokens`, `GetAdminTokenInfo`, `CreateAdminToken`, `UpdateAdminToken`, `DeleteAdminToken`, `GetCurrentAdminTokenInfo`.
 
-验收：仅管理员可见；令牌 secret 不出现在后续任何响应与日志中。
+Acceptance: Only an administrator can see them. A token secret does not appear in any later response or in the logs.
 
-## 5.20 多用户与角色
+## 5.20 Multiple users and roles
 
-- 需求：SQLite 用户库；初始化向导；角色 `admin`、`viewer`，另加可分配给 viewer 的「下载对象内容」和「分享」权限（数据模型与约束见 [security.md](security.md) 的 3.19）；用户增删改、禁用、改名、重置密码；防锁死（不能删除、降级、禁用自己，不能移除最后一个启用的管理员）；离线 CLI（列出用户、重置密码、创建管理员、版本、健康检查）；首次启动可一次性导入环境变量中的 bcrypt 账号。
-- 接口：`GET`/`POST /api/users`；`PATCH`/`DELETE /api/users/{id}`；`POST /api/users/{id}/reset-password`；`POST /api/auth/login|logout|change-password`；`GET /api/auth/status`；`GET`/`POST /api/setup`。
-- Garage：无。
+- Requirement: An SQLite user store. A setup wizard. Roles `admin` and `viewer`, plus "download object content" and "share" permissions that can be assigned to a viewer (the data model and the constraints are in 3.19 of [security.md](security.md)). Create, delete, and update users, disable a user, rename a user, and reset a password. Lockout protection (you cannot delete, demote, or disable yourself, and you cannot remove the last enabled administrator). An offline CLI (list users, reset a password, create an administrator, version, health check). On first start, bcrypt accounts from environment variables may be imported once.
+- API: `GET`/`POST /api/users`; `PATCH`/`DELETE /api/users/{id}`; `POST /api/users/{id}/reset-password`; `POST /api/auth/login|logout|change-password`; `GET /api/auth/status`; `GET`/`POST /api/setup`.
+- Garage: none.
 
-验收：权限位的授予、撤销与「分享依赖下载」约束有测试；防锁死规则逐条测试；用户响应永不含哈希；角色变更立即生效（3.4）。
+Acceptance: Tests cover granting a permission bit, revoking one, and the "share depends on download" constraint. Each lockout-protection rule has a test. A user response never contains a hash. A role change takes effect immediately (3.4).
 
-最小版包含 8.1 的账户项，以及阶段 2B 的用户增删、禁用、改角色、重置密码与防锁死。离线 CLI 在阶段 6。已登录管理员调用 `POST /api/users/{id}/reset-password` 属于上述用户管理，与 3.18 的离线 CLI 是两条路径。
+The minimum version includes the account items in 8.1, and the phase 2B user create and delete, disable, role change, password reset, and lockout protection. The offline CLI is in phase 6. A logged-in administrator calling `POST /api/users/{id}/reset-password` is part of that user management. It is a different path from the offline CLI in 3.18.
 
-## 5.21 审计日志
+## 5.21 Audit log
 
-- 需求：所有写操作（含被拒绝的）、登录相关事件、查看 secret、生成分享链接写入审计表，字段：时间、用户、IP、方法、路径、目标资源（桶 ID、key、节点 ID 等）、结果状态码、原因；同时可选输出到标准输出（JSON 行）；界面提供筛选（用户、时间段、操作类型）和导出 CSV；保留期可配置（默认 90 天）。
-- 接口：`GET /api/audit?user&from&to&action&offset&limit`（A）；`GET /api/audit/export`（A）。
-- Garage：无。
+- Requirement: Every write (including writes that were rejected), login-related events, viewing a secret, and generating a share link are written to the audit table. Fields: time, user, IP, method, path, target resource (bucket ID, key, node ID, and other resource identifiers of the same kind), result status code, and reason. Optionally also write to standard output (JSON lines). The UI provides filters (user, time range, action type) and CSV export. The retention period is configurable (default 90 days).
+- API: `GET /api/audit?user&from&to&action&offset&limit` (A); `GET /api/audit/export` (A).
+- Garage: none.
 
-验收：每类事件均有一条集成测试断言审计记录；超过保留期的记录被定期清理。
+Acceptance: Each kind of event has one integration test that asserts an audit record. Records past the retention period are cleaned up on a schedule.
 
-最小版包含审计写入（登录相关见 3.13，写操作与查看 secret 写入审计表）。审计页面、筛选、导出和保留期清理界面在阶段 5。最小版仍须把记录写入表，并满足「失败登录后审计表有一条带 IP 的记录」。
+The minimum version includes audit writes (login-related events are in 3.13; writes and viewing a secret are written to the audit table). The audit page, filters, export, and the retention-cleanup UI are in phase 5. The minimum version must still write the records into the table, and it must meet "after a failed login, the audit table has one record that includes the IP".
 
-## 5.23 设置与关于
+## 5.23 Settings and About
 
-- 需求：修改自己的密码、主题切换、显示版本；更新检查默认关闭且源可配置（[correctness.md](correctness.md) 的 4.14）。
+- Requirement: Change your own password, switch the theme, and show the version. The update check is off by default, and its source is configurable (4.14 of [correctness.md](correctness.md)).
 
-验收：未开启更新检查时无对外请求。
+Acceptance: When the update check is not turned on, there is no outbound request.
 
-## 5.31 凭据显示与复制
+## 5.31 Showing and copying credentials
 
-- 需求：新建密钥或管理令牌后，在结果对话框中一次性显示完整凭据，提供一键复制（复制成功有视觉反馈）与「我已保存」确认；关闭后不可再次查看（管理令牌）或需再次走二次确认（S3 secret）。
-- 凭据字段默认遮挡，显示时需主动点击；复制功能在非安全上下文下降级为可选中文本。
-- 与 3.15 的关系：3.15 约束的是本项目自身连接 Garage 所用的令牌，它永不进入浏览器。用户在界面上新建的管理令牌或 S3 secret 是要交给使用者的结果，只允许出现在创建（或二次确认后查看）的那一次响应中，该响应设置 `no-store`，不写日志与审计内容。
+- Requirement: After a key or an admin token is created, show the full credential once in the result dialog. Provide one-click copy (a successful copy has visible feedback) and an "I have saved it" confirmation. After the dialog is closed, an admin token cannot be viewed again. An S3 secret requires the second confirmation again.
+- Credential fields are masked by default. Showing one requires an explicit click. In a non-secure context, copy degrades to text that can be selected.
+- How this relates to 3.15: 3.15 constrains the token this project itself uses to connect to Garage. That token never enters the browser. An admin token or S3 secret that a user creates in the UI is a result to hand to that user. It may appear only in the one response that creates it, or in the one response that views it after a second confirmation. That response sets `no-store`. It is not written into logs or into audit content.
 
-验收：关闭对话框后响应与页面中不再出现管理令牌 secret；复制按钮有组件测试。
+Acceptance: After the dialog is closed, the admin-token secret no longer appears in the response or on the page. The copy button has a component test.
 
-最小版包含本条里新建密钥和查看 S3 secret 的行为。管理令牌的一次性显示随 5.15 交付。
+The minimum version includes the behavior in this item for creating a key and for viewing an S3 secret. One-time display of an admin token is delivered with 5.15.
 
-## 5.34 管理令牌作用域选择器
+## 5.34 Admin-token scope picker
 
-依赖 5.15，不在最小版本内。
+Depends on 5.15. Not included in the minimum version.
 
-- 需求：创建或编辑管理令牌时，按功能分组（集群、节点、布局、桶、密钥、权限、Worker、块、管理令牌）列出 Admin API 端点复选框，支持整组勾选；勾选「全部」或包含创建管理令牌权限时显示等同全权的醒目警示；可设置到期时间（含「永不过期」需额外确认）。
+- Requirement: When creating or editing an admin token, list Admin API endpoint checkboxes grouped by function (cluster, node, layout, bucket, key, permission, Worker, block, admin token). A whole group can be checked at once. Checking "all", or including permission to create an admin token, shows a prominent warning that the result is equivalent to full authority. An expiration time can be set (including "never expires", which needs an extra confirmation).
 
-验收：分组覆盖 Garage v2.4.1 的全部 46 个端点以及 `Metrics`（有测试对照 OpenAPI 文件）；全权组合出现警示。
+Acceptance: The groups cover all 46 endpoints of Garage v2.4.1, plus `Metrics` (a test checks them against the OpenAPI file). A full-authority combination shows the warning.
