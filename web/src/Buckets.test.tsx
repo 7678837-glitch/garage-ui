@@ -919,3 +919,36 @@ test("filters loaded buckets from the query string and keeps that choice in the 
   expect(window.location.hash).toBe("#kept");
   expect(calls).toBe(1);
 });
+
+test("sorts loaded buckets by created time and keeps the choice in the address", async () => {
+  window.history.replaceState(null, "", "/?keep=1#kept");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json({
+        items: [
+          { id: "later-bucket", globalAliases: ["later"], created: "2026-10-12T00:00:00Z" },
+          { id: "earlier-bucket", globalAliases: ["earlier"], created: "2026-01-02T00:00:00Z" },
+          { id: "undated-bucket", globalAliases: ["undated"] },
+        ],
+        hasMore: false,
+      }),
+    ),
+  );
+  renderBuckets();
+  expect(await screen.findByText("later-bucket")).toBeTruthy();
+  expect(bucketRowText()[0]).toContain("later-bucket");
+  expect(bucketRowText()[1]).toContain("earlier-bucket");
+  expect(bucketRowText()[2]).toContain("undated-bucket");
+  const created = screen.getByRole("option", { name: "Created" }) as HTMLOptionElement;
+  expect(created.value).toBe("created");
+
+  fireEvent.change(screen.getByLabelText("Sort buckets"), { target: { value: "created" } });
+  expect(bucketRowText()[0]).toContain("earlier-bucket");
+  expect(bucketRowText()[1]).toContain("later-bucket");
+  expect(bucketRowText()[2]).toContain("undated-bucket");
+  expect(window.location.search).toContain("bucketsSort=created");
+  expect(window.location.search).toContain("keep=1");
+  expect(window.location.hash).toBe("#kept");
+  expect((screen.getByLabelText("Sort buckets") as HTMLSelectElement).value).toBe("created");
+});

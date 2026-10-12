@@ -26,6 +26,7 @@ type Bucket = {
   objects: string | null;
   bytes: string | null;
   quotas: Quotas | null;
+  created: string | null;
 };
 
 type BucketPage = {
@@ -111,7 +112,15 @@ function parseBucket(value: unknown): Bucket {
     objects: digitsOf(row.objects),
     bytes: digitsOf(row.bytes),
     quotas: parseQuotas(row.quotas),
+    created: createdTime(row.created),
   };
+}
+
+function createdTime(value: unknown): string | null {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  return null;
 }
 
 function digitsOf(value: unknown): string | null {
@@ -795,7 +804,7 @@ function DeleteBucketDialog({
   );
 }
 
-type BucketSort = "id" | "alias";
+type BucketSort = "id" | "alias" | "created";
 
 type BucketQuery = {
   filter: string;
@@ -803,7 +812,10 @@ type BucketQuery = {
 };
 
 function bucketSortFrom(value: string | null): BucketSort {
-  return value === "alias" ? "alias" : "id";
+  if (value === "alias" || value === "created") {
+    return value;
+  }
+  return "id";
 }
 
 function readBucketQuery(): BucketQuery {
@@ -830,10 +842,10 @@ function writeBucketQuery(query: BucketQuery) {
   } else {
     params.delete("buckets");
   }
-  if (query.sort === "alias") {
-    params.set("bucketsSort", "alias");
-  } else {
+  if (query.sort === "id") {
     params.delete("bucketsSort");
+  } else {
+    params.set("bucketsSort", query.sort);
   }
   replaceListQuery(params);
 }
@@ -850,14 +862,31 @@ function bucketMatches(bucket: Bucket, filter: string): boolean {
 }
 
 function orderedBuckets(rows: Bucket[], sort: BucketSort): Bucket[] {
-  if (sort === "id") {
-    return rows;
+  switch (sort) {
+    case "id":
+      return rows;
+    case "alias":
+      return [...rows].sort((left, right) => {
+        const a = left.aliases.map((alias) => alias.name).join(", ").toLowerCase();
+        const b = right.aliases.map((alias) => alias.name).join(", ").toLowerCase();
+        return a.localeCompare(b);
+      });
+    case "created":
+      return [...rows].sort((left, right) => compareCreated(left.created, right.created));
   }
-  return [...rows].sort((left, right) => {
-    const a = left.aliases.map((alias) => alias.name).join(", ").toLowerCase();
-    const b = right.aliases.map((alias) => alias.name).join(", ").toLowerCase();
-    return a.localeCompare(b);
-  });
+}
+
+function compareCreated(left: string | null, right: string | null): number {
+  if (left === right) {
+    return 0;
+  }
+  if (left === null) {
+    return 1;
+  }
+  if (right === null) {
+    return -1;
+  }
+  return left < right ? -1 : 1;
 }
 
 // 只传 canManage 的管理员调用仍要看到对象写操作和预览。
@@ -976,6 +1005,7 @@ export function Buckets({
             >
               <option value="id">Id</option>
               <option value="alias">Alias</option>
+              <option value="created">Created</option>
             </select>
           </label>
           <p>Default order is Id.</p>
