@@ -229,10 +229,18 @@ pub async fn presign_get(
     let bucket = bucket_id.to_string();
     let object_key = key.to_string();
     let sources = sources(app, bucket_id).await;
+    let tls_insecure = app.settings.tls_insecure;
+    let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let signed_bucket = bucket.clone();
     let attempted = app
         .read_credential(&bucket, sources, move |credential| {
-            let client = s3_client(&region, &endpoint, &credential);
+            let client = s3_client(
+                &region,
+                &endpoint,
+                &credential,
+                tls_insecure,
+                tls_ca_pem.as_deref(),
+            );
             let bucket = signed_bucket.clone();
             let object_key = object_key.clone();
             async move {
@@ -1277,11 +1285,19 @@ where
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unavailable("garage_unavailable", "Garage is unavailable"))?;
     let sources = sources(app, &bucket_id).await;
+    let tls_insecure = app.settings.tls_insecure;
+    let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let notes = Arc::new(Mutex::new(None::<String>));
     let notes_for_call = Arc::clone(&notes);
     let attempted = app
         .read_credential(&bucket_id, sources, move |credential| {
-            let client = s3_client(&region, &endpoint, &credential);
+            let client = s3_client(
+                &region,
+                &endpoint,
+                &credential,
+                tls_insecure,
+                tls_ca_pem.as_deref(),
+            );
             let pending = call(client);
             let notes = Arc::clone(&notes_for_call);
             async move {
@@ -1358,7 +1374,13 @@ async fn key_secret(app: &App, access_key_id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Client {
+fn s3_client(
+    region: &str,
+    endpoint: &str,
+    credential: &BucketCredential,
+    tls_insecure: bool,
+    tls_ca_pem: Option<&[u8]>,
+) -> Client {
     let credentials = Credentials::new(
         credential.access_key_id(),
         credential.secret_key(),
@@ -1368,7 +1390,7 @@ fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Cli
     );
     // latest 默认校验响应校验和。Garage 不回这些头，开启后正常列表会被判失败。
     // 同一把密钥只打一次 HTTP。403 的第二次尝试由 CredentialCache::read 发起。
-    let config = aws_sdk_s3::Config::builder()
+    let mut config = aws_sdk_s3::Config::builder()
         .behavior_version(aws_config::BehaviorVersion::latest())
         .region(Region::new(region.to_string()))
         .endpoint_url(endpoint)
@@ -1376,9 +1398,289 @@ fn s3_client(region: &str, endpoint: &str, credential: &BucketCredential) -> Cli
         .credentials_provider(credentials)
         .retry_config(RetryConfig::standard().with_max_attempts(1))
         .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
-        .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
-        .build();
-    Client::from_conf(config)
+        .response_checksum_validation(ResponseChecksumValidation::WhenRequired);
+    if tls_insecure && endpoint.starts_with("https://") {
+        config = config.http_client(skip_verify_client());
+    } else if !tls_insecure {
+        if let Some(pem) = tls_ca_pem {
+            config = config.http_client(ca_trust_client(pem));
+        }
+    }
+    Client::from_conf(config.build())
+}
+
+fn ca_trust_client(
+    pem: &[u8],
+) -> aws_smithy_runtime_api::client::http::SharedHttpClient {
+    use aws_smithy_http_client::tls::{self, TlsContext, TrustStore};
+
+    let trust = TrustStore::default().with_pem_certificate(pem.to_vec());
+    let context = TlsContext::builder()
+        .with_trust_store(trust)
+        .build()
+        .expect("tls context");
+    aws_smithy_http_client::Builder::new()
+        .tls_provider(tls::Provider::Rustls(
+            tls::rustls_provider::CryptoMode::AwsLc,
+        ))
+        .tls_context(context)
+        .build_https()
+}
+
+// smithy-http-client 1.5.0 keeps its certificate verifier private.
+// The skip switch installs this one. Handshake signatures still have to check,
+// or rustls aborts before the certificate decision matters.
+struct AcceptAnyServerCert {
+    algorithms: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl std::fmt::Debug for AcceptAnyServerCert {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AcceptAnyServerCert")
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyServerCert {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
+fn skip_verify_client() -> SkipVerifyClient {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let algorithms = provider.signature_verification_algorithms;
+    let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .expect("rustls default versions")
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyServerCert { algorithms }))
+        .with_no_client_auth();
+    SkipVerifyClient {
+        config: std::sync::Arc::new(config),
+    }
+}
+
+#[derive(Debug)]
+struct SkipVerifyClient {
+    config: std::sync::Arc<rustls::ClientConfig>,
+}
+
+#[derive(Debug)]
+struct SkipVerifyConnector {
+    config: std::sync::Arc<rustls::ClientConfig>,
+    connect_timeout: Option<std::time::Duration>,
+    read_timeout: Option<std::time::Duration>,
+}
+
+impl aws_smithy_runtime_api::client::http::HttpClient for SkipVerifyClient {
+    fn http_connector(
+        &self,
+        settings: &aws_smithy_runtime_api::client::http::HttpConnectorSettings,
+        _components: &aws_smithy_runtime_api::client::runtime_components::RuntimeComponents,
+    ) -> aws_smithy_runtime_api::client::http::SharedHttpConnector {
+        aws_smithy_runtime_api::client::http::SharedHttpConnector::new(SkipVerifyConnector {
+            config: std::sync::Arc::clone(&self.config),
+            connect_timeout: settings.connect_timeout(),
+            read_timeout: settings.read_timeout(),
+        })
+    }
+}
+
+impl aws_smithy_runtime_api::client::http::HttpConnector for SkipVerifyConnector {
+    fn call(
+        &self,
+        request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    ) -> aws_smithy_runtime_api::client::http::HttpConnectorFuture {
+        let config = std::sync::Arc::clone(&self.config);
+        let connect_timeout = self.connect_timeout;
+        let read_timeout = self.read_timeout;
+        aws_smithy_runtime_api::client::http::HttpConnectorFuture::new(async move {
+            send_https(request, config, connect_timeout, read_timeout).await
+        })
+    }
+}
+
+async fn send_https(
+    request: aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    config: std::sync::Arc<rustls::ClientConfig>,
+    connect_timeout: Option<std::time::Duration>,
+    read_timeout: Option<std::time::Duration>,
+) -> Result<
+    aws_smithy_runtime_api::client::orchestrator::HttpResponse,
+    aws_smithy_runtime_api::client::result::ConnectorError,
+> {
+    let mut request = request.try_into_http1x().map_err(user_error)?;
+    let host = request
+        .uri()
+        .host()
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| {
+            user_error(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing host",
+            ))
+        })?
+        .to_string();
+    let port = request.uri().port_u16().unwrap_or(443);
+    let origin = origin_form(request.uri())?;
+    *request.uri_mut() = origin;
+    ensure_host(&mut request, &host, port)?;
+
+    let (mut sender, connection) = bounded(connect_timeout, "connect timeout", async {
+        let stream = connect_tls(&host, port, &config).await?;
+        let io = hyper_util::rt::TokioIo::new(stream);
+        hyper::client::conn::http1::handshake(io)
+            .await
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))
+    })
+    .await?;
+    // The response body is still streaming after this function returns.
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let response = bounded(read_timeout, "read timeout", async move {
+        sender.ready().await?;
+        sender.send_request(request).await
+    })
+    .await?;
+    let response = response.map(SdkBody::from_body_1_x);
+    aws_smithy_runtime_api::client::orchestrator::HttpResponse::try_from(response).map_err(user_error)
+}
+
+fn origin_form(
+    uri: &hyper::Uri,
+) -> Result<hyper::Uri, aws_smithy_runtime_api::client::result::ConnectorError> {
+    let path = uri.path();
+    let path = if path.is_empty() { "/" } else { path };
+    let target = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path.to_string(),
+    };
+    target.parse().map_err(user_error)
+}
+
+fn ensure_host(
+    request: &mut hyper::Request<SdkBody>,
+    host: &str,
+    port: u16,
+) -> Result<(), aws_smithy_runtime_api::client::result::ConnectorError> {
+    if request.headers().contains_key(hyper::header::HOST) {
+        return Ok(());
+    }
+    let value = if host.contains(':') {
+        if port == 443 {
+            format!("[{host}]")
+        } else {
+            format!("[{host}]:{port}")
+        }
+    } else if port == 443 {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    };
+    let value = hyper::header::HeaderValue::from_str(&value).map_err(user_error)?;
+    request.headers_mut().insert(hyper::header::HOST, value);
+    Ok(())
+}
+
+async fn connect_tls(
+    host: &str,
+    port: u16,
+    config: &std::sync::Arc<rustls::ClientConfig>,
+) -> std::io::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
+    let lookup = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    let mut tcp = None;
+    for address in tokio::net::lookup_host(&lookup).await? {
+        match tokio::net::TcpStream::connect(address).await {
+            Ok(stream) => {
+                tcp = Some(stream);
+                break;
+            }
+            Err(error) => last = error,
+        }
+    }
+    let tcp = tcp.ok_or(last)?;
+    let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name")
+    })?;
+    tokio_rustls::TlsConnector::from(std::sync::Arc::clone(config))
+        .connect(name, tcp)
+        .await
+}
+
+async fn bounded<T, E>(
+    limit: Option<std::time::Duration>,
+    label: &'static str,
+    work: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, aws_smithy_runtime_api::client::result::ConnectorError>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let result = match limit {
+        Some(limit) => match tokio::time::timeout(limit, work).await {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(timeout_error(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    label,
+                )))
+            }
+        },
+        None => work.await,
+    };
+    result.map_err(io_error)
+}
+
+fn io_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::io(Box::new(error))
+}
+
+fn user_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::user(Box::new(error))
+}
+
+fn timeout_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> aws_smithy_runtime_api::client::result::ConnectorError {
+    aws_smithy_runtime_api::client::result::ConnectorError::timeout(Box::new(error))
 }
 
 fn s3_error(status: u16, message: String) -> ApiError {
@@ -1393,4 +1695,190 @@ fn s3_error(status: u16, message: String) -> ApiError {
         body,
         Some(HeaderValue::from_static("application/json")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Read};
+    use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
+
+    use super::*;
+
+    const TLS_SERVER: &str = r#"
+import http.server
+import ssl
+import sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(sys.argv[1], sys.argv[2])
+server.socket = context.wrap_socket(server.socket, server_side=True)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"#;
+
+    struct TlsProbe {
+        child: Child,
+        port: u16,
+        ca: PathBuf,
+    }
+
+    fn openssl(args: &[&str]) {
+        let output = Command::new("openssl").args(args).output().expect("openssl");
+        assert!(
+            output.status.success(),
+            "openssl {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    impl TlsProbe {
+        fn start() -> Self {
+            let dir = crate::util::temp_dir();
+            let ca = dir.join("ca.pem");
+            let ca_key = dir.join("ca.key");
+            let server_key = dir.join("server.key");
+            let server_cert = dir.join("server.pem");
+            let csr = dir.join("server.csr");
+            let ca_s = ca.to_str().expect("ca path");
+            let ca_key_s = ca_key.to_str().expect("ca key path");
+            let server_key_s = server_key.to_str().expect("server key path");
+            let server_cert_s = server_cert.to_str().expect("server cert path");
+            let csr_s = csr.to_str().expect("csr path");
+            openssl(&[
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                ca_key_s,
+                "-out",
+                ca_s,
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=GarageTestCA",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+            ]);
+            openssl(&[
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                server_key_s,
+                "-out",
+                csr_s,
+                "-nodes",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1",
+                "-addext",
+                "extendedKeyUsage=serverAuth",
+            ]);
+            openssl(&[
+                "x509",
+                "-req",
+                "-in",
+                csr_s,
+                "-CA",
+                ca_s,
+                "-CAkey",
+                ca_key_s,
+                "-CAcreateserial",
+                "-out",
+                server_cert_s,
+                "-days",
+                "1",
+                "-copy_extensions",
+                "copy",
+            ]);
+            let mut child = Command::new("python3")
+                .arg("-c")
+                .arg(TLS_SERVER)
+                .arg(&server_cert)
+                .arg(&server_key)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("python");
+            let stdout = child.stdout.take().expect("python stdout");
+            let mut line = String::new();
+            BufReader::new(stdout)
+                .read_line(&mut line)
+                .expect("python port");
+            let port = line.trim().parse().unwrap_or_else(|_| {
+                let mut err = String::new();
+                if let Some(stderr) = child.stderr.take() {
+                    let _ = BufReader::new(stderr).read_to_string(&mut err);
+                }
+                panic!("python port from {line:?}: {err}");
+            });
+            Self { child, port, ca }
+        }
+    }
+
+    impl Drop for TlsProbe {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn error_chain(error: &dyn std::error::Error) -> String {
+        let mut text = error.to_string();
+        let mut source = error.source();
+        while let Some(inner) = source {
+            text.push_str(": ");
+            text.push_str(&inner.to_string());
+            source = inner.source();
+        }
+        text
+    }
+
+    async fn handshake_error(endpoint: &str, tls_insecure: bool, ca: Option<&[u8]>) -> String {
+        let credential = BucketCredential::new("AKIATEST", "secret");
+        let client = s3_client("garage", endpoint, &credential, tls_insecure, ca);
+        match client.list_buckets().send().await {
+            Ok(_) => String::new(),
+            Err(error) => error_chain(&error),
+        }
+    }
+
+    #[tokio::test]
+    async fn s3_client_verifies_tls_unless_the_switch_is_one() {
+        let probe = TlsProbe::start();
+        let endpoint = format!("https://127.0.0.1:{}", probe.port);
+        let ca = std::fs::read(&probe.ca).expect("ca pem");
+
+        let denied = handshake_error(&endpoint, false, None).await;
+        assert!(denied.contains("certificate"), "{denied}");
+
+        let trusted = handshake_error(&endpoint, false, Some(ca.as_slice())).await;
+        assert!(
+            !trusted.contains("certificate"),
+            "custom CA must pass the handshake: {trusted}"
+        );
+
+        let skipped = handshake_error(&endpoint, true, None).await;
+        assert!(
+            !skipped.contains("certificate"),
+            "tls_insecure must pass the handshake: {skipped}"
+        );
+    }
 }
