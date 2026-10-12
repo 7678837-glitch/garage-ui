@@ -1,782 +1,892 @@
-# Garage Web 管理台（本项目）开发指导
+# Development guide for the Garage web admin UI (this project)
 
-> 状态：原始需求稿。工作规格在 [`docs/README.md`](docs/README.md)。与 `docs/` 冲突时以 `docs/` 为准。
-> 已吸收的决定：后端用 Rust 撰写；前端工具链用 Bun；允许多 Agent 并行开发；允许在本地用容器运行 Garage 做测试和评估。运行时 crate、管理台自身的容器化部署，以及去掉 daisyUI 和 zustand，见 [`docs/decisions.md`](docs/decisions.md)。
-> 面向：本项目维护者 K。
-> 依据：Garage 官方文档与 Garage 源码中的 Admin API v2 OpenAPI 描述（v2.3.0、v2.4.1，以及 main-v2 提交 ced85f8），以及通用 Web 安全实践。
-> 说明：本文只描述本项目要做什么、怎么验收，不包含任何源码。Garage 端点名与字段名以 Garage 源码中的 Admin API v2 定义为准。
-
----
-
-## 1. 目标与范围
-
-### 1.1 目标
-本项目是 Garage（S3 兼容分布式对象存储）的自托管 Web 管理台：单个 Go 二进制内嵌前端单页应用，面向集群管理员和只读运维人员，提供集群、布局、桶、密钥、对象的日常管理能力。
-
-本阶段目标：
-1. 安全默认：开箱即需登录，任何响应都不泄露集群密钥，对象预览不能成为脚本注入入口。
-2. 正确：桶寻址、凭据缓存、删除、容量、编码等行为按第 4 章要求实现，每条都有自动化测试。
-3. 对齐 Garage：只支持 Garage v2.3.0 及以上（推荐 v2.4.1），覆盖 Admin API v2 的全部 46 个端点，并通过能力探测使用 main-v2 未发布的列表接口。
-4. 可维护：可重复构建、锁定工具链版本、CI 全绿、依赖漏洞清零、类型从 Garage OpenAPI 生成。
-
-### 1.2 范围内
-- 集群健康、状态、统计、布局（含预览、历史、跳过死节点）。
-- 桶：增删改、别名、配额、网站访问、CORS、生命周期、权限。
-- 密钥：增删改、导入、允许建桶、过期时间。
-- 对象：浏览、上传、下载、删除、批量操作、分享、未完成上传清理。
-- 运维：Worker、修复任务、块错误、元数据快照、受限管理令牌、指标。
-- 本项目自身：多用户与角色、会话、审计日志、配置与部署。
-
-### 1.3 范围外
-- 不实现 Garage 不支持的 S3 特性（见 5.24）。
-- 不做 Garage 节点的安装、升级或配置文件编辑。
-- 不提供匿名访问模式。
-- 外部身份源（OIDC/LDAP）列为远期可选项，不在本阶段交付。
+> Status: original requirements draft. The working spec is [`docs/README.md`](docs/README.md). When this file conflicts with `docs/`, `docs/` wins.
+> Decisions already absorbed: the backend is written in Rust; the frontend toolchain is Bun; multiple agents may develop in parallel; Garage may run in a local container for tests and evaluation. For the runtime crates, containerized deployment of the admin UI itself, and the removal of daisyUI and zustand, see [`docs/decisions.md`](docs/decisions.md).
+> Audience: K, the maintainer of this project.
+> Basis: the official Garage documentation and the Admin API v2 OpenAPI description in the Garage source (v2.3.0, v2.4.1, and main-v2 commit ced85f8), plus ordinary web security practice.
+> This document only says what this project does and how to accept it. It contains no source code. Endpoint names and field names follow the Admin API v2 definition in the Garage source.
 
 ---
 
-## 2. 兼容的 Garage 版本与 Admin API 要求
+## 1. Goals and scope
 
-### 2.1 版本
-| 项 | 要求 |
+### 1.1 Goals
+
+This project is a self-hosted web admin UI for Garage (an S3-compatible distributed object store). One Go binary embeds the frontend single-page application. It is for cluster administrators and read-only operators, and it provides day-to-day management of the cluster, the layout, buckets, keys, and objects.
+
+Goals of this phase:
+
+1. Safe by default. Login is required out of the box. No response leaks a cluster secret. Object preview cannot be an entry point for script injection.
+2. Correct. Bucket addressing, the credential cache, deletion, capacity, encoding, and the related behavior are implemented as chapter 4 requires. Each item has an automated test.
+3. Aligned with Garage. Support only Garage v2.3.0 and later (v2.4.1 is recommended). Cover all 46 Admin API v2 endpoints, and use the unpublished main-v2 list APIs through a capability probe.
+4. Maintainable. Builds are repeatable, toolchain versions are pinned, CI is fully green, dependency vulnerabilities are at zero, and types are generated from the Garage OpenAPI document.
+
+### 1.2 In scope
+
+- Cluster health, status, statistics, and layout (including preview, history, and skipping dead nodes).
+- Buckets: create, delete, update, aliases, quotas, website access, CORS, lifecycle, and permissions.
+- Keys: create, delete, update, import, allow bucket creation, and expiration.
+- Objects: browse, upload, download, delete, bulk actions, sharing, and cleanup of incomplete uploads.
+- Operations: Workers, repair tasks, block errors, metadata snapshots, restricted admin tokens, and metrics.
+- This project itself: multiple users and roles, sessions, the audit log, configuration, and deployment.
+
+### 1.3 Out of scope
+
+- Do not implement S3 features that Garage does not support (see 5.24).
+- Do not install a Garage node, upgrade one, or edit a Garage configuration file.
+- Do not offer an anonymous access mode.
+- An external identity source (OIDC or LDAP) is listed as a later option. It is not delivered in this phase.
+
+---
+
+## 2. Compatible Garage versions and Admin API requirements
+
+### 2.1 Versions
+
+| Item | Requirement |
 |---|---|
-| 最低支持 | Garage v2.3.0 |
-| 推荐版本 | Garage v2.4.1（当前最新发布） |
-| 不支持 | v2.2.x 及更早版本（含 v1.x、v0.x）；启动自检发现版本过低时拒绝连接并提示升级 |
-| 前瞻 | main-v2 未发布的列表接口按能力探测使用（见 2.3） |
-| 示例部署 | 文档与 compose 示例默认使用 v2.4.1 |
+| Minimum supported | Garage v2.3.0 |
+| Recommended version | Garage v2.4.1 (the current latest release) |
+| Not supported | v2.2.x and earlier (including v1.x and v0.x). When the startup self-check finds a version that is too old, refuse the connection and prompt to upgrade. |
+| Ahead of release | Use unpublished main-v2 list APIs through a capability probe (see 2.3). |
+| Example deployment | The docs and the compose example use v2.4.1 by default. |
 
-已从 Garage 源码核对的版本事实：
-- v2.3.0 与 v2.4.1 的 Admin API 路径集合相同：/v2 下 46 个端点，另有 /health、/check、/metrics（/check 是静态网站域名校验，供反向代理签发证书前使用，不是连通性检查）。
-- v2.3.0 已具备：UpdateBucket 的 corsRules、lifecycleRules、websiteAccess、quotas；GetBucketInfo 返回同名字段；GetClusterStatistics、GetNodeStatistics；GetClusterHealth 使用 storageNodesUp。这些功能按 v2.3.0 基线直接实现，不做版本分支。
-- 仅 v2.4.x 才有（必须按字段探测，缺失时隐藏对应展示）：
-  - PreviewClusterLayoutChanges 与 ApplyClusterLayout 响应中的结构化布局计算统计（statistics，含按节点、按 zone 的统计）；v2.3.0 下只显示 Garage 返回的文本信息。
-  - GetNodeInfo 的 addr、role、draining、isUp、metadataPartition、dataPartition 字段。
-- 仅 main-v2（未发布）：ListBucketsInfo、ListKeysInfo，以及 ListBuckets/ListKeys 的 offset、limit 参数；GetNodeInfo 的 connectionParameters。
+Version facts already checked against the Garage source:
 
-验收：
-- 对 v2.3.x 与 v2.4.1 两个版本跑集成测试，核心流程（登录、列桶、浏览、上传、删除、布局应用）全部通过。
-- v2.3.x 下布局预览页不报错，只显示文本信息；节点详情缺字段时显示"—"。
+- v2.3.0 and v2.4.1 have the same set of Admin API paths: 46 endpoints under `/v2`, plus `/health`, `/check`, and `/metrics`. `/check` validates a static-website domain. A reverse proxy uses it before issuing a certificate. It is not a connectivity check.
+- v2.3.0 already has: `corsRules`, `lifecycleRules`, `websiteAccess`, and `quotas` on `UpdateBucket`; `GetBucketInfo` returns the fields of the same names; `GetClusterStatistics` and `GetNodeStatistics`; `GetClusterHealth` uses `storageNodesUp`. Implement these features directly on the v2.3.0 baseline. Do not branch by version.
+- Present only on v2.4.x (probe by field, and hide the matching display when the field is missing):
+  - Structured layout-calculation statistics in the `PreviewClusterLayoutChanges` and `ApplyClusterLayout` responses (`statistics`, including per-node and per-zone statistics). On v2.3.0, show only the text Garage returns.
+  - The `addr`, `role`, `draining`, `isUp`, `metadataPartition`, and `dataPartition` fields of `GetNodeInfo`.
+- Present only on main-v2 (unpublished): `ListBucketsInfo`, `ListKeysInfo`, and the `offset` and `limit` parameters of `ListBuckets` / `ListKeys`. Also `connectionParameters` on `GetNodeInfo`.
 
-### 2.2 版本自检
-- 启动时及每次重连 Garage 时调用 GetNodeInfo（node=self）读取 garageVersion，低于 v2.3.0 时在界面显示阻断提示，后端拒绝写操作。
-- 能力探测结果缓存在进程内，Garage 重连后重新探测。
-- 验收：对 v2.2.x 实例启动时出现明确提示，不出现前端异常。
+Acceptance:
 
-### 2.3 main-v2 列表接口（能力探测）
-- main-v2 中 ListBuckets、ListKeys 新增 offset 与 limit；未传 limit 时最多返回 10000 条。新增 ListBucketsInfo、ListKeysInfo，一次返回带详情的列表，默认上限 1000。
-- 要求：
-  1. 首次调用时探测 ListBucketsInfo、ListKeysInfo 是否可用；可用则用它替代"ListBuckets + 每桶 GetBucketInfo"。
-  2. 不可用时（v2.3.x、v2.4.x）用 ListBuckets 加有界并发的详情调用（见 4.11），详情按页懒加载，不对全部桶一次性取详情。
-  3. 本项目对外列表接口统一分页，前端分页或无限滚动，不一次性全量加载。
-  4. 返回条数等于 limit 时必须继续翻页或提示"还有更多"，不得静默截断。
-- 验收：模拟 12000 个桶的 Garage 响应，列表可翻到最后一条；两条路径都有测试。
+- Run integration tests against both v2.3.x and v2.4.1. The core flows (log in, list buckets, browse, upload, delete, apply layout) all pass.
+- On v2.3.x the layout preview page does not error. It shows only the text. When a node-detail field is missing, show "—".
 
-### 2.4 要用到的 Admin API v2 端点清单
-路径形式为 /v2/<端点名>。
+### 2.2 Version self-check
 
-| 分类 | 端点 | 用途 |
+- At startup, and on every reconnect to Garage, call `GetNodeInfo` (`node=self`) and read `garageVersion`. When it is below v2.3.0, show a blocking notice in the UI, and the backend rejects writes.
+- Cache the capability-probe result in the process. Probe again after Garage reconnects.
+- Acceptance: starting against a v2.2.x instance shows a clear notice, and no frontend exception appears.
+
+### 2.3 main-v2 list APIs (capability probe)
+
+- In main-v2, `ListBuckets` and `ListKeys` add `offset` and `limit`. When `limit` is omitted, they return at most 10000 rows. `ListBucketsInfo` and `ListKeysInfo` are added. One call returns a list that includes details. The default cap is 1000.
+- Requirements:
+  1. On the first call, probe whether `ListBucketsInfo` and `ListKeysInfo` are available. When they are, use them instead of "`ListBuckets` + `GetBucketInfo` per bucket".
+  2. When they are not available (v2.3.x, v2.4.x), use `ListBuckets` plus bounded-concurrency detail calls (see 4.11). Load details lazily per page. Do not fetch details for every bucket at once.
+  3. This project's outward list APIs paginate in one way. The frontend paginates, or it uses infinite scroll. It does not load the full set at once.
+  4. When the number of rows returned equals `limit`, keep paging, or tell the user "there is more". Do not truncate silently.
+- Acceptance: against a simulated Garage response of 12000 buckets, the list can be paged to the last row. Both paths have tests.
+
+### 2.4 Admin API v2 endpoints this project uses
+
+The path form is `/v2/<endpoint name>`.
+
+| Category | Endpoint | Purpose |
 |---|---|---|
-| 集群 | GetClusterHealth | 首页健康卡片 |
-| | GetClusterStatus | 节点列表 |
-| | GetClusterStatistics | 集群容量与统计 |
-| | ConnectClusterNodes | 连接节点 |
-| 节点 | GetNodeInfo | 节点详情、版本自检（v2.4 字段探测） |
-| | GetNodeStatistics | 节点统计 |
-| | CreateMetadataSnapshot | 元数据快照 |
-| | LaunchRepairOperation | 修复任务 |
-| 布局 | GetClusterLayout、GetClusterLayoutHistory | 当前布局与历史 |
-| | UpdateClusterLayout、PreviewClusterLayoutChanges | 暂存变更与预览（statistics 为 v2.4+） |
-| | ApplyClusterLayout、RevertClusterLayout | 应用或撤销 |
-| | ClusterLayoutSkipDeadNodes | 跳过死节点 |
-| 管理令牌 | ListAdminTokens、GetAdminTokenInfo、GetCurrentAdminTokenInfo | 列表与详情、自检 |
-| | CreateAdminToken、UpdateAdminToken、DeleteAdminToken | 管理（字段 name、expiration、scope） |
-| 密钥 | ListKeys、ListKeysInfo（探测）、GetKeyInfo | 列表与详情 |
-| | CreateKey、ImportKey、UpdateKey、DeleteKey | 管理（含 allow.createBucket、expiration） |
-| 桶 | ListBuckets、ListBucketsInfo（探测）、GetBucketInfo | 列表与详情（按 id 查询） |
-| | CreateBucket、UpdateBucket、DeleteBucket | 管理（websiteAccess、quotas、corsRules、lifecycleRules） |
-| | CleanupIncompleteUploads | 清理未完成上传 |
-| | InspectObject | 对象诊断 |
-| 权限与别名 | AllowBucketKey、DenyBucketKey | 授权与撤销 |
-| | AddBucketAlias、RemoveBucketAlias | 全局与本地别名 |
-| Worker | ListWorkers、GetWorkerInfo | Worker 列表与详情 |
-| | GetWorkerVariable、SetWorkerVariable | Worker 变量 |
-| 块 | ListBlockErrors、GetBlockInfo | 块错误 |
-| | RetryBlockResync、PurgeBlocks | 重试与清除 |
-| 特殊 | /metrics | Prometheus 指标（需 metrics_token） |
-| | /health | 连通性与读写法定数检查（无需令牌；集群可读写时返回成功） |
+| Cluster | `GetClusterHealth` | Home-page health card |
+| | `GetClusterStatus` | Node list |
+| | `GetClusterStatistics` | Cluster capacity and statistics |
+| | `ConnectClusterNodes` | Connect nodes |
+| Node | `GetNodeInfo` | Node detail and version self-check (v2.4 field probe) |
+| | `GetNodeStatistics` | Node statistics |
+| | `CreateMetadataSnapshot` | Metadata snapshot |
+| | `LaunchRepairOperation` | Repair task |
+| Layout | `GetClusterLayout`, `GetClusterLayoutHistory` | Current layout and history |
+| | `UpdateClusterLayout`, `PreviewClusterLayoutChanges` | Stage a change and preview (`statistics` is v2.4+) |
+| | `ApplyClusterLayout`, `RevertClusterLayout` | Apply or revert |
+| | `ClusterLayoutSkipDeadNodes` | Skip dead nodes |
+| Admin token | `ListAdminTokens`, `GetAdminTokenInfo`, `GetCurrentAdminTokenInfo` | List, detail, and self-check |
+| | `CreateAdminToken`, `UpdateAdminToken`, `DeleteAdminToken` | Management (fields `name`, `expiration`, `scope`) |
+| Key | `ListKeys`, `ListKeysInfo` (probe), `GetKeyInfo` | List and detail |
+| | `CreateKey`, `ImportKey`, `UpdateKey`, `DeleteKey` | Management (includes `allow.createBucket` and `expiration`) |
+| Bucket | `ListBuckets`, `ListBucketsInfo` (probe), `GetBucketInfo` | List and detail (query by id) |
+| | `CreateBucket`, `UpdateBucket`, `DeleteBucket` | Management (`websiteAccess`, `quotas`, `corsRules`, `lifecycleRules`) |
+| | `CleanupIncompleteUploads` | Clean up incomplete uploads |
+| | `InspectObject` | Object diagnostics |
+| Permission and alias | `AllowBucketKey`, `DenyBucketKey` | Grant and revoke |
+| | `AddBucketAlias`, `RemoveBucketAlias` | Global and local aliases |
+| Worker | `ListWorkers`, `GetWorkerInfo` | Worker list and detail |
+| | `GetWorkerVariable`, `SetWorkerVariable` | Worker variables |
+| Block | `ListBlockErrors`, `GetBlockInfo` | Block errors |
+| | `RetryBlockResync`, `PurgeBlocks` | Retry and purge |
+| Special | `/metrics` | Prometheus metrics (requires `metrics_token`) |
+| | `/health` | Connectivity and read/write quorum check (no token required; returns success when the cluster can read and write) |
 
-不使用：CheckDomain（由 Garage 网站服务自用）。
+Not used: `CheckDomain` (Garage's website service uses it itself).
 
 ---
 
-## 3. 安全要求
+## 3. Security requirements
 
-所有条目为 P0，除非另注。
+Every item is P0 unless it is marked otherwise.
 
-### 3.1 默认鉴权
-- 需求：没有“免登录模式”。首次启动且用户库为空时，所有页面引导到初始化向导创建第一个管理员；完成后该入口永久关闭。
-- 未完成初始化前，除初始化相关接口和状态查询外，其他接口一律返回 401。
-- 默认监听地址：二进制直接运行时未显式配置则监听 127.0.0.1；需要对外暴露时由运维显式设置 HOST。容器镜像内默认监听 0.0.0.0（容器内只监听回环地址时端口映射无法到达）；compose 示例只把端口映射到宿主机的 127.0.0.1，由运维显式改为对外映射。
-- 验收：二进制直接运行且未设置 HOST 时只在 127.0.0.1 上可连接；容器镜像未设置 HOST 时监听 0.0.0.0；按 compose 示例启动后，宿主机 127.0.0.1:3909 可访问，宿主机其他地址不可访问；全新启动后，未登录请求 GET /api/keys 返回 401；初始化后再次提交初始化返回 409。
+### 3.1 Default authentication
 
-### 3.2 不泄露密钥
-- 配置接口只返回前端需要的非敏感字段（S3 区域、网站根域名、是否启用分享、版本号），用白名单结构体输出。
-- 绝不返回 rpc_secret、admin_token、metrics_token、任何 RPC 地址或管理端监听地址。
-- 日志、错误信息、审计记录中不得出现令牌、secretAccessKey、密码或密码哈希。
-- 查看 secretAccessKey 只允许管理员，需二次确认，并写入审计。
-- 验收：对配置接口响应做字段白名单断言；对日志输出做敏感串扫描测试。
+- Requirement: there is no "skip login" mode. On the first start, when the user store is empty, every page leads to the setup wizard that creates the first administrator. After that finishes, that entry is closed permanently.
+- Before setup is finished, every API returns 401 except the setup APIs and the status query.
+- Default listen address. When the binary runs directly and nothing is configured explicitly, listen on `127.0.0.1`. When it must be exposed, an operator sets `HOST` explicitly. Inside the container image, listen on `0.0.0.0` by default (if the container listens only on the loopback address, a published port cannot reach it). The compose example maps the port only to the host's `127.0.0.1`. An operator changes that mapping explicitly when it should be reachable from elsewhere.
+- Acceptance: when the binary runs directly and `HOST` is not set, it is reachable only on `127.0.0.1`. When the container image does not set `HOST`, it listens on `0.0.0.0`. After a start from the compose example, the host can reach `127.0.0.1:3909`, and other addresses on the host cannot. After a fresh start, an unauthenticated `GET /api/keys` returns 401. Submitting setup again after setup has finished returns 409.
 
-### 3.3 预览 XSS 防护
-- 所有对象响应加 X-Content-Type-Options: nosniff。
-- 仅白名单类型允许内联：常见位图（png、jpeg、gif、webp、avif、bmp、ico）、text/plain、application/pdf、mp4/webm 视频、mpeg/ogg/wav 音频。SVG、HTML、XML、JavaScript 一律不内联。
-- 类型解析忽略参数并小写化，解析失败按不安全处理。
-- 非白名单类型：Content-Type 改为 application/octet-stream，并加 Content-Disposition: attachment，文件名按 RFC 5987 编码。
-- 对象响应加沙箱 CSP（sandbox; frame-ancestors 'self'），PDF 可放开脚本但不得授予同源。
-- 全站安全头：严格 CSP（默认仅自身源，禁止 object，frame-ancestors 'none'）、X-Frame-Options: DENY、Referrer-Policy: no-referrer。
-- 可选（P1）：预览改用独立域名的预签名地址，彻底与管理台隔离。
-- 验收：上传 Content-Type 为 text/html 和 image/svg+xml 的对象，预览请求返回附件下载与 octet-stream；E2E 测试中脚本不执行。
+### 3.2 Do not leak secrets
 
-### 3.4 会话与 cookie
-- 登录成功、初始化完成、修改密码、退出时都轮换会话 ID；退出时销毁服务端会话。
-- 会话 cookie：禁止脚本读取、SameSite=Lax、Path 跟随 BASE_PATH；Secure 默认开启，仅在显式配置为本地明文部署时关闭。
-- 绝对生命周期默认 24 小时，空闲超时默认 2 小时，均可配置；非法值回退默认值。
-- 每次请求以服务端用户库中的实时角色与禁用状态为准，会话中保存的角色只作显示缓存。
-- 验收：登录前后会话 ID 不同；退出后旧 cookie 请求返回 401；禁用用户后其下一次请求返回 401。
+- The configuration API returns only the non-sensitive fields the frontend needs (S3 region, website root domain, whether sharing is enabled, version). Emit them from an allowlist struct.
+- Never return `rpc_secret`, `admin_token`, `metrics_token`, any RPC address, or the admin listen address.
+- Logs, error text, and audit records must not contain a token, a `secretAccessKey`, a password, or a password hash.
+- Viewing a `secretAccessKey` is allowed only for an administrator. It requires a second confirmation, and it writes an audit record.
+- Acceptance: assert a field allowlist on the configuration API response. A test scans log output for sensitive strings.
 
-### 3.5 限流
-- 通用限流组件，进程内滑动窗口，默认 10 次/分钟：
-  - 登录按“客户端地址 + 小写用户名”计数；
-  - 初始化按客户端地址；
-  - 修改密码按用户名；
-  - 分享链接生成、下载令牌按用户计数（P1）。
-- 客户端地址默认取连接地址；仅当配置了可信代理头时才读取该头的最后一跳。
-- 超限返回 429，带 Retry-After。
-- 用户不存在或已禁用时仍执行一次等耗时的哈希比较，错误文案统一，防止枚举。
-- 验收：同一 key 第 11 次返回 429；窗口过后恢复；不同用户名计数互不影响。
+### 3.3 Preview XSS protection
+
+- Add `X-Content-Type-Options: nosniff` to every object response.
+- Only allowlisted types may be shown inline: common bitmaps (png, jpeg, gif, webp, avif, bmp, ico), `text/plain`, `application/pdf`, mp4 and webm video, and mpeg, ogg, and wav audio. SVG, HTML, XML, and JavaScript are never shown inline.
+- Parsing a type ignores parameters and lowercases the type. A parse failure is treated as unsafe.
+- For a type outside the allowlist, change `Content-Type` to `application/octet-stream`, add `Content-Disposition: attachment`, and encode the filename with RFC 5987.
+- Add a sandbox CSP to object responses (`sandbox; frame-ancestors 'self'`). A PDF may allow scripts, and it must not be granted same origin.
+- Site-wide security headers: a strict CSP (its own origin only, by default; `object` is forbidden; `frame-ancestors 'none'`), `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`.
+- Optional (P1): serve preview from a presigned address on a separate domain, fully isolated from the admin UI.
+- Acceptance: upload objects whose `Content-Type` is `text/html` and `image/svg+xml`. The preview request returns an attachment download and `octet-stream`. In the E2E test, the script does not run.
+
+### 3.4 Sessions and cookies
+
+- Rotate the session ID on a successful login, when setup finishes, when the password is changed, and on logout. On logout, destroy the server session.
+- Session cookie: scripts cannot read it, `SameSite=Lax`, and `Path` follows `BASE_PATH`. `Secure` is on by default. It is turned off only when the deployment is explicitly configured as local cleartext.
+- The absolute lifetime defaults to 24 hours. The idle timeout defaults to 2 hours. Both can be configured. An illegal value falls back to the default.
+- Each request uses the live role and the disabled state from the user store on the server. A role saved in the session is only a display cache.
+- Acceptance: the session ID is different before and after login. After logout, a request with the old cookie returns 401. After a user is disabled, that user's next request returns 401.
+
+### 3.5 Rate limiting
+
+- One shared rate-limit component. An in-process sliding window, default 10 times per minute.
+  - Count login by "client address + lowercased username".
+  - Count setup by client address.
+  - Count password change by username.
+  - Count share-link generation and download tokens by user (P1).
+- The client address is the connection address by default. Read the last hop of a trusted proxy header only when that header is configured.
+- Over the limit, return 429, with `Retry-After`.
+- When the user does not exist, or is disabled, still run one hash comparison of equal duration. The error text is the same, so the account cannot be enumerated.
+- Acceptance: the 11th request for the same key returns 429. After the window has passed, requests are accepted again. Counts for different usernames do not affect each other.
 
 ### 3.6 CSRF
-- 双提交 cookie：服务端下发随机 token cookie（可被前端脚本读取），所有 POST/PUT/PATCH/DELETE 必须带 X-CSRF-Token 头并做常量时间比较。
-- 仅豁免登录和初始化两个接口。
-- 本项目自身的 /api 不开放任何跨域访问（与 5.16 中为 Garage 桶配置的 CORS 规则无关）。
-- 验收：缺头或不一致返回 403；豁免列表有测试固定。
 
-### 3.7 端点白名单代理
-- 不允许通配透传 Admin API。后端只暴露一张显式白名单：每条记录包含 Garage 端点名、允许的方法、所需角色、是否写审计。
-- 白名单外的路径一律 404。
-- 敏感端点（CreateAdminToken、UpdateAdminToken、PurgeBlocks、LaunchRepairOperation、SetWorkerVariable、ClusterLayoutSkipDeadNodes、GetKeyInfo 带 showSecretKey）仅管理员可用，且需二次确认。
-- 后端从不把客户端的查询参数透传给 GetKeyInfo：普通查询固定不带 showSecretKey；查看 secret 只走本项目的专用接口（5.7），由后端显式附加 showSecretKey=true。
-- 白名单必须覆盖每个功能实际调用的端点：2.4 表中的全部端点、能力探测用的 ListBucketsInfo 与 ListKeysInfo、/metrics。CI 中用表驱动测试校验"各功能声明使用的端点 ⊆ 白名单"。
-- 若本项目使用受限管理令牌，其作用域必须包含白名单内所有端点；需要指标面板时还要包含作用域值 Metrics（/metrics 的端点名）或单独配置 metrics_token。GetCurrentAdminTokenInfo 对任何有效令牌都可调用，无需列入作用域。
-- 推荐（P1）：本项目使用作用域受限的 Garage 管理令牌（scope 仅列出白名单端点），而非全权 admin_token；启动时用 GetCurrentAdminTokenInfo 自检并在界面显示令牌作用域与到期时间。
-- 验收：只读角色调用任何写端点返回 403；调用不在白名单的端点返回 404；有覆盖整张白名单的表驱动测试。
+- Double-submit cookie. The server sets a random token cookie (a frontend script may read it). Every POST, PUT, PATCH, and DELETE must send an `X-CSRF-Token` header, and the comparison is constant-time.
+- Only two APIs are exempt: login and setup.
+- This project's own `/api` allows no cross-origin access. That is separate from the CORS rules configured on a Garage bucket in 5.16.
+- Acceptance: a missing header, or a header that does not match, returns 403. A test pins the exemption list.
 
-### 3.8 非 root 容器
-- 运行镜像使用 distroless static 的 nonroot 变体，以非 root 用户运行，根文件系统只读可用。
-- 数据目录 /data 为唯一可写卷。
-- 验收：容器内 id 不为 0；以 --read-only 启动可正常工作。
+### 3.7 Endpoint allowlist proxy
 
-### 3.9 请求体大小限制
-- 所有 JSON 接口统一上限（默认 1 MiB），在中间件层统一施加。
-- 上传接口单独上限 MAX_UPLOAD_SIZE_MB（默认 512，可配置），Content-Length 超限时提前返回 413，流式读取过程中超限同样中止并返回 413。
-- 验收：2 MiB 的 JSON 请求到任一接口返回 413；上传超限返回 413 且无残留临时文件。
+- Do not pass the Admin API through on a wildcard. The backend exposes one explicit allowlist. Each record contains the Garage endpoint name, the allowed methods, the required role, and whether the call writes an audit record.
+- A path outside the allowlist is always 404.
+- Sensitive endpoints (`CreateAdminToken`, `UpdateAdminToken`, `PurgeBlocks`, `LaunchRepairOperation`, `SetWorkerVariable`, `ClusterLayoutSkipDeadNodes`, and `GetKeyInfo` with `showSecretKey`) are available only to an administrator, and they require a second confirmation.
+- The backend never forwards the client's query parameters to `GetKeyInfo`. An ordinary query is fixed so that it does not send `showSecretKey`. Viewing a secret goes only through this project's dedicated API (5.7). The backend adds `showSecretKey=true` itself.
+- The allowlist must cover every endpoint each feature actually calls: every endpoint in the table in 2.4, `ListBucketsInfo` and `ListKeysInfo` used by the capability probe, and `/metrics`. In CI, a table-driven test checks that the endpoints each feature declares ⊆ the allowlist.
+- If this project uses a restricted admin token, that token's scope must include every endpoint on the allowlist. When the metrics panel is required, the scope must also include the scope value `Metrics` (the endpoint name of `/metrics`), or `metrics_token` is configured on its own. `GetCurrentAdminTokenInfo` can be called with any valid token. It does not have to be listed in the scope.
+- Recommended (P1): this project uses a scope-restricted Garage admin token (the scope lists only allowlisted endpoints), not a full-authority `admin_token`. At startup, self-check with `GetCurrentAdminTokenInfo`, and show the token's scope and expiration time in the UI.
+- Acceptance: a read-only role calling any write endpoint returns 403. Calling an endpoint that is not on the allowlist returns 404. A table-driven test covers the whole allowlist.
 
-### 3.10 分享链接权限
-- 生成预签名链接默认仅管理员可用；可通过单独的“分享”权限授予只读用户，且该用户必须同时具备“下载对象内容”权限（3.19）。只读角色默认不可生成。
-- 有效期档位 1 小时、24 小时、7 天，服务端强制上限 7 天。
-- 每次生成写审计（用户、桶、key、有效期）。
-- 未配置公共 S3 地址时功能关闭，接口返回 501。
-- 验收：只读用户请求分享返回 403；有效期超上限被截断为 7 天。
+### 3.8 Non-root container
 
-### 3.11 私有对象不被长时间缓存
-- 所有经认证返回的对象内容、元数据、ZIP 下载：Cache-Control: private, no-store。
-- 前端静态资源：index.html 不缓存，带哈希的资源长期缓存且不可变。
-- 验收：对象下载响应头断言 no-store。
+- The runtime image uses the nonroot variant of distroless static. It runs as a non-root user. The root filesystem can be used read-only.
+- `/data` is the only writable volume.
+- Acceptance: the id inside the container is not 0. A start with `--read-only` works.
 
-### 3.12 会话持久化及改密后失效
-- 会话存储落库（与用户库同一 SQLite），重启不掉线，可支持多副本共享同一数据库时的一致性（多副本为 P2）。
-- 修改密码、管理员重置密码、禁用、删除用户、降级角色时，立即删除该用户的全部其他会话（修改密码时保留当前会话并轮换 ID）。
-- 验收：A、B 两个浏览器登录同一账号，A 改密码后 B 的下一次请求返回 401；重启进程后未过期会话仍有效。
+### 3.9 Request body size limit
 
-### 3.13 登录审计与 IP
-- 登录成功、失败、限流命中、退出、初始化、改密均写入审计，包含时间（UTC）、用户名、客户端 IP、结果、原因代码。
-- 审计不包含密码或请求体。
-- 验收：一次失败登录后，审计表新增一条带 IP 的记录。
+- Every JSON API shares one upper bound (default 1 MiB), applied in middleware.
+- The upload API has its own bound, `MAX_UPLOAD_SIZE_MB` (default 512, configurable). When `Content-Length` is over the bound, return 413 before reading the body. When a streamed read goes over the bound, abort it the same way and return 413.
+- Acceptance: a 2 MiB JSON request to any API returns 413. An upload over the limit returns 413, and no temporary file is left.
 
-### 3.14 示例与镜像中不含任何密钥（P0）
-- 仓库、镜像、compose 示例、Helm values、文档中不得出现任何真实或"示例"私钥、签名密钥、会话密钥、密码、S3 凭据；示例一律用占位符并说明如何生成。
-- 会话签名/加密密钥未配置时，首次启动在数据目录随机生成并以仅属主可读权限保存；不得使用编译进二进制的默认值。
-- 启动时检查已配置的密钥：长度不足或与文档占位符相同则拒绝启动。
-- CI 对全部提交历史跑密钥扫描，命中即失败（测试夹具需显式白名单并注明为测试值）。
-- 验收：密钥扫描结果为 0；删除数据目录后重启生成新密钥，旧会话全部失效。
+### 3.10 Share link permission
 
-### 3.15 浏览器不接触 Garage 管理令牌（P0）
-- Garage admin token、metrics_token 只存在于服务端；前端所有 Garage 调用都经本项目后端白名单代理。
-- 前端不在 localStorage、sessionStorage、IndexedDB 中保存任何令牌或会话凭据；会话只用禁止脚本读取的 cookie。
-- 验收：E2E 中检查浏览器存储与所有响应体，不出现 admin token 或会话 ID。
+- Generating a presigned link is available only to an administrator by default. It may be granted to a read-only user through the separate "share" permission, and that user must also have the "download object content" permission (3.19). A read-only role cannot generate a link by default.
+- The validity choices are 1 hour, 24 hours, and 7 days. The server enforces an upper bound of 7 days.
+- Every generation writes an audit record (user, bucket, key, validity).
+- When no public S3 address is configured, the feature is off and the API returns 501.
+- Acceptance: a read-only user requesting a share returns 403. A validity period above the upper bound is truncated to 7 days.
 
-### 3.16 不存在"全关放行"（P0）
-- 不提供关闭鉴权的配置项；任何鉴权配置错误都导致启动失败，而不是放行。
-- 验收：配置缺失/非法的表驱动测试均以非零码退出。
+### 3.11 Private objects are not cached for long
 
-### 3.17 外部 TLS（P1）
-- 连接 Garage 与（远期）身份源时默认校验证书；支持自定义 CA 文件；"跳过校验"只能显式开启，启动日志与界面持续告警。
+- For every authenticated response of object content, metadata, or a ZIP download: `Cache-Control: private, no-store`.
+- Frontend static assets: do not cache `index.html`. Cache hashed assets for a long time, and mark them immutable.
+- Acceptance: assert `no-store` on the response headers of an object download.
 
-### 3.18 其他加固（P1）
-- 密码：bcrypt，最少 10 个字符，最多 72 字节，不能全为空白。
-- 离线 CLI 重置密码，从终端或标准输入读取密码，不通过命令行参数传入；不提供任何网络侧重置入口。
-- 自签证书：支持自定义 CA 文件；“跳过证书校验”仅作为显式开关并在界面告警。
+### 3.12 Persisted sessions, and invalidation after a password change
 
-### 3.19 角色与操作矩阵
-A=管理员，V=只读，D=被授予"下载对象内容"权限的只读用户，S=被授予"分享"权限的只读用户。D、S 是叠加在 V 上的独立权限，默认都关闭；授予 S 时必须同时具备 D（分享链接本质上也是把内容带出管理台），界面与后端都强制这一约束。"—"表示不可用且界面不显示入口；后端一律以此表为准做授权。
+- Store sessions in the database (the same SQLite database as the user store). A restart does not drop the login. The store can keep sessions consistent when several replicas share that database (several replicas are P2).
+- When the password is changed, an administrator resets the password, the user is disabled, the user is deleted, or the role is demoted, delete every other session of that user immediately. When the password is changed, keep the current session and rotate its ID.
+- Acceptance: browsers A and B log in as the same account. After A changes the password, B's next request returns 401. After the process restarts, a session that has not expired is still valid.
 
-| 操作 | A | V | V+D | V+D+S |
+### 3.13 Login audit and IP
+
+- Write an audit record for a successful login, a failed login, a rate-limit hit, logout, setup, and a password change. Include the time (UTC), the username, the client IP, the result, and a reason code.
+- An audit record does not contain the password or the request body.
+- Acceptance: after one failed login, the audit table has one new record, and that record includes the IP.
+
+### 3.14 Examples and images contain no secrets (P0)
+
+- The repository, images, the compose example, Helm values, and the docs must not contain any real or "example" private key, signing key, session key, password, or S3 credential. Examples use placeholders only, and they say how to generate the real value.
+- When the session signing key, or the session encryption key, is not configured, the first start generates one at random in the data directory and saves it so that only the owner can read it. Do not use a default that was compiled into the binary.
+- At startup, check secrets that are already configured. If the length is too short, or the value is the same as a placeholder in the docs, refuse to start.
+- CI runs a secret scan over the whole commit history. A hit fails the check. A test fixture needs an explicit allowlist entry, and that entry must say it is a test value.
+- Acceptance: the secret-scan result is 0. After the data directory is deleted and the process is started again, a new secret is generated, and every old session is invalid.
+
+### 3.15 The browser does not touch the Garage admin token (P0)
+
+- The Garage admin token and `metrics_token` exist only on the server. Every Garage call from the frontend goes through this project's backend allowlist proxy.
+- The frontend does not store a token or a session credential in `localStorage`, `sessionStorage`, or `IndexedDB`. The session uses only a cookie that scripts cannot read.
+- Acceptance: E2E checks browser storage and every response body. An admin token does not appear, and a session ID does not appear.
+
+### 3.16 No switch that turns checks off and allows every request (P0)
+
+- There is no configuration item that turns authentication off. Any error in the authentication configuration fails startup. It does not let the request through.
+- Acceptance: table-driven tests for a missing configuration and for an illegal configuration all exit with a non-zero status.
+
+### 3.17 External TLS (P1)
+
+- When connecting to Garage, and when connecting to an identity source (that source is later), verify the certificate by default. A custom CA file is supported. "Skip verification" can be turned on only by an explicit setting. The startup log and the UI keep showing a warning.
+
+### 3.18 Other hardening (P1)
+
+- Passwords use bcrypt. A password is at least 10 characters, at most 72 bytes, and not entirely whitespace.
+- The offline CLI resets a password by reading it from the terminal or from standard input. The password is not passed as a command-line argument. There is no reset entry on the network.
+- Self-signed certificates: a custom CA file is supported. "Skip certificate verification" exists only as an explicit switch, and the UI shows a warning.
+
+### 3.19 Role and operation matrix
+
+A = administrator. V = read-only. D = a read-only user who has been granted the "download object content" permission. S = a read-only user who has been granted the "share" permission. D and S are independent permissions added on top of V. Both default to off. Granting S requires that the user also has D, because a share link also takes the content out of the admin UI. The UI and the backend both enforce that constraint. "—" means the operation is unavailable, and the UI does not show an entry for it. The backend authorizes from this table and from no other rule.
+
+| Operation | A | V | V+D | V+D+S |
 |---|---|---|---|---|
-| 查看集群健康、状态、节点、布局、历史 | ✔ | ✔ | ✔ | ✔ |
-| 查看集群与节点统计 | ✔ | ✔ | ✔ | ✔ |
-| 查看 Prometheus 指标面板（汇总指标，不含凭据） | ✔ | ✔ | ✔ | ✔ |
-| 修改布局、连接节点、跳过死节点 | ✔ | — | — | — |
-| 查看桶列表与详情（别名、配额、网站、CORS、生命周期） | ✔ | ✔ | ✔ | ✔ |
-| 创建、删除桶，改别名、配额、网站、CORS、生命周期 | ✔ | — | — | — |
-| 查看桶上的密钥与权限（不含 secret） | ✔ | ✔ | ✔ | ✔ |
-| 授予、撤销桶权限 | ✔ | — | — | — |
-| 查看密钥列表与详情（不含 secret） | ✔ | ✔ | ✔ | ✔ |
-| 查看 S3 secret | ✔（二次确认，审计） | — | — | — |
-| 创建、导入、修改、删除密钥 | ✔ | — | — | — |
-| 浏览对象列表、元数据、搜索 | ✔ | ✔ | ✔ | ✔ |
-| 预览、下载对象、ZIP 打包下载、缩略图 | ✔ | — | ✔ | ✔ |
-| 上传、删除对象，清理未完成上传 | ✔ | — | — | — |
-| 生成分享链接 | ✔ | — | — | ✔ |
-| InspectObject 诊断 | ✔ | — | — | — |
-| Worker、修复、块错误、元数据快照（查看） | ✔ | — | — | — |
-| Worker 变量、修复、重试、清除块、快照（执行） | ✔ | — | — | — |
-| 管理令牌（查看与管理） | ✔ | — | — | — |
-| 审计日志（查看、导出） | ✔ | — | — | — |
-| 用户管理 | ✔ | — | — | — |
-| 修改自己的密码、主题 | ✔ | ✔ | ✔ | ✔ |
+| View cluster health, status, nodes, layout, and history | ✔ | ✔ | ✔ | ✔ |
+| View cluster statistics and node statistics | ✔ | ✔ | ✔ | ✔ |
+| View the Prometheus metrics panel (summary metrics, with no credentials) | ✔ | ✔ | ✔ | ✔ |
+| Change the layout, connect nodes, skip dead nodes | ✔ | — | — | — |
+| View the bucket list and bucket detail (aliases, quotas, website, CORS, lifecycle) | ✔ | ✔ | ✔ | ✔ |
+| Create and delete buckets, and change aliases, quotas, website, CORS, and lifecycle | ✔ | — | — | — |
+| View the keys and permissions on a bucket (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
+| Grant and revoke bucket permissions | ✔ | — | — | — |
+| View the key list and key detail (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
+| View the S3 secret | ✔ (a second confirmation, and an audit record) | — | — | — |
+| Create, import, change, and delete keys | ✔ | — | — | — |
+| Browse the object list, metadata, and search | ✔ | ✔ | ✔ | ✔ |
+| Preview and download an object, download a ZIP, and view thumbnails | ✔ | — | ✔ | ✔ |
+| Upload and delete objects, and clean up incomplete uploads | ✔ | — | — | — |
+| Generate a share link | ✔ | — | — | ✔ |
+| `InspectObject` diagnostics | ✔ | — | — | — |
+| Workers, repair, block errors, and metadata snapshots (view) | ✔ | — | — | — |
+| Worker variables, repair, retry, purge blocks, and snapshots (run) | ✔ | — | — | — |
+| Admin tokens (view and manage) | ✔ | — | — | — |
+| Audit log (view and export) | ✔ | — | — | — |
+| User management | ✔ | — | — | — |
+| Change your own password, and the theme | ✔ | ✔ | ✔ | ✔ |
 
-- 运维页面（Worker、块错误与块信息、元数据快照、修复）对只读角色不开放查看，仅管理员可用。理由：这些页面是内部诊断信息，不是状态概览——块信息含桶 ID、对象 key 与内部版本 ID，块错误反映磁盘与数据损坏细节，Worker 变量与错误包含内部调优参数和节点路径；只读用户看到后没有可执行的后续操作；只读角色需要的健康信息已由集群健康、状态、统计页面提供。
-- 数据模型：用户记录包含角色（admin 或 viewer）与权限集合（download、share 两个布尔位，默认 false）；对 admin 两位无意义且忽略；保存时校验"share 为真则 download 必须为真"。会话不缓存权限，每次请求按 3.4 从用户库实时读取。授予或撤销权限写审计。
-- 验收：表驱动测试逐行覆盖本表四列；V 请求对象预览、下载、缩略图、ZIP 令牌均返回 403，授予 D 后返回成功；只授予 S 不授予 D 的保存请求返回 400；撤销 D 后该用户已换取但未使用的 ZIP 令牌失效；V 访问任一运维接口返回 403。
-
----
-
-## 4. 正确性要求
-
-每项格式：需求 / 验收标准。默认优先级 P1，标注者除外。
-
-### 4.1 按桶 ID 访问，不依赖全局别名（P0）
-- 需求：所有桶相关接口（详情、浏览、上传、删除、分享、权限）以 Garage 桶 ID 寻址；别名只用于展示。只有本地别名或没有任何全局别名的桶也必须能完整操作。
-- 验收：创建一个仅有本地别名的桶，可浏览、上传、删除；别名包含 & 或 = 时不影响操作。
-
-### 4.2 凭证缓存与权限撤销及时生效
-- 需求：
-  1. 浏览对象所用的 S3 凭据优先使用为本项目专设的 key（可配置），没有时才由管理员为桶显式选择，不再隐式选取任意一个读写 key。
-  2. 查不到可用凭据时不缓存空结果，直接返回明确错误（412 并提示“该桶没有可用的读写密钥”）。
-  3. 凭据缓存 TTL 不超过 60 秒；本项目内执行 AllowBucketKey、DenyBucketKey、DeleteKey、UpdateKey 后立即清除相关缓存。
-  4. S3 返回 403 时清除缓存并重试一次。
-- 验收：撤销 key 后下一次浏览不再使用该 key；先无 key 后授权，立即可浏览。
-
-### 4.3 递归删除分页删完（P0）
-- 需求：删除“文件夹”时分页列出前缀下全部对象（每页最多 1000），按批调用批量删除，直到列完。返回已删除数与逐条错误列表（错误列表恒为数组）。部分失败时返回 207 或 200 加错误明细，不得报“全部成功”。
-- 验收：前缀下 2500 个对象全部被删除，返回 deleted=2500；注入其中 3 个失败时，返回 3 条错误。
-
-### 4.4 容量精度（P0）
-- 需求：节点容量以字节为内部单位，显示时按用户选择的单位保留至少两位小数；编辑表单回写时不得四舍五入或向下取整到整数单位。未改动容量的节点不得被重写。
-- 验收：1.8 TB 节点打开编辑后不做修改保存，提交给 UpdateClusterLayout 的 capacity 与原值逐字节相等。
-
-### 4.5 对象 key 做 URL 编码
-- 需求：前端构造路径时按段编码 key；后端解码后原样传给 S3；下载文件名按 RFC 5987 编码写入 Content-Disposition。文件夹名只禁止控制字符和 /，允许 =、#、?、%、空格和非 ASCII。
-- 验收：名为 a?b#c%20d=e 和中文名的对象可浏览、预览、下载、删除、分享。
-
-### 4.6 分配密钥时做校验
-- 需求：授权对话框未选择任何 key 或未勾选任何权限时，提交按钮不可用；请求失败时显示错误，不得提示成功。
-- 验收：前端组件测试覆盖“空选择”“接口失败”两种情况。
-
-### 4.7 请求出错后不再写成功响应
-- 需求：所有处理函数在写出错误响应后立即结束，不得再写状态码或拼接响应体。统一使用一个响应工具，重复写入时在测试模式下直接失败。
-- 验收：HeadObject 失败时响应体只有错误 JSON，日志中无重复写入告警。
-
-### 4.8 保留真实状态码
-- 需求：Garage 或 S3 返回非 JSON 错误体时，透传其原始状态码，并把文本内容截断放进统一错误结构；对象不存在返回 404 而非 500。
-- 验收：Garage 返回 403 纯文本时本项目返回 403；HEAD 不存在对象返回 404。
-
-### 4.9 端点 URL 结尾斜杠
-- 需求：API_BASE_URL、S3_ENDPOINT_URL、S3_PUBLIC_ENDPOINT_URL 解析时去掉末尾斜杠，拼接路径统一用 URL 拼接函数；仅含斜杠的值视为未设置。
-- 验收：配置值带与不带末尾斜杠，请求的目标地址一致。
-
-### 4.10 上传临时文件处理
-- 需求：上传默认流式转发到 S3，不落临时文件；必须落盘时只写入可配置的临时目录（镜像内为 /data/tmp 或挂载的 tmpfs），请求结束无论成败都删除。大文件使用 S3 分片上传，失败时中止分片。
-- 验收：将上传上限配置为不小于 3 GB 时，在根文件系统只读的容器中上传 2 GB 文件成功；中途断开后无残留临时文件和未完成分片（或在“未完成上传”中可见并可清理）。
-
-### 4.11 并发上限
-- 需求：所有对 Garage 的扇出调用（每桶详情、每节点信息）使用有界并发，默认 8，可配置；前端上传队列默认并发 3。
-- 验收：1000 个桶时同时在途的 GetBucketInfo 请求不超过 8。
-
-### 4.12 BASE_PATH 处理
-- 需求：子路径部署通过构建产物使用相对资源路径并由服务端注入 base 元信息实现，不对 JS 文本做字符串替换；BASE_PATH 规范化为以 / 开头、不以 / 结尾；访问根路径时 301 跳到 BASE_PATH；cookie Path 跟随。注入结果在启动时计算一次。
-- 验收：BASE_PATH=/admin 与空值两种部署下，刷新任意深层路由均能加载；静态资源无 404。
-
-### 4.13 读取密钥文件时去掉换行
-- 需求：所有敏感配置支持 *_FILE 变体（API_ADMIN_KEY_FILE、METRICS_TOKEN_FILE、S3 凭据文件等），_FILE 优先；读取后去掉末尾的 CR/LF，保留中间内容；启动时读取一次；读取失败报错只含路径，不打印内容。
-- 验收：文件末尾带 CRLF 时 Bearer 头正确；文件不存在时启动报错且信息中无密钥。
-
-### 4.14 更新源可配置
-- 需求：更新检查默认关闭；检查地址与发布签名公钥都由配置或构建参数指定，属于本项目自己的发布源；未配置时功能隐藏。
-- 验收：未配置更新源时不产生任何对外请求。
-
-### 4.15 其他
-- 配置文件解析失败与文件缺失行为一致：都记录警告并回退到环境变量，必需项缺失时给出明确启动错误，不直接崩溃退出。
-- 鉴权状态接口如实返回是否已登录，不得恒为真。
-- 缩略图声明的 Content-Type 与实际编码一致。
-- S3 端点与区域优先读配置；Garage 提供 GetNodeInfo.connectionParameters 时（main-v2 能力探测）可用于自动填充。
-- 使用 S3 SDK 当前推荐的端点配置方式，消除弃用告警。
+- Operations pages (Workers, block errors and block information, metadata snapshots, and repair) are not open to a read-only role for viewing. Only an administrator can use them. Reason: these pages are internal diagnostic information, not a status overview. Block information includes the bucket ID, the object key, and the internal version ID. Block errors show disk and data-corruption detail. Worker variables and errors include internal tuning parameters and node paths. A read-only user has no follow-up action they can take after seeing that information. The health information a read-only role needs is already on the cluster health, status, and statistics pages.
+- Data model. A user record contains a role (`admin` or `viewer`) and a permission set (two boolean bits, `download` and `share`, default false). For an admin, the two bits mean nothing and are ignored. On save, check that if `share` is true, then `download` must be true. The session does not cache permissions. Each request reads them live from the user store, as 3.4 says. Granting or revoking a permission writes an audit record.
+- Acceptance: a table-driven test covers every row of this table, across all four columns. A request from V for object preview, download, a thumbnail, or a ZIP token returns 403. After D is granted, those requests succeed. A save that grants S and does not grant D returns 400. After D is revoked, a ZIP token that this user has already exchanged and has not yet used becomes invalid. A request from V to any operations API returns 403.
 
 ---
 
-## 5. 功能模块清单
+## 4. Correctness requirements
 
-每项包含：需求、对外接口（本项目 /api 下）、对应 Garage 端点、验收标准。角色缩写：A=管理员，V=只读。
+Each item states the requirement, then the acceptance criteria. The default priority is P1, except where an item is marked otherwise.
 
-### 5.1 桶
-- 需求：分页列表（名称、别名、对象数、容量、配额使用率）、创建（可选全局别名）、删除（非空时提示）、别名增删（全局/本地）。
-- 接口：GET /api/buckets?offset&limit（A/V）；POST /api/buckets（A）；DELETE /api/buckets/{id}（A）；POST/DELETE /api/buckets/{id}/aliases（A）。
-- Garage：ListBucketsInfo 或 ListBuckets + GetBucketInfo、CreateBucket、DeleteBucket、AddBucketAlias、RemoveBucketAlias。
-- 验收：仅本地别名的桶出现在列表中并可进入；删除非空桶时返回 Garage 的错误且界面提示。
+### 4.1 Address buckets by bucket ID, not by a global alias (P0)
 
-### 5.2 对象浏览
-- 需求：按 / 分隔的前缀导航与面包屑；分页（默认 100，上限 1000，续页令牌）；S3 列表只按 key 字典序返回、只支持前缀筛选，因此跨页顺序固定为 key 字典序，按大小、时间排序仅对当前已加载的页生效且界面明示"仅当前页"；前缀内子串搜索（至少 2 字符，最多返回 200 条，最多扫描 20 页）；安全预览；对象元数据与 InspectObject 诊断（A）。
-- 接口：GET /api/buckets/{id}/objects?prefix&limit&next；GET /api/buckets/{id}/objects/{key}（元数据、view、download）；GET /api/buckets/{id}/search?q&prefix；GET /api/buckets/{id}/inspect/{key}（A）。
-- Garage：S3 ListObjectsV2、HeadObject、GetObject；Admin InspectObject。
-- 验收：5000 个对象可翻页浏览；搜索截断时返回原因字段；预览满足 3.3。
+- Requirement: every bucket API (detail, browse, upload, delete, share, permissions) addresses the bucket by its Garage bucket ID. An alias is for display only. A bucket that has only a local alias, or no global alias at all, must still support the full set of operations.
+- Acceptance: create a bucket that has only a local alias. Browse, upload, and delete succeed. An alias that contains `&` or `=` does not affect the operation.
 
-### 5.3 上传
-- 需求：拖拽或选择多文件、文件夹上传（保留相对路径）；上传队列并发 3、可取消、可重试、显示进度；同名提示覆盖确认；大文件自动分片；单文件上限可配置。
-- 接口：PUT /api/buckets/{id}/objects/{key}（A）；分片：POST 初始化、PUT 分片、POST 完成、DELETE 中止（A）。
-- Garage：S3 PutObject、CreateMultipartUpload、UploadPart、CompleteMultipartUpload、AbortMultipartUpload。
-- 验收：1 GB 文件上传时服务端常驻内存增长不超过 64 MB；取消后分片被中止。
+### 4.2 Credential cache and permission revocation take effect promptly
 
-### 5.4 删除
-- 需求：单个删除、多选批量删除（单次最多 1000 个 key）、文件夹递归删除（见 4.3），均需确认对话框。
-- 接口：DELETE /api/buckets/{id}/objects/{key}[?recursive=true]；POST /api/buckets/{id}/objects:delete（keys[]）（A）。
-- Garage：S3 DeleteObject、DeleteObjects、ListObjectsV2。
-- 验收：批量 1001 个 key 返回 400；部分失败逐条返回。
+- Requirement:
+  1. The S3 credentials used to browse objects prefer a key reserved for this project (configurable). Only when that key is absent does an administrator explicitly choose one for the bucket. The product no longer implicitly picks an arbitrary read-write key.
+  2. When no usable credential can be found, do not cache an empty result. Return a clear error at once (412, with the message "This bucket has no usable read-write key").
+  3. The credential-cache TTL is at most 60 seconds. After this project runs `AllowBucketKey`, `DenyBucketKey`, `DeleteKey`, or `UpdateKey`, clear the related cache immediately.
+  4. When S3 returns 403, clear the cache and retry once.
+- Acceptance: after a key is revoked, the next browse does not use that key. Grant access when there was no key, and browse works immediately.
 
-### 5.5 分享
-- 需求：生成预签名 GET 链接（1 小时、24 小时、7 天），桶开启网站访问时同时给出公开网站地址；权限见 3.10。
-- 接口：POST /api/buckets/{id}/share（key、expires）（A 或拥有分享权限者）。
-- Garage：S3 预签名（使用公共 S3 地址与区域）；网站地址由配置模板生成（模板必须包含 {bucket}）。
-- 验收：生成的链接在有效期内可下载，过期后返回 403；审计中可见记录。
+### 4.3 Recursive delete pages until every object is deleted (P0)
 
-### 5.6 批量下载
-- 需求：多选对象或文件夹打包成 ZIP 流式下载。先换取一次性令牌（60 秒有效、只能用一次、绑定用户与桶），再下载。ZIP 内路径去掉公共前缀、清理路径穿越与盘符、重名加序号；单个对象失败时写入 ZIP 内的错误清单文件。
-- 接口：POST /api/buckets/{id}/archive-token（A，或具备下载权限的 V）；GET /api/buckets/{id}/archive?token=（同上）。
-- Garage：S3 GetObject。
-- 验收：无下载权限的只读用户换取令牌返回 403；令牌第二次使用返回 404；其他用户使用返回 403；包含 ../ 的 key 在 ZIP 中被清理；1000 个对象打包时进程内存峰值增长不超过 64 MB。
+- Requirement: when deleting a "folder", list every object under the prefix, one page at a time (at most 1000 per page), and call batch delete in batches until the listing is finished. Return the deleted count and a per-object error list (the error list is always an array). On a partial failure, return 207, or 200 plus the error details. Do not report "all succeeded".
+- Acceptance: all 2500 objects under the prefix are deleted, and the response is `deleted=2500`. When 3 of those objects are injected as failures, the response contains 3 errors.
 
-### 5.7 密钥
-- 需求：分页列表、创建（新建时名称限字母数字 _ -；导入或已有密钥的名称原样显示，不做校验）、导入、改名、设置过期时间或设为永不过期（neverExpires）、允许建桶（allow.createBucket）开关、删除、查看 secret（A，二次确认，审计）。
-- 接口：GET/POST /api/keys；GET/PATCH/DELETE /api/keys/{id}；POST /api/keys/import；POST /api/keys/{id}/secret（A）。
-- Garage：ListKeysInfo 或 ListKeys、GetKeyInfo、CreateKey、ImportKey、UpdateKey（name、expiration、allow.createBucket、deny.createBucket）、DeleteKey。
-- 验收：开启允许建桶后，该 key 可通过 S3 创建桶；删除 key 后浏览凭据缓存失效（见 4.2）。
+### 4.4 Capacity precision (P0)
 
-### 5.8 布局
-- 需求：节点角色分配与修改（zone、capacity、tags；capacity 为空即网关节点）、移除；布局参数 zoneRedundancy（"maximum" 或至少 N 个 zone）的查看与修改；暂存变更列表（来自 GetClusterLayout 的 stagedRoleChanges 与 stagedParameters）；应用前必须先调用预览并展示预览结果（v2.4+ 展示结构化统计，v2.3 展示文本）；预览返回错误分支时显示错误并禁止应用；应用（version = 当前 + 1）或撤销全部暂存变更；布局历史；跳过死节点（A，强确认，说明风险；需传入当前版本号，并单独选择是否 allowMissingData，选中时再加一次强确认，说明可能丢失数据）。
-- 接口：GET /api/layout；POST /api/layout/stage；POST /api/layout/preview；POST /api/layout/apply；POST /api/layout/revert；GET /api/layout/history；POST /api/layout/skip-dead-nodes。
-- Garage：GetClusterLayout、UpdateClusterLayout、PreviewClusterLayoutChanges、ApplyClusterLayout、RevertClusterLayout、GetClusterLayoutHistory、ClusterLayoutSkipDeadNodes。
-- 验收：未执行预览或预览返回错误时“应用”按钮不可用；容量精度满足 4.4；历史页显示各版本与同步状态。
+- Requirement: node capacity uses bytes as the internal unit. Display it in the unit the user chose, with at least two decimal places. When the edit form writes the value back, do not round half up and do not floor it to an integer unit. A node whose capacity was not changed must not be rewritten.
+- Acceptance: open the editor for a 1.8 TB node, save with no changes, and the `capacity` submitted to `UpdateClusterLayout` is byte-for-byte equal to the original value.
 
-### 5.9 集群健康
-- 需求：首页卡片显示状态、已知节点数、已连接节点数、存储节点数与在线数（storageNodesUp）、分区状态；节点列表与连接节点。
-- 接口：GET /api/cluster/health；GET /api/cluster/status；POST /api/cluster/connect（A）。
-- Garage：GetClusterHealth、GetClusterStatus、GetNodeInfo、ConnectClusterNodes。
-- 验收：v2.3.x 与 v2.4.1 下数字均正确；Garage 不可达时显示错误而非白屏。
+### 4.5 URL-encode object keys
 
-### 5.10 统计指标
-- 需求：集群与节点统计（容量、可用空间、桶数、对象数、总量）；可选的 Prometheus 指标汇总（S3 请求数、错误数、块读写字节）。说明：Garage 的 /metrics 在配置了 metrics_token（或要求令牌）时，接受 metrics_token 或作用域包含 Metrics（或 *）的管理令牌；两者都未配置时无需令牌。本项目按此顺序取用：单独配置的 metrics_token、本项目管理令牌；都不可用时指标面板显示提示。
-- 接口：GET /api/cluster/statistics；GET /api/nodes/{id}/statistics；GET /api/metrics。
-- Garage：GetClusterStatistics、GetNodeStatistics、/metrics。
-- 验收：Prometheus 文本解析单测；空响应各项为 0。
+- Requirement: when the frontend builds a path, encode the key by segment. The backend decodes it and passes the original value to S3. Write the download filename into `Content-Disposition` with RFC 5987 encoding. A folder name forbids only control characters and `/`. `=`, `#`, `?`, `%`, spaces, and non-ASCII characters are allowed.
+- Acceptance: objects named `a?b#c%20d=e` and 中文名 can be browsed, previewed, downloaded, deleted, and shared.
 
-### 5.11 Worker 与修复任务
-- 需求：按节点（单个节点 ID 或全部节点）列出 Worker（状态、错误、进度），可只看忙碌或只看出错的；查看详情；读取全部或单个 Worker 变量，设置变量（变量名与值均为字符串，A）；发起修复任务（A，强确认，目标为单个节点或全部节点），类型取自 Garage 定义：tables、blocks、versions、multipartUploads、blockRefs、blockRc、rebalance、aliases、clearResyncQueue，以及 scrub 的 start、pause、resume、cancel。
-- 接口：GET /api/nodes/{id}/workers；GET /api/nodes/{id}/workers/{wid}；GET/PUT /api/nodes/{id}/worker-variables；POST /api/nodes/{id}/repair。
-- Garage：ListWorkers、GetWorkerInfo、GetWorkerVariable、SetWorkerVariable、LaunchRepairOperation。
-- 验收：设置变量后再次读取为新值；修复任务写审计。
+### 4.6 Validate when assigning a key
 
-### 5.12 块错误
-- 需求：按节点列出块错误；按块哈希查看块信息（需指定节点）；重试同步（指定块哈希，或"全部重试"）；清除块（A，强确认，说明会导致对象数据丢失；一次可提交多个块哈希）。
-- 接口：GET /api/nodes/{id}/block-errors；GET /api/nodes/{id}/blocks/{hash}；POST /api/nodes/{id}/blocks/retry；POST /api/nodes/{id}/blocks/purge。
-- Garage：ListBlockErrors、GetBlockInfo、RetryBlockResync、PurgeBlocks。
-- 验收：只读角色调用清除返回 403；清除需要输入块哈希确认。
+- Requirement: in the grant dialog, the submit button is disabled when no key is selected or no permission is checked. When the request fails, show the error. Do not report success.
+- Acceptance: frontend component tests cover both "empty selection" and "request failure".
 
-### 5.13 元数据快照
-- 需求：对指定节点或全部节点创建元数据快照（A）。
-- 接口：POST /api/nodes/{id}/metadata-snapshot。
-- Garage：CreateMetadataSnapshot。
-- 验收：操作成功提示并写审计。
+### 4.7 Do not write a success response after a request error
 
-### 5.14 清理未完成上传
-- 需求：在桶详情中列出未完成分片上传（key、uploadId、开始时间），可中止单个或全部；提供“清理早于 N 小时的未完成上传”。
-- 接口：GET /api/buckets/{id}/multipart；DELETE /api/buckets/{id}/multipart；POST /api/buckets/{id}/cleanup-uploads（olderThanSecs）。
-- Garage：S3 ListMultipartUploads、AbortMultipartUpload；Admin CleanupIncompleteUploads。
-- 验收：清理后列表中不再出现超过阈值的条目，返回清理数量。
+- Requirement: every handler stops immediately after it writes an error response. It must not write a status code again or append to the response body. Use one response helper. A repeated write fails immediately in test mode.
+- Acceptance: when `HeadObject` fails, the response body contains only the error JSON, and the log has no duplicate-write warning.
 
-### 5.15 受限管理令牌
-- 需求：列出、创建、修改、删除 Garage 管理令牌（name、expiration、scope）；创建时 secret 只显示一次；对 scope 包含 CreateAdminToken 或 * 的令牌明确警示其等同全权；显示本项目当前所用令牌的信息。scope 取值为 Admin API 端点名、Metrics 或 *。ListAdminTokens 会把配置文件中的 admin_token、metrics_token 作为只读条目列出：界面标注"来自配置文件"，不提供修改和删除。
-- 接口：GET/POST /api/admin-tokens；GET/PATCH/DELETE /api/admin-tokens/{id}；GET /api/admin-tokens/current。
-- Garage：ListAdminTokens、GetAdminTokenInfo、CreateAdminToken、UpdateAdminToken、DeleteAdminToken、GetCurrentAdminTokenInfo。
-- 验收：仅管理员可见；令牌 secret 不出现在后续任何响应与日志中。
+### 4.8 Preserve the real status code
 
-### 5.16 CORS 与生命周期
-- 需求：在桶设置中编辑 CORS 规则（ID、来源、方法、头、暴露头、缓存秒数）和生命周期规则（ID、启用状态、过期天数或过期日期二选一、前缀与对象大小上下限过滤、中止未完成上传天数）；表单校验；保存前展示差异。
-- 说明：通过 Admin UpdateBucket 写入（与 S3 的同名接口作用于同一配置）；corsRules、lifecycleRules 为整组替换：不传表示不变，传空数组即清空。并发编辑时以保存前重新读取的版本做差异提示。
-- 接口：GET/PUT /api/buckets/{id}/cors；GET/PUT /api/buckets/{id}/lifecycle。
-- Garage：GetBucketInfo（corsRules、lifecycleRules）、UpdateBucket（corsRules、lifecycleRules），v2.3.0 起均可用。
-- 验收：保存后 GetBucketInfo 返回一致；浏览器跨域预检符合配置。
+- Requirement: when Garage or S3 returns a non-JSON error body, pass through the original status code and place the truncated text in the unified error structure. A missing object returns 404, not 500.
+- Acceptance: when Garage returns 403 as plain text, this project returns 403. HEAD of a missing object returns 404.
 
-### 5.17 网站访问
-- 需求：开关网站访问，设置索引文档与错误文档；开启时确认对话框提示数据将公开；按模板展示公开地址。
-- 接口：PUT /api/buckets/{id}/website。
-- Garage：UpdateBucket.websiteAccess（enabled、indexDocument、errorDocument；另有 routingRules，本轮只读显示，不提供编辑，保存时原样回传）。
-- 验收：开启后公开地址可访问；关闭后返回 Garage 的拒绝响应。
+### 4.9 Trailing slash on endpoint URLs
 
-### 5.18 配额
-- 需求：设置或清除桶的最大容量（maxSize）与最大对象数（maxObjects），显示当前使用率。
-- 接口：PUT /api/buckets/{id}/quotas。
-- Garage：UpdateBucket.quotas。
-- 说明：UpdateBucket 的 quotas 为整体替换：不传 quotas 表示不变；传入时 maxSize、maxObjects 两项都会被写入，置 null 即清除该项。前端修改一项时必须同时回传另一项的当前值。
-- 验收：只改 maxSize 时 maxObjects 保持原值；两项都置 null 后配额被清除；容量单位换算无精度损失。
+- Requirement: when parsing `API_BASE_URL`, `S3_ENDPOINT_URL`, and `S3_PUBLIC_ENDPOINT_URL`, strip a trailing slash. Join paths with a URL join function. A value that contains only slashes counts as unset.
+- Acceptance: with and without a trailing slash on the configured value, the request targets the same address.
 
-### 5.19 权限
-- 需求：列出桶上的 key 与 read/write/owner 权限；授权、撤销（校验见 4.6；撤销后凭据缓存失效见 4.2）。
-- 接口：POST/DELETE /api/buckets/{id}/permissions。
-- Garage：AllowBucketKey、DenyBucketKey、GetBucketInfo。
-- 验收：撤销后界面与 Garage 一致。
+### 4.10 Handling of upload temporary files
 
-### 5.20 多用户与角色
-- 需求：SQLite 用户库；初始化向导；角色 admin、viewer，另加可分配给 viewer 的“下载对象内容”和“分享”权限（数据模型与约束见 3.19）；用户增删改、禁用、改名、重置密码；防锁死（不能删除、降级、禁用自己，不能移除最后一个启用的管理员）；离线 CLI（列出用户、重置密码、创建管理员、版本、健康检查）；首次启动可一次性导入环境变量中的 bcrypt 账号。
-- 接口：GET/POST /api/users；PATCH/DELETE /api/users/{id}；POST /api/users/{id}/reset-password；POST /api/auth/login|logout|change-password；GET /api/auth/status；GET/POST /api/setup。
-- Garage：无。
-- 验收：权限位的授予、撤销与"分享依赖下载"约束有测试；防锁死规则逐条测试；用户响应永不含哈希；角色变更立即生效（3.4）。
+- Requirement: an upload streams to S3 by default and does not land in a temporary file. When it must be written to disk, write it only in the configurable temporary directory (`/data/tmp` inside the image, or a mounted tmpfs). Delete it when the request ends, on success or on failure. A large file uses S3 multipart upload. Abort the multipart upload on failure.
+- Acceptance: with the upload limit set to at least 3 GB, a 2 GB upload succeeds in a container whose root filesystem is read-only. After a disconnect midway, no temporary file and no incomplete multipart upload remain (or the incomplete upload is visible under "incomplete uploads" and can be cleaned up).
 
-### 5.21 审计日志
-- 需求：所有写操作（含被拒绝的）、登录相关事件、查看 secret、生成分享链接写入审计表，字段：时间、用户、IP、方法、路径、目标资源（桶 ID、key、节点 ID 等）、结果状态码、原因；同时可选输出到标准输出（JSON 行）；界面提供筛选（用户、时间段、操作类型）和导出 CSV；保留期可配置（默认 90 天）。
-- 接口：GET /api/audit?user&from&to&action&offset&limit（A）；GET /api/audit/export（A）。
-- Garage：无。
-- 验收：每类事件均有一条集成测试断言审计记录；超过保留期的记录被定期清理。
+### 4.11 Concurrency cap
 
-### 5.22 分页
-- 需求：本项目所有列表接口（桶、密钥、对象、用户、审计、管理令牌、块错误）统一分页约定：offset/limit 或续页令牌，响应中带 next 或 hasMore；前端统一分页组件。
-- Garage：ListBucketsInfo/ListKeysInfo 的 offset、limit（能力探测）；S3 续页令牌。
-- 验收：所有列表接口对 limit 越界做规范化（默认 100，上限 1000）。
+- Requirement: every fan-out call to Garage (per-bucket detail, per-node info) uses bounded concurrency. The default is 8, and it is configurable. The frontend upload queue defaults to 3 concurrent uploads.
+- Acceptance: with 1000 buckets, at most 8 `GetBucketInfo` requests are in flight at the same time.
 
-### 5.23 设置与关于
-- 需求：修改自己的密码、主题切换、显示版本；更新检查默认关闭且源可配置（4.14）。
-- 验收：未开启更新检查时无对外请求。
+### 4.12 BASE_PATH handling
 
-### 5.24 明确不支持的 S3 特性
-以下特性 Garage 不支持（或仅返回固定值），本项目界面不提供入口，相关文档写明：
-- 对象版本控制（ListObjectVersions 返回未实现；仅可读取版本控制状态，恒为未启用）。
-- 对象锁、保留期锁定与法律保留。
-- 桶策略与对象 ACL（权限一律通过 Garage key 授权）。
-- 服务端加密配置（SSE-C 除外，本项目不做管理界面）。
-- 桶复制、请求者付费、对象标签管理、存储类别切换、事件通知。
-- 验收：界面无上述入口；文档“已知限制”章节列出。
+- Requirement: a subpath deployment uses relative asset paths in the build output, and the server injects the base metadata. Do not replace strings inside JS text. Normalize `BASE_PATH` so that it starts with `/` and does not end with `/`. A request to the root path returns 301 to `BASE_PATH`. The cookie `Path` follows `BASE_PATH`. Compute the injected value once at startup.
+- Acceptance: under both `BASE_PATH=/admin` and an empty value, refreshing any deep route loads, and no static asset returns 404.
 
-### 5.25 导航与页面结构
-- 需求：左侧固定导航（窄屏折叠为抽屉），一级入口依次为：概览、桶、密钥、节点与布局、运维（Worker、块错误、快照、修复）、管理令牌、审计、设置。只读角色看不到无权使用的入口。
-- 每个资源采用"列表页 → 详情页（标签页）"结构：桶详情含概览、对象、权限、设置（网站、配额、CORS、生命周期）、未完成上传；密钥详情含概览、可访问的桶、设置；节点详情含信息、统计、Worker、块错误、维护操作。
-- 顶部显示面包屑、当前用户与角色、连接的 Garage 版本与健康状态徽标。
-- 所有详情页、标签页、对象前缀都有可分享、可刷新的独立地址；浏览器前进后退保持状态。
-- 验收：E2E 中直接打开任一深层地址可正确渲染；只读账号导航不含写操作入口；窄屏下导航可展开收起。
+### 4.13 Strip newlines when reading a secret file
 
-### 5.26 统一交互状态
-- 需求：每个数据区块必须实现四种状态：
-  1. 加载：首屏用骨架占位，后续刷新只显示轻量进度提示，不清空已显示数据。
-  2. 空：说明当前为空的原因，并给出下一步操作（如"创建第一个桶"）；只读角色不显示创建按钮。
-  3. 错误：区块内显示错误条，包含可读说明、错误码、"重试"按钮；Garage 不可达时显示全局横幅而非逐块报错。
-  4. 部分结果：分页截断、搜索达上限、探测到能力缺失时，明确提示原因。
-- 写操作：提交中禁用按钮并显示进度；成功后以非阻塞提示告知并刷新相关数据；失败时保留表单输入并显示错误。
-- 设置类表单显示保存状态（未保存、保存中、已保存、失败），离开有未保存修改的页面时提示。
-- 验收：前端组件测试对每个列表组件覆盖加载、空、错误三态；模拟 Garage 断开时出现全局横幅。
+- Requirement: every sensitive setting supports a `*_FILE` variant (`API_ADMIN_KEY_FILE`, `METRICS_TOKEN_FILE`, S3 credential files, and the same pattern for the other sensitive settings). The `_FILE` variant takes priority. After a read, strip trailing CR/LF and keep the content in the middle. Read once at startup. On a read failure, the error includes only the path and does not print the contents.
+- Acceptance: when the file ends with CRLF, the Bearer header is correct. When the file does not exist, startup fails and the error text contains no secret.
 
-### 5.27 确认流程分级
-- 需求：按风险把写操作分三级：
-  1. 低风险（改名、改配额、改网站文档）：无需确认，可撤销或可再次修改。
-  2. 中风险（删除单个对象、撤销权限、删除空桶、删除密钥）：模态确认框，写明对象名与后果，默认焦点在"取消"。
-  3. 高风险（递归删除、批量删除、清除块、跳过死节点、应用布局、开启公开网站访问、创建全权管理令牌）：需输入目标名称（或块哈希、布局版本号）后才能确认；说明不可逆后果与影响范围（对象数、容量）。
-- 确认框支持键盘操作（Esc 取消、回车仅在输入匹配后生效）。
-- 验收：表驱动测试固定每个写操作的风险等级；高风险操作在输入不匹配时确认按钮不可用。
+### 4.14 The update source is configurable
 
-### 5.28 布局变更流程
-- 需求：布局页面按步骤引导：
-  1. 查看当前布局（节点、zone、容量、标签、角色）与"暂存变更"列表；
-  2. 编辑：分配、修改、移除节点角色，变更进入暂存区，可逐条撤回；
-  3. 预览：调用预览接口，展示新布局与数据迁移结果（v2.4+ 用结构化统计做表格，v2.3 显示文本）；
-  4. 应用：高风险确认，自动填入当前版本 + 1；
-  5. 跟踪：应用后显示进度跟踪（各节点同步到新版本的状态，参照布局历史），直至全部完成；有节点长时间离线时提供"跳过死节点"入口并说明风险。
-- 任何时候可"撤销全部暂存变更"。
-- 验收：未预览不可应用；应用后跟踪视图在全部节点同步后显示完成；撤销后暂存区为空。
+- Requirement: the update check is off by default. Configuration or build parameters set both the check address and the release-signing public key. They belong to this project's own release source. When they are not configured, hide the feature.
+- Acceptance: when no update source is configured, the product makes no outbound request.
 
-### 5.29 概览页与容量可视化
-- 需求：概览页包含健康卡片、集群容量（已用/可用，按节点分布）、桶数量与对象总数、按桶容量排行（前 N 个，其余合并为"其他"，桶多或很小时仍可读）、最近的审计事件（管理员；5.21 的查询接口交付后启用）。
-- 按桶容量排行与按容量排序依赖每个桶的详情：能力探测到 ListBucketsInfo 时直接使用；否则由后台任务以有界并发（4.11）定期汇总（默认 10 分钟，可配置）并缓存，界面标注数据时间，不随 30 秒刷新触发全量请求。
-- 桶列表与详情显示配额使用率进度条（容量和对象数），达到 80% 和 95% 时分别以警告色和错误色标出。
-- 数据自动刷新（默认 30 秒，可暂停），页面不可见时停止刷新。
-- 验收：1000 个桶时排行图仍可读；配额阈值着色有组件测试；切到后台标签页后不再发请求。
+### 4.15 Other
 
-### 5.30 列表的筛选、排序与选择
-- 需求：桶、密钥、节点、管理令牌、用户列表支持按名称筛选，按名称、创建时间、容量等列排序，默认排序固定且有说明；排序与筛选状态写入地址。桶列表按容量排序使用 5.29 的汇总缓存。
-- 对象列表支持多选（含按住 Shift 选择区间、全选当前页），选中后出现批量操作条（删除、下载 ZIP、复制路径）。不提供跨页"全选"；需要处理整个前缀时使用文件夹递归操作（4.3、5.6）。
-- 验收：刷新后排序与筛选保持；批量操作条只在有选择时出现。
-
-### 5.31 凭据显示与复制
-- 需求：新建密钥或管理令牌后，在结果对话框中一次性显示完整凭据，提供一键复制（复制成功有视觉反馈）与"我已保存"确认；关闭后不可再次查看（管理令牌）或需再次走二次确认（S3 secret）。
-- 凭据字段默认遮挡，显示时需主动点击；复制功能在非安全上下文下降级为可选中文本。
-- 与 3.15 的关系：3.15 约束的是本项目自身连接 Garage 所用的令牌，它永不进入浏览器。用户在界面上新建的管理令牌或 S3 secret 是要交给使用者的结果，只允许出现在创建（或二次确认后查看）的那一次响应中，该响应设置 no-store，不写日志与审计内容。
-- 验收：关闭对话框后响应与页面中不再出现管理令牌 secret；复制按钮有组件测试。
-
-### 5.32 对象预览查看器
-- 需求：对象详情侧栏显示元数据（大小、类型、ETag、修改时间、自定义元数据）；白名单类型在查看器中预览：图片、音视频（支持拖动进度，即后端支持字节区间读取并流式返回）、PDF、纯文本（超过可配置大小只显示开头部分）；同目录内可用左右键切换上一个、下一个对象。
-- 不在白名单的类型显示"下载"而非预览，遵守 3.3。预览、下载与缩略图都需要 3.19 中的下载权限；无此权限的只读用户只能看到元数据，界面不显示预览与下载入口。
-- 与 3.3 的关系：图片、音视频以媒体元素直接引用对象地址，文本由前端读取后按纯文本渲染，均不受对象响应沙箱 CSP 影响；PDF 放在沙箱 iframe 中，只放开脚本、不授予同源。区间读取的响应同样带 nosniff 与 no-store。
-- 验收：视频可拖动到任意位置播放；大文本只加载开头；切换对象时取消上一次未完成的加载。
-
-### 5.33 上传面板
-- 需求：拖放区域覆盖对象列表；上传面板列出每个文件的进度、速度、状态（排队、上传中、完成、失败、已取消），支持单个取消、重试、全部清除；离开页面时若仍在上传给出提示；同名对象按"覆盖、跳过、全部覆盖"询问。
-- 验收：E2E 上传 3 个文件并取消其中 1 个，面板状态正确，被取消的分片已中止。
-
-### 5.34 管理令牌作用域选择器
-- 需求：创建或编辑管理令牌时，按功能分组（集群、节点、布局、桶、密钥、权限、Worker、块、管理令牌）列出 Admin API 端点复选框，支持整组勾选；勾选"全部"或包含创建管理令牌权限时显示等同全权的醒目警示；可设置到期时间（含"永不过期"需额外确认）。
-- 验收：分组覆盖 Garage v2.4.1 的全部 46 个端点以及 Metrics（有测试对照 OpenAPI 文件）；全权组合出现警示。
-
-### 5.35 外观与无障碍
-- 需求：浅色、深色、跟随系统三种主题，选择保存在本地偏好（非敏感数据）；所有颜色满足 WCAG AA 对比度；状态不只靠颜色表达（同时有图标或文字）；所有交互元素可键盘访问并有可见焦点，图标按钮有可读标签；布局在 360 像素宽屏幕上可用。
-- 验收：自动化无障碍检查（如 axe）在主要页面零严重问题；两种主题下截图测试通过。
-
-### 5.36 版本与能力提示
-- 需求：设置页"关于"显示本项目版本、构建信息、连接的 Garage 版本与能力探测结果（哪些 v2.4 字段可用、列表接口是否可用）；连接的 Garage 低于最低版本时全站横幅提示。
-- 验收：对 v2.3.x 与 v2.4.1 两种实例，能力列表显示正确。
+- A config file that fails to parse behaves the same as a missing file. Both cases log a warning and fall back to environment variables. When a required item is missing, report a clear startup error. Do not exit by crashing.
+- The auth-status API returns whether the caller is logged in. It must not be constantly true.
+- The `Content-Type` a thumbnail declares matches the actual encoding.
+- Read the S3 endpoint and region from configuration first. When Garage provides `GetNodeInfo.connectionParameters` (the main-v2 capability probe), that value may fill them in.
+- Use the endpoint configuration that the S3 SDK currently recommends, so the deprecation warning is gone.
 
 ---
 
-## 6. 非功能要求
+## 5. Feature list
 
-### 6.1 性能
-- 首页首屏（健康 + 统计）在本地网络下 1 秒内返回。
-- 1 万个桶的列表首页 2 秒内出现（分页）。
-- 对象列表单页 1000 条渲染使用虚拟滚动。
-- 前端主包（gzip 后）不超过 300 KB，路由级按需加载。
+Each item contains the requirement, the external API (under this project's `/api`), the corresponding Garage endpoint, and the acceptance criteria. Role abbreviations: A = administrator, V = read-only.
 
-### 6.2 大文件流式处理
-- 下载、预览、ZIP 打包全部流式转发，不整体读入内存。
-- 上传流式写入 S3，超过阈值（默认 64 MB）自动分片；分片大小默认 16 MB，单个上传同时在途分片数默认 2，全进程上传缓冲总量设硬上限（默认 64 MB，超出时排队），保证"分片大小 × 在途分片数 × 并发上传数"不超过该上限。
-- 缩略图：只对白名单位图类型生成；源对象大于可配置上限（默认 20 MB）或像素数超过上限（默认 4000 万）时不生成，直接显示图标；解码前先读取图像头校验尺寸，防止解压炸弹；生成结果按对象 ETag 做有界缓存（LRU，可配置总大小）；同时解码的缩略图任务数有上限（默认 2），超出排队，单个任务内存超过预算即放弃并显示图标。
-- 验收：上传上限配置为不小于 6 GB 时，服务端在 256 MB 内存限制的容器中可完成 5 GB 上传与下载；对 100 张大图浏览缩略图而不被 OOM。
+### 5.1 Buckets
 
-### 6.3 超时与取消
-- Garage Admin 客户端：连接超时 5 秒、总超时 30 秒（可配置）。
-- S3 调用使用请求上下文，客户端断开即取消对 S3 的请求；长时操作（大文件、ZIP）不设总超时，只设空闲超时。
-- 服务端设置读头超时、空闲超时，优雅关停（等待在途请求，默认 30 秒）。
-- 验收：浏览器取消下载后，服务端对 S3 的请求在 1 秒内被取消（日志可见）。
+- Requirement: a paginated list (name, alias, object count, capacity, quota usage), create (an optional global alias), delete (prompt when the bucket is not empty), and add or remove aliases (global and local).
+- API: `GET /api/buckets?offset&limit` (A/V); `POST /api/buckets` (A); `DELETE /api/buckets/{id}` (A); `POST`/`DELETE /api/buckets/{id}/aliases` (A).
+- Garage: `ListBucketsInfo` or `ListBuckets` + `GetBucketInfo`, `CreateBucket`, `DeleteBucket`, `AddBucketAlias`, `RemoveBucketAlias`.
+- Acceptance: a bucket with only a local alias appears in the list and can be opened. Deleting a non-empty bucket returns Garage's error, and the UI shows that error.
 
-### 6.4 错误处理
-- 统一错误结构：code（稳定的机器可读码）、message（可读文案）、garageStatus（如有）。
-- 保留真实状态码（4.8）；Garage 不可达返回 502，超时返回 504。
-- 前端统一错误提示，401 跳登录，403 显示无权限，不吞错误。
-- 前端遇到过期的分包加载失败时自动刷新一次（带冷却时间）。
+### 5.2 Browsing objects
 
-### 6.5 可观测性
-- 结构化日志（JSON），带请求 ID；日志级别可配置；不记录敏感信息。
-- 本项目自身 /metrics（受鉴权或独立令牌保护）：请求数、延迟直方图、Garage 调用错误数、在途上传数。
-- /healthz（存活）与 /readyz（就绪：数据库可用、Garage 可达）。
-- 二进制提供 -health 子命令供容器健康检查使用。
+- Requirement: prefix navigation and breadcrumbs, split on `/`. Pagination (default 100, maximum 1000, continuation token). An S3 list returns keys only in lexicographic order and supports only a prefix filter, so the order across pages is fixed as key lexicographic order. Sort by size or by time applies only to the page already loaded, and the UI states "this page only". Substring search inside a prefix (at least 2 characters, at most 200 hits, at most 20 pages scanned). Safe preview. Object metadata and `InspectObject` diagnostics (A).
+- API: `GET /api/buckets/{id}/objects?prefix&limit&next`; `GET /api/buckets/{id}/objects/{key}` (metadata, view, download); `GET /api/buckets/{id}/search?q&prefix`; `GET /api/buckets/{id}/inspect/{key}` (A).
+- Garage: S3 `ListObjectsV2`, `HeadObject`, `GetObject`; Admin `InspectObject`.
+- Acceptance: 5000 objects can be browsed page by page. When a search is truncated, the response includes a reason field. Preview meets 3.3.
 
-### 6.6 测试数据生成
-- 需求：提供开发用的数据生成命令（不进入运行镜像），可在测试集群中批量创建桶、密钥与大量对象（可设数量、前缀深度、对象大小分布、断点续跑），用于验证 1 万桶、10 万对象下的分页与性能。
-- 验收：CI 的性能冒烟测试使用该命令生成数据。
+### 5.3 Upload
 
-### 6.7 i18n（可选，P2）
-- 文案集中管理，默认英文，提供简体中文；日期、容量单位本地化。
-- 验收：切换语言后无未翻译键（测试检查键集合一致）。
+- Requirement: drag and drop, or pick multiple files. Folder upload keeps relative paths. The upload queue runs 3 at a time, can be cancelled, can be retried, and shows progress. A same-name object prompts for overwrite confirmation. A large file uses multipart upload automatically. The per-file limit is configurable.
+- API: `PUT /api/buckets/{id}/objects/{key}` (A). Multipart: POST to start, PUT for a part, POST to complete, DELETE to abort (A).
+- Garage: S3 `PutObject`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`.
+- Acceptance: while a 1 GB file is uploading, server resident memory grows by at most 64 MB. After cancel, the multipart upload is aborted.
+
+### 5.4 Delete
+
+- Requirement: delete one object, batch-delete a multi-selection (at most 1000 keys per call), and recursively delete a folder (see 4.3). Each one requires a confirmation dialog.
+- API: `DELETE /api/buckets/{id}/objects/{key}[?recursive=true]`; `POST /api/buckets/{id}/objects:delete` (`keys[]`) (A).
+- Garage: S3 `DeleteObject`, `DeleteObjects`, `ListObjectsV2`.
+- Acceptance: a batch of 1001 keys returns 400. A partial failure is returned object by object.
+
+### 5.5 Sharing
+
+- Requirement: generate a presigned GET link (1 hour, 24 hours, or 7 days). When the bucket has website access enabled, also give the public website address. Permissions are in 3.10.
+- API: `POST /api/buckets/{id}/share` (key, expires) (A, or a caller who has the share permission).
+- Garage: S3 presigning (uses the public S3 address and region). The website address is generated from a configuration template (the template must contain `{bucket}`).
+- Acceptance: the generated link can be used to download within its validity period, and returns 403 after it expires. A record is visible in the audit log.
+
+### 5.6 Bulk download
+
+- Requirement: pack selected objects, or a folder, into a ZIP and download it as a stream. First exchange a one-time token (valid for 60 seconds, usable only once, bound to the user and the bucket), then download. Inside the ZIP, drop the common prefix, clean path traversal and drive letters, and append a sequence number when names collide. When a single object fails, write an error-list file inside the ZIP.
+- API: `POST /api/buckets/{id}/archive-token` (A, or a V who has the download permission); `GET /api/buckets/{id}/archive?token=` (the same callers).
+- Garage: S3 `GetObject`.
+- Acceptance: a read-only user without the download permission gets 403 when exchanging a token. A second use of a token returns 404. Another user using the token returns 403. A key that contains `../` is cleaned inside the ZIP. When packing 1000 objects, the process peak memory grows by at most 64 MB.
+
+### 5.7 Keys
+
+- Requirement: a paginated list. Create (a new name is limited to letters, digits, `_`, and `-`. The name of an imported key, or of a key that already exists, is shown as-is and is not validated). Import. Rename. Set an expiration time, or set the key to never expire (`neverExpires`). A switch for allowing bucket creation (`allow.createBucket`). Delete. View the secret (A, a second confirmation, and an audit record).
+- API: `GET`/`POST /api/keys`; `GET`/`PATCH`/`DELETE /api/keys/{id}`; `POST /api/keys/import`; `POST /api/keys/{id}/secret` (A).
+- Garage: `ListKeysInfo` or `ListKeys`, `GetKeyInfo`, `CreateKey`, `ImportKey`, `UpdateKey` (`name`, `expiration`, `allow.createBucket`, `deny.createBucket`), `DeleteKey`.
+- Acceptance: after allowing bucket creation is turned on, that key can create a bucket through S3. After the key is deleted, the browse credential cache is invalid (see 4.2).
+
+### 5.8 Layout
+
+- Requirement: assign and change node roles (zone, capacity, tags; an empty capacity means a gateway node), and remove a role. View and change the layout parameter `zoneRedundancy` (`"maximum"`, or at least N zones). A list of staged changes (from `stagedRoleChanges` and `stagedParameters` on `GetClusterLayout`). Before apply, call preview and show the preview result (v2.4 and later show structured statistics, v2.3 shows text). When preview returns the error branch, show the error and forbid apply. Apply (version = current + 1), or revert every staged change. Layout history. Skip dead nodes (A, a strong confirmation, and a statement of the risk. Pass the current version. Separately choose whether `allowMissingData` is set. When it is selected, add one more strong confirmation that says data may be lost).
+- API: `GET /api/layout`; `POST /api/layout/stage`; `POST /api/layout/preview`; `POST /api/layout/apply`; `POST /api/layout/revert`; `GET /api/layout/history`; `POST /api/layout/skip-dead-nodes`.
+- Garage: `GetClusterLayout`, `UpdateClusterLayout`, `PreviewClusterLayoutChanges`, `ApplyClusterLayout`, `RevertClusterLayout`, `GetClusterLayoutHistory`, `ClusterLayoutSkipDeadNodes`.
+- Acceptance: the "Apply" button is disabled when preview has not been run, or when preview returns an error. Capacity precision meets 4.4. The history page shows each version and its sync status.
+
+### 5.9 Cluster health
+
+- Requirement: the home-page card shows status, the number of known nodes, the number of connected nodes, the number of storage nodes and how many are up (`storageNodesUp`), and partition status. A node list, and connect nodes.
+- API: `GET /api/cluster/health`; `GET /api/cluster/status`; `POST /api/cluster/connect` (A).
+- Garage: `GetClusterHealth`, `GetClusterStatus`, `GetNodeInfo`, `ConnectClusterNodes`.
+- Acceptance: the numbers are correct on both v2.3.x and v2.4.1. When Garage is unreachable, show an error instead of a blank screen.
+
+### 5.10 Statistics
+
+- Requirement: cluster and node statistics (capacity, free space, bucket count, object count, total amount). An optional Prometheus metrics summary (S3 request count, error count, block read and write bytes). Note: when Garage's `/metrics` is configured with `metrics_token` (or requires a token), it accepts `metrics_token` or an admin token whose scope contains `Metrics` (or `*`). When neither is configured, no token is required. This project tries them in this order: a separately configured `metrics_token`, then this project's admin token. When neither can be used, the metrics panel shows a notice.
+- API: `GET /api/cluster/statistics`; `GET /api/nodes/{id}/statistics`; `GET /api/metrics`.
+- Garage: `GetClusterStatistics`, `GetNodeStatistics`, `/metrics`.
+- Acceptance: a unit test parses Prometheus text. Every field of an empty response is 0.
+
+### 5.11 Workers and repair tasks
+
+- Requirement: list Workers by node (one node ID, or every node), with status, errors, and progress. The list can show only busy workers, or only workers in error. View detail. Read every Worker variable, or one Worker variable, and set a variable (the variable name and the value are both strings, A). Start a repair task (A, a strong confirmation, targeted at one node or every node). The type comes from the Garage definition: `tables`, `blocks`, `versions`, `multipartUploads`, `blockRefs`, `blockRc`, `rebalance`, `aliases`, `clearResyncQueue`, and `start`, `pause`, `resume`, and `cancel` of `scrub`.
+- API: `GET /api/nodes/{id}/workers`; `GET /api/nodes/{id}/workers/{wid}`; `GET`/`PUT /api/nodes/{id}/worker-variables`; `POST /api/nodes/{id}/repair`.
+- Garage: `ListWorkers`, `GetWorkerInfo`, `GetWorkerVariable`, `SetWorkerVariable`, `LaunchRepairOperation`.
+- Acceptance: after a variable is set, reading it again returns the new value. A repair task writes an audit record.
+
+### 5.12 Block errors
+
+- Requirement: list block errors by node. View block information by block hash (a node must be specified). Retry resync (a specified block hash, or "retry all"). Purge blocks (A, a strong confirmation, stating that object data will be lost. One request may submit multiple block hashes).
+- API: `GET /api/nodes/{id}/block-errors`; `GET /api/nodes/{id}/blocks/{hash}`; `POST /api/nodes/{id}/blocks/retry`; `POST /api/nodes/{id}/blocks/purge`.
+- Garage: `ListBlockErrors`, `GetBlockInfo`, `RetryBlockResync`, `PurgeBlocks`.
+- Acceptance: a read-only role calling purge returns 403. Purge requires typing the block hash to confirm.
+
+### 5.13 Metadata snapshots
+
+- Requirement: create a metadata snapshot for a specified node, or for every node (A).
+- API: `POST /api/nodes/{id}/metadata-snapshot`.
+- Garage: `CreateMetadataSnapshot`.
+- Acceptance: a successful operation shows a notice and writes an audit record.
+
+### 5.14 Clean up incomplete uploads
+
+- Requirement: on the bucket detail page, list incomplete multipart uploads (key, uploadId, start time). Abort one, or abort all. Provide "clean up incomplete uploads older than N hours".
+- API: `GET /api/buckets/{id}/multipart`; `DELETE /api/buckets/{id}/multipart`; `POST /api/buckets/{id}/cleanup-uploads` (`olderThanSecs`).
+- Garage: S3 `ListMultipartUploads`, `AbortMultipartUpload`; Admin `CleanupIncompleteUploads`.
+- Acceptance: after cleanup, entries older than the threshold no longer appear in the list, and the response returns the number cleaned up.
+
+### 5.15 Restricted admin tokens
+
+- Requirement: list, create, update, and delete Garage admin tokens (`name`, `expiration`, `scope`). On create, the secret is shown only once. A token whose scope contains `CreateAdminToken` or `*` is clearly warned as equivalent to full authority. Show the information of the token this project is currently using. A scope value is an Admin API endpoint name, `Metrics`, or `*`. `ListAdminTokens` lists `admin_token` and `metrics_token` from the configuration file as read-only entries. The UI labels them "from the configuration file" and does not offer update or delete.
+- API: `GET`/`POST /api/admin-tokens`; `GET`/`PATCH`/`DELETE /api/admin-tokens/{id}`; `GET /api/admin-tokens/current`.
+- Garage: `ListAdminTokens`, `GetAdminTokenInfo`, `CreateAdminToken`, `UpdateAdminToken`, `DeleteAdminToken`, `GetCurrentAdminTokenInfo`.
+- Acceptance: only an administrator can see them. A token secret does not appear in any later response or in the logs.
+
+### 5.16 CORS and lifecycle
+
+- Requirement: in bucket settings, edit CORS rules (ID, allowed origins, methods, headers, exposed headers, max-age seconds) and lifecycle rules (ID, enabled state, exactly one of expiry days or an expiry date, a prefix filter and lower and upper object-size filters, and the number of days after which an incomplete upload is aborted). Validate the form. Show the diff before saving.
+- Note: writes go through Admin `UpdateBucket` (the S3 API of the same name acts on the same configuration). `corsRules` and `lifecycleRules` are replaced as a whole set. Omitting a set means no change. Passing an empty array clears it. On a concurrent edit, show the diff against the version read again just before save.
+- API: `GET`/`PUT /api/buckets/{id}/cors`; `GET`/`PUT /api/buckets/{id}/lifecycle`.
+- Garage: `GetBucketInfo` (`corsRules`, `lifecycleRules`) and `UpdateBucket` (`corsRules`, `lifecycleRules`). Both are available from v2.3.0 on.
+- Acceptance: after a save, `GetBucketInfo` returns the same values. A browser cross-origin preflight matches the configuration.
+
+### 5.17 Website access
+
+- Requirement: turn website access on or off. Set the index document and the error document. When turning it on, the confirmation dialog says the data will become public. Show the public address from the template.
+- API: `PUT /api/buckets/{id}/website`.
+- Garage: `UpdateBucket.websiteAccess` (`enabled`, `indexDocument`, `errorDocument`. There is also `routingRules`. This round displays it read-only, does not offer an editor, and sends the original value back unchanged on save).
+- Acceptance: after it is turned on, the public address can be reached. After it is turned off, the response is Garage's denial response.
+
+### 5.18 Quotas
+
+- Requirement: set or clear the bucket maximum size (`maxSize`) and the maximum object count (`maxObjects`). Show the current usage.
+- API: `PUT /api/buckets/{id}/quotas`.
+- Garage: `UpdateBucket.quotas`.
+- Note: `quotas` on `UpdateBucket` is replaced as a whole. Omitting `quotas` means no change. When `quotas` is sent, both `maxSize` and `maxObjects` are written. Null clears that field. When the frontend changes one field, it must also send the current value of the other field.
+- Acceptance: changing only `maxSize` leaves `maxObjects` at its original value. Setting both to null clears the quota. Converting capacity units loses no precision.
+
+### 5.19 Permissions
+
+- Requirement: list the keys on a bucket and their read/write/owner permissions. Grant and revoke (validation is in 4.6; after a revoke, credential-cache invalidation is in 4.2).
+- API: `POST`/`DELETE /api/buckets/{id}/permissions`.
+- Garage: `AllowBucketKey`, `DenyBucketKey`, `GetBucketInfo`.
+- Acceptance: after a revoke, the UI matches Garage.
+
+### 5.20 Multiple users and roles
+
+- Requirement: an SQLite user store. A setup wizard. Roles `admin` and `viewer`, plus "download object content" and "share" permissions that can be assigned to a viewer (the data model and the constraints are in 3.19). Create, delete, and update users, disable a user, rename a user, and reset a password. Lockout protection (you cannot delete, demote, or disable yourself, and you cannot remove the last enabled administrator). An offline CLI (list users, reset a password, create an administrator, version, health check). On first start, bcrypt accounts from environment variables may be imported once.
+- API: `GET`/`POST /api/users`; `PATCH`/`DELETE /api/users/{id}`; `POST /api/users/{id}/reset-password`; `POST /api/auth/login|logout|change-password`; `GET /api/auth/status`; `GET`/`POST /api/setup`.
+- Garage: none.
+- Acceptance: tests cover granting a permission bit, revoking one, and the "share depends on download" constraint. Each lockout-protection rule has a test. A user response never contains a hash. A role change takes effect immediately (3.4).
+
+### 5.21 Audit log
+
+- Requirement: every write (including writes that were rejected), login-related events, viewing a secret, and generating a share link are written to the audit table. Fields: time, user, IP, method, path, target resource (bucket ID, key, node ID, and other resource identifiers of the same kind), result status code, and reason. Optionally also write to standard output (JSON lines). The UI provides filters (user, time range, action type) and CSV export. The retention period is configurable (default 90 days).
+- API: `GET /api/audit?user&from&to&action&offset&limit` (A); `GET /api/audit/export` (A).
+- Garage: none.
+- Acceptance: each kind of event has one integration test that asserts an audit record. Records past the retention period are cleaned up on a schedule.
+
+### 5.22 Pagination
+
+- Requirement: every list API in this project (buckets, keys, objects, users, audit, admin tokens, block errors) uses one pagination contract: `offset`/`limit`, or a continuation token. The response carries `next` or `hasMore`. The frontend uses one pagination component.
+- Garage: `offset` and `limit` of `ListBucketsInfo` / `ListKeysInfo` (capability probe), and the S3 continuation token.
+- Acceptance: every list API normalizes an out-of-range `limit` (default 100, maximum 1000).
+
+### 5.23 Settings and About
+
+- Requirement: change your own password, switch the theme, and show the version. The update check is off by default, and its source is configurable (4.14).
+- Acceptance: when the update check is not turned on, there is no outbound request.
+
+### 5.24 S3 features this project explicitly does not support
+
+Garage does not support the following features, or it returns only a fixed value. This project's UI offers no entry for them, and the related docs say so.
+
+- Object versioning (`ListObjectVersions` returns not implemented. Only the versioning state can be read, and it is always disabled).
+- Object Lock, a retention-period lock, and a legal hold.
+- Bucket policies and object ACLs (permissions are granted only through a Garage key).
+- Server-side encryption configuration (SSE-C is the exception. This project does not provide a management UI for it).
+- Bucket replication, requester pays, object-tag management, switching storage class, and event notifications.
+- Acceptance: the UI has none of the entries above. The "Known limitations" section of the docs lists them.
+
+### 5.25 Navigation and page structure
+
+- Requirement: a fixed navigation on the left (on a narrow screen it collapses to a drawer). The top-level entries, in order, are Overview, Buckets, Keys, Nodes and layout, Operations (Workers, block errors, snapshots, repair), Admin tokens, Audit, and Settings. A read-only role does not see an entry it is not allowed to use.
+- Each resource uses a list page, then a detail page (tabs). Bucket detail contains Overview, Objects, Permissions, Settings (website, quotas, CORS, lifecycle), and incomplete uploads. Key detail contains Overview, the buckets it can access, and Settings. Node detail contains information, statistics, Workers, block errors, and maintenance actions.
+- The top shows breadcrumbs, the current user and role, the connected Garage version, and a health-status badge.
+- Every detail page, tab, and object prefix has its own address that can be shared and refreshed. Browser back and forward keep the state.
+- Acceptance: in E2E, opening any deep address directly renders it correctly. A read-only account's navigation has no entry for a write action. On a narrow screen the navigation can be expanded and collapsed.
+
+### 5.26 Shared interaction states
+
+- Requirement: every data block must implement four states.
+  1. Loading. The first screen uses a skeleton placeholder. A later refresh shows only a light progress hint and does not clear data already on screen.
+  2. Empty. Say why it is currently empty, and give the next action (for example "Create the first bucket"). A read-only role does not show a create button.
+  3. Error. The block shows an error bar with a readable explanation, an error code, and a "Retry" button. When Garage is unreachable, show one global banner instead of an error on every block.
+  4. Partial result. When pagination is truncated, a search hits its cap, or a missing capability is detected, state the reason explicitly.
+- Writes: while a submit is in progress, disable the button and show progress. After success, tell the user with a non-blocking notice and refresh the related data. On failure, keep the form input and show the error.
+- A settings form shows its save state (unsaved, saving, saved, failed). Leaving a page that has unsaved changes prompts the user.
+- Acceptance: frontend component tests cover loading, empty, and error for every list component. When Garage is simulated as disconnected, a global banner appears.
+
+### 5.27 Graded confirmation
+
+- Requirement: split write actions into three levels by risk.
+  1. Low risk (rename, change a quota, change the website document). No confirmation. The change can be undone, or it can be edited again.
+  2. Medium risk (delete a single object, revoke a permission, delete an empty bucket, delete a key). A modal confirmation states the object name and the consequence. The default focus is "Cancel".
+  3. High risk (recursive delete, batch delete, purge blocks, skip dead nodes, apply a layout, turn on public website access, create a full-authority admin token). The user can confirm only after typing the target name (or the block hash, or the layout version). State the irreversible consequence and the scope of impact (object count, capacity).
+- The confirmation dialog supports the keyboard (Esc cancels. Enter takes effect only after the typed value matches).
+- Acceptance: a table-driven test fixes the risk level of every write action. For a high-risk action, the confirm button is disabled when the input does not match.
+
+### 5.28 Layout change flow
+
+- Requirement: the layout page guides the user through steps.
+  1. View the current layout (nodes, zone, capacity, tags, role) and the "staged changes" list.
+  2. Edit. Assign, change, or remove a node role. The change enters the staging area and can be withdrawn one by one.
+  3. Preview. Call the preview API. Show the new layout and the data-migration result (v2.4 and later use structured statistics as a table, v2.3 shows text).
+  4. Apply. A high-risk confirmation. Fill in the current version + 1 automatically.
+  5. Track. After apply, show progress tracking (each node's status of syncing to the new version, following layout history) until every node is done. When a node stays offline for a long time, offer a "skip dead nodes" entry and state the risk.
+- At any time, "revert all staged changes" is available.
+- Acceptance: apply is not available before preview. After apply, the tracking view shows complete once every node has synced. After revert, the staging area is empty.
+
+### 5.29 Overview page and capacity visualization
+
+- Requirement: the overview page contains a health card, cluster capacity (used and free, distributed by node), the bucket count and the total object count, a ranking of buckets by capacity (the top N, with the rest merged as "Other", still readable when there are many buckets or when the buckets are very small), and recent audit events (administrators; enabled after the query API in 5.21 is delivered).
+- Ranking buckets by capacity, and sorting by capacity, depend on each bucket's detail. When the capability probe finds `ListBucketsInfo`, use it directly. Otherwise a background task summarizes on a schedule with bounded concurrency (4.11), default 10 minutes, configurable, and caches the result. The UI labels the time of the data. A 30-second refresh does not trigger a full fetch.
+- The bucket list and the bucket detail show a quota-usage progress bar (capacity and object count). At 80% mark it with the warning color. At 95% mark it with the error color.
+- Data refreshes automatically (default 30 seconds, and the refresh can be paused). When the page is not visible, stop refreshing.
+- Acceptance: with 1000 buckets, the ranking chart is still readable. Quota-threshold colors have a component test. After switching to a background tab, no further request is sent.
+
+### 5.30 Filtering, sorting, and selection on lists
+
+- Requirement: the bucket, key, node, admin-token, and user lists support filtering by name, and sorting by columns such as name, creation time, and capacity. The default sort is fixed and is explained. Sort and filter state is written into the address. Sorting the bucket list by capacity uses the summary cache in 5.29.
+- The object list supports multi-select (including holding Shift to select a range, and selecting every row on the current page). After a selection, a bulk-action bar appears (delete, download ZIP, copy path). There is no cross-page "select all". To act on a whole prefix, use the folder recursive operation (4.3 and 5.6).
+- Acceptance: after a refresh, the sort and the filter remain. The bulk-action bar appears only when something is selected.
+
+### 5.31 Showing and copying credentials
+
+- Requirement: after a key or an admin token is created, show the full credential once in the result dialog. Provide one-click copy (a successful copy has visible feedback) and an "I have saved it" confirmation. After the dialog is closed, an admin token cannot be viewed again. An S3 secret requires the second confirmation again.
+- Credential fields are masked by default. Showing one requires an explicit click. In a non-secure context, copy degrades to text that can be selected.
+- How this relates to 3.15: 3.15 constrains the token this project itself uses to connect to Garage. That token never enters the browser. An admin token or S3 secret that a user creates in the UI is a result to hand to that user. It may appear only in the one response that creates it, or in the one response that views it after a second confirmation. That response sets `no-store`. It is not written into logs or into audit content.
+- Acceptance: after the dialog is closed, the admin-token secret no longer appears in the response or on the page. The copy button has a component test.
+
+### 5.32 Object preview viewer
+
+- Requirement: the object-detail sidebar shows metadata (size, type, ETag, modification time, custom metadata). Allowlisted types preview in the viewer: images, audio and video (seeking by dragging the progress bar is supported, which means the backend supports a byte-range read and returns a stream), PDF, and plain text (above a configurable size, show only the beginning). Inside the same directory, the Left and Right keys move to the previous object and the next object.
+- A type outside the allowlist shows "Download" instead of a preview, and follows 3.3. Preview, download, and thumbnails all require the download permission in 3.19. A read-only user without that permission sees only metadata. The UI shows no preview entry and no download entry.
+- How this relates to 3.3: images, audio, and video point a media element directly at the object address. The frontend reads text and renders it as plain text. Neither is affected by the sandbox CSP on the object response. A PDF is placed in a sandboxed iframe. Only scripts are allowed, and same origin is not granted. A range-read response also carries `nosniff` and `no-store`.
+- Acceptance: a video can be dragged to any position and played. Large text loads only the beginning. Switching objects cancels the previous load that has not finished.
+
+### 5.33 Upload panel
+
+- Requirement: the drop zone covers the object list. The upload panel lists each file's progress, speed, and state (queued, uploading, completed, failed, cancelled). It supports cancelling one file, retry, and clear all. If an upload is still running when the user leaves the page, prompt the user. For an object of the same name, ask with the choices "overwrite", "skip", and "overwrite all".
+- Acceptance: E2E uploads 3 files and cancels 1 of them. The panel state is correct, and the cancelled parts have been aborted.
+
+### 5.34 Admin-token scope picker
+
+- Requirement: when creating or editing an admin token, list Admin API endpoint checkboxes grouped by function (cluster, node, layout, bucket, key, permission, Worker, block, admin token). A whole group can be checked at once. Checking "all", or including permission to create an admin token, shows a prominent warning that the result is equivalent to full authority. An expiration time can be set (including "never expires", which needs an extra confirmation).
+- Acceptance: the groups cover all 46 endpoints of Garage v2.4.1, plus `Metrics` (a test checks them against the OpenAPI file). A full-authority combination shows the warning.
+
+### 5.35 Appearance and accessibility
+
+- Requirement: three themes, light, dark, and follow the system. The choice is stored in a local preference (data that is not sensitive). Every color meets WCAG AA contrast. A state is not conveyed by color alone (an icon or text is present as well). Every interactive element can be reached from the keyboard and has a visible focus. An icon button has a readable label. The layout is usable on a screen that is 360 pixels wide.
+- Acceptance: an automated accessibility check (such as axe) reports zero serious problems on the main pages. Screenshot tests pass under both themes.
+
+### 5.36 Version and capability notice
+
+- Requirement: "About" on the Settings page shows this project's version, the build information, the connected Garage version, and the capability-probe result (which v2.4 fields are available, and whether the list APIs are available). When the connected Garage is below the minimum version, a site-wide banner says so.
+- Acceptance: against a v2.3.x instance and a v2.4.1 instance, the capability list displays correctly.
 
 ---
 
-## 7. 工程要求
+## 6. Non-functional requirements
 
-### 7.1 技术栈
-- 后端：Go 标准库网络服务与路由（方法 + 通配路由），S3 SDK（aws-sdk-go-v2，最新补丁版），会话库支持数据库存储，SQLite 使用纯 Go 驱动（无 CGO），bcrypt。
-- 前端：React 18、TypeScript 严格模式、Vite、TanStack Query、react-hook-form + zod、Tailwind + daisyUI、zustand。
-- 测试：Go 自带测试（带 -race）、vitest + Testing Library、Playwright 做 E2E。
+### 6.1 Performance
 
-### 7.2 依赖与工具链锁版本
-- Node：22 LTS，用 .nvmrc 与 package.json engines 固定主版本。
-- pnpm：通过 package.json 的 packageManager 字段固定到具体版本（9.x 或 10.x 中经验证的版本），禁止在构建中使用 latest；允许构建脚本的依赖（esbuild、@swc/core 等）显式列出。
-- Go：go.mod 的 go 与 toolchain 指令固定到最新补丁版本（发布时不低于修复已知标准库漏洞的版本）；go mod tidy 后无差异。
-- 镜像基础镜像按摘要固定，不使用浮动标签。
-- 依赖更新由自动化机器人每周提交，CI 通过后合并。
+- The first screen of the home page (health + statistics) returns within 1 second on a local network.
+- The first page of a 10,000-bucket list appears within 2 seconds (paginated).
+- Rendering one object-list page of 1000 rows uses virtual scrolling.
+- The frontend main bundle, after gzip, is at most 300 KB. Routes load on demand.
 
-### 7.3 构建
-- 单命令构建：先构建前端，再嵌入并编译后端；前端产物缺失时构建失败并给出清晰提示。
-- 支持 linux/amd64、linux/arm64（可选 arm/v7）。
-- 构建可复现：注入版本号、提交号、构建时间。
+### 6.2 Streaming large files
+
+- Download, preview, and ZIP packaging all stream through. Do not read the whole payload into memory.
+- An upload streams into S3. Above the threshold (default 64 MB) it switches to multipart automatically. The part size defaults to 16 MB. One upload defaults to 2 parts in flight at a time. The process-wide upload buffer has a hard cap (default 64 MB). Above that cap, uploads queue. Part size × in-flight part count × concurrent upload count must stay within that cap.
+- Thumbnails are generated only for allowlisted bitmap types. When the source object is above the configurable limit (default 20 MB), or the pixel count is above the limit (default 40 million), do not generate a thumbnail. Show the icon directly. Before decoding, read the image header and check the dimensions, to stop a decompression bomb. Cache the result by object ETag in a bounded cache (LRU, configurable total size). The number of thumbnail tasks decoding at once has a cap (default 2). Further tasks queue. If one task's memory exceeds its budget, abandon that task and show the icon.
+- Acceptance: when the upload limit is configured to at least 6 GB, the server completes a 5 GB upload and a 5 GB download in a container limited to 256 MB of memory. Browsing thumbnails for 100 large images does not OOM.
+
+### 6.3 Timeouts and cancellation
+
+- Garage Admin client: connect timeout 5 seconds, total timeout 30 seconds (configurable).
+- S3 calls use the request context. When the client disconnects, cancel the request to S3. A long operation (a large file, or a ZIP) has no total timeout, only an idle timeout.
+- The server sets a header-read timeout and an idle timeout, and shuts down gracefully (wait for in-flight requests, default 30 seconds).
+- Acceptance: after the browser cancels a download, the server's request to S3 is cancelled within 1 second (visible in the log).
+
+### 6.4 Error handling
+
+- One error structure: `code` (a stable machine-readable code), `message` (readable text), and `garageStatus` (when Garage returned one).
+- Keep the real status code (4.8). When Garage is unreachable, return 502. On timeout, return 504.
+- The frontend shows errors in one place. 401 goes to the login page. 403 shows that the caller has no permission. Do not swallow an error.
+- When the frontend fails to load a stale code-split chunk, it refreshes once automatically (with a cooldown).
+
+### 6.5 Observability
+
+- Structured logs (JSON), with a request ID. The log level is configurable. Do not record sensitive information.
+- This project's own `/metrics` (protected by authentication, or by a separate token) exposes request count, a latency histogram, the Garage call error count, and the in-flight upload count.
+- `/healthz` (liveness) and `/readyz` (readiness: the database is available and Garage is reachable).
+- The binary provides a `-health` subcommand for the container health check.
+
+### 6.6 Test data generation
+
+- Requirement: provide a development command that generates data (it is not part of the runtime image). It can create buckets, keys, and many objects in bulk on a test cluster (count, prefix depth, object-size distribution, and resume from a checkpoint are configurable). Use it to check pagination and performance at 10,000 buckets and 100,000 objects.
+- Acceptance: the CI performance smoke test uses this command to generate data.
+
+### 6.7 i18n (optional, P2)
+
+- Keep copy in one place. The default language is English, and Simplified Chinese is provided. Localize dates and capacity units.
+- Acceptance: after a language switch, no key is untranslated (a test checks that the key sets match).
+
+---
+
+## 7. Engineering requirements
+
+### 7.1 Technology stack
+
+- Backend: the Go standard library for the network service and routing (method + wildcard routes), an S3 SDK (`aws-sdk-go-v2`, the latest patch), a session library that supports database storage, SQLite through a pure Go driver (no CGO), and bcrypt.
+- Frontend: React 18, TypeScript strict mode, Vite, TanStack Query, react-hook-form + zod, Tailwind + daisyUI, and zustand.
+- Tests: Go's own tests (with `-race`), vitest + Testing Library, and Playwright for E2E.
+
+### 7.2 Pin dependency and toolchain versions
+
+- Node: 22 LTS. Pin the major version with `.nvmrc` and `package.json` `engines`.
+- pnpm: pin a specific version with the `packageManager` field in `package.json` (a verified version in 9.x or 10.x). Do not use `latest` in a build. Dependencies of the build scripts (esbuild, `@swc/core`, and the same kind of package) may be listed explicitly.
+- Go: pin the `go` and `toolchain` directives in `go.mod` to the latest patch (at release time, not below a version that fixes a known standard-library vulnerability). After `go mod tidy`, there is no diff.
+- Pin each base image by digest. Do not use a floating tag.
+- An automation bot opens dependency updates every week. Merge them after CI passes.
+
+### 7.3 Build
+
+- One-command build. Build the frontend first, then embed it and compile the backend. If the frontend output is missing, the build fails and prints a clear message.
+- Support `linux/amd64` and `linux/arm64` (`arm/v7` is optional).
+- The build is reproducible. Inject the version, the commit, and the build time.
 
 ### 7.4 CI
-- 每次提交与合并请求：
-  1. 依赖安装（锁文件冻结）。
-  2. 前端：类型检查、lint、单元测试、构建。
-  3. 后端：gofmt 检查、go vet、staticcheck、go test -race。
-  4. 安全：govulncheck、pnpm audit（生产依赖）、密钥扫描、容器镜像扫描。
-  5. 集成测试：用 Garage v2.3.x、v2.4.1 容器跑 E2E。
-- 主分支每晚重建，捕获新披露的漏洞。
-- 所有检查均为阻断项（lint 不再是“仅提示”）。
+
+- On every commit and every merge request:
+  1. Install dependencies (the lockfile is frozen).
+  2. Frontend: type check, lint, unit tests, and build.
+  3. Backend: a `gofmt` check, `go vet`, `staticcheck`, and `go test -race`.
+  4. Security: `govulncheck`, `pnpm audit` (production dependencies), a secret scan, and a container image scan.
+  5. Integration tests: run E2E against Garage v2.3.x and v2.4.1 containers.
+- The main branch rebuilds every night and catches newly disclosed vulnerabilities.
+- Every check is a blocking check (lint is no longer "advisory only").
 
 ### 7.5 lint
-- ESLint（typescript-eslint 严格规则、react-hooks）零错误零警告；禁止 any（生成的类型除外）。
-- Go：gofmt、go vet、staticcheck 零告警。
 
-### 7.6 测试覆盖
-- 后端语句覆盖率不低于 80%，安全相关包（鉴权、CSRF、限流、代理白名单、对象响应头、配置去敏）不低于 95%。
-- 前端覆盖率不低于 70%。
-- 第 3、4 章每一条验收标准都有对应的自动化测试。
+- ESLint (typescript-eslint strict rules, react-hooks) has zero errors and zero warnings. `any` is forbidden (except generated types).
+- Go: `gofmt`, `go vet`, and `staticcheck` have zero warnings.
 
-### 7.7 依赖漏洞清零
-- 发布前 govulncheck 可达漏洞为 0；pnpm audit 生产依赖 high 及以上为 0，构建期依赖 critical 为 0。
-- 需例外时在仓库中记录原因、影响评估和到期日。
+### 7.6 Test coverage
 
-### 7.8 从 Garage OpenAPI 生成类型
-- 以 Garage 仓库中的 Admin API v2 OpenAPI 描述（garage-admin-v2.json）为唯一来源，生成 TypeScript 类型；后端可选同样生成 Go 类型。
-- 生成脚本与固定的 OpenAPI 文件版本一起提交；CI 检查生成结果与提交一致。
-- 升级 Garage 支持版本时重新生成并在变更说明中列出字段差异。
+- Backend statement coverage is at least 80%. Security-related packages (authentication, CSRF, rate limiting, the proxy allowlist, object response headers, and config redaction) are at least 95%.
+- Frontend coverage is at least 70%.
+- Every acceptance criterion in chapters 3 and 4 has a matching automated test.
 
-### 7.9 发布与镜像
-- 运行镜像：distroless static nonroot，无 shell；用户为非 root；/data 为卷；暴露 3909；镜像内默认监听 0.0.0.0（3.1）。
-- compose 示例的端口映射写成仅绑定宿主机 127.0.0.1；验收：按示例启动后，从宿主机其他网卡地址访问 3909 失败，从 127.0.0.1 访问成功。
-- 健康检查使用二进制自带 -health 子命令（间隔 30 秒，超时 5 秒，启动宽限 10 秒，重试 3 次），不引入额外工具镜像。
-- 发布产物：多架构镜像、各平台二进制、SHA256SUMS、签名（镜像用 cosign 无密钥签名或密钥签名；二进制 ed25519 签名），附 SBOM 与构建来源证明。
-- 语义化版本；每个版本的变更说明列出所需最低 Garage 版本。
-- 提供 compose 示例（Garage v2.4.1 + 本项目）与 Helm Chart（P2）。
+### 7.7 Zero dependency vulnerabilities
+
+- Before a release, reachable vulnerabilities from `govulncheck` are 0. High and above from `pnpm audit` on production dependencies are 0. Critical vulnerabilities in build-time dependencies are 0.
+- When an exception is required, record the reason, the impact assessment, and the expiry date in the repository.
+
+### 7.8 Generate types from the Garage OpenAPI document
+
+- The only source is the Admin API v2 OpenAPI description in the Garage repository (`garage-admin-v2.json`). Generate TypeScript types from it. The backend may also generate Go types the same way.
+- Commit the generator script and the pinned OpenAPI file version together. CI checks that the generated output matches the commit.
+- When the supported Garage version is raised, regenerate and list the field differences in the change notes.
+
+### 7.9 Release and images
+
+- Runtime image: distroless static nonroot, with no shell. The user is not root. `/data` is a volume. Expose 3909. Inside the image, listen on `0.0.0.0` by default (3.1).
+- Write the compose example's port mapping so that it binds only the host `127.0.0.1`. Acceptance: after a start from the example, reaching 3909 from another address on the host fails, and reaching it from `127.0.0.1` succeeds.
+- The health check uses the binary's own `-health` subcommand (interval 30 seconds, timeout 5 seconds, start grace 10 seconds, 3 retries). Do not bring in an extra tool image.
+- Release artifacts: a multi-arch image, a binary for each platform, `SHA256SUMS`, and signatures (sign the image with cosign keyless signing or with a key; sign the binary with ed25519), plus an SBOM and a proof of build provenance.
+- Use semantic versions. The change notes for each version list the minimum Garage version required.
+- Provide a compose example (Garage v2.4.1 + this project) and a Helm Chart (P2).
 
 ---
 
-## 8. 最小版本（MVP）定义
+## 8. Minimum version (MVP)
 
-最小版本是第一个可对外交付的版本，满足以下全部条件即可发布，其余功能按第 9 章后续阶段交付。
+The minimum version is the first version that can be delivered outside the project. It may be released once every condition below is met. The other features are delivered in the later phases of chapter 9.
 
-### 8.1 必含功能
-| 模块 | 范围 |
+### 8.1 Required features
+
+| Module | Scope |
 |---|---|
-| 账户 | 初始化向导、登录/退出、改密码；管理员与只读两种角色，以及可授予只读用户的下载、分享权限位（3.1、3.4、3.5、3.19） |
-| 安全基线 | 第 3 章全部 P0 条目：默认鉴权、密钥不泄露、示例无密钥、浏览器不持 Garage 令牌、CSRF、限流、端点白名单代理、安全头、请求体上限、对象 no-store |
-| 集群 | 健康、状态、集群统计（5.9、5.10 不含指标面板） |
-| 桶 | 分页列表、创建、删除、别名、配额、权限授予/撤销（5.1、5.18、5.19） |
-| 密钥 | 分页列表、创建、删除、改名、允许建桶、查看 secret（二次确认）（5.7） |
-| 对象 | 分页浏览、前缀导航、安全预览、流式下载、流式上传（含分片）、单个与批量删除、递归删除（5.2–5.4） |
-| 界面 | 导航与页面结构（5.25）、统一交互状态（5.26）、确认流程分级（5.27）、凭据一次性显示与复制（5.31）、列表筛选排序与对象多选（5.30）、上传面板（5.33）、浅色/深色主题与基础无障碍（5.35） |
-| 版本 | v2.3.0 最低版本自检；列表接口能力探测；关于页显示版本与能力（5.36） |
-| 交付 | 非 root 只读根文件系统镜像、compose 示例（无密钥）、CI 全绿、对 v2.3.x 与 v2.4.1 的 E2E |
+| Account | Setup wizard, log in and log out, change password. Two roles, administrator and read-only, plus download and share permission bits that can be granted to a read-only user (3.1, 3.4, 3.5, 3.19). |
+| Security baseline | Every P0 item in chapter 3: authentication by default, secrets are not leaked, examples contain no secrets, the browser does not hold a Garage token, CSRF, rate limiting, an endpoint allowlist proxy, security headers, a request-body limit, and `no-store` on objects. |
+| Cluster | Health, status, and cluster statistics (5.9, and 5.10 without the metrics panel). |
+| Buckets | Paginated list, create, delete, aliases, quotas, and grant or revoke permissions (5.1, 5.18, 5.19). |
+| Keys | Paginated list, create, delete, rename, allow bucket creation, and view the secret (a second confirmation) (5.7). |
+| Objects | Paginated browsing, prefix navigation, safe preview, streamed download, streamed upload (including multipart), single and batch delete, and recursive delete (5.2 through 5.4). |
+| UI | Navigation and page structure (5.25), shared interaction states (5.26), graded confirmation (5.27), one-time display and copy of a credential (5.31), list filtering and sorting and object multi-select (5.30), the upload panel (5.33), light and dark themes and basic accessibility (5.35). |
+| Version | A self-check that v2.3.0 is the minimum version, a capability probe of the list APIs, and an About page that shows the version and the capabilities (5.36). |
+| Delivery | A non-root image with a read-only root filesystem, a compose example with no secrets, CI fully green, and E2E against v2.3.x and v2.4.1. |
 
-### 8.2 不在最小版本内
-布局编辑与变更流程（5.28）、管理令牌与作用域选择器（5.34）、概览容量排行与自动刷新（5.29，最小版只做健康与统计卡片）、对象预览查看器的区间读取与切换（5.32，最小版只做白名单内联预览）、Worker/修复/块错误/快照、CORS 与生命周期、分享链接、ZIP 批量下载、缩略图、审计页面（审计写入仍在最小版本内）、i18n、Helm、多集群、外部身份源。
+### 8.2 Not in the minimum version
 
-### 8.3 最小版本的质量门槛
-- 第 3 章每条 P0 都有自动化测试；后端覆盖率不低于 80%，安全相关包不低于 95%。
-- govulncheck 可达漏洞 0；生产依赖 high 及以上 0；密钥扫描 0。
-- 1 万个桶、单前缀 10 万个对象的模拟数据下，列表首屏 2 秒内，无每对象额外请求。
-- 256 MB 内存限制下完成 5 GB 上传与下载（测试时将上传上限显式调高）。
-- 估算：32.75 人日（按第 9 章逐项累加：阶段 0、1、2、2B 全部 24 人日；阶段 3 中浏览 1.5、上传与下载 2.5、批量删除按"批量删除与 ZIP"一项的一半计 0.75；阶段 3A 的两项 P0 共 3 与主题、关于页 1）。最小版范围按 8.1 定稿，不做裁剪。
+Layout editing and the change flow (5.28). Admin tokens and the scope picker (5.34). Overview capacity ranking and auto-refresh (5.29; the minimum version does only the health and statistics cards). Range reads and switching in the object preview viewer (5.32; the minimum version does only allowlisted inline preview). Workers, repair, block errors, and snapshots. CORS and lifecycle. Share links. ZIP bulk download. Thumbnails. The audit page (audit writes are still in the minimum version). i18n, Helm, multiple clusters, and an external identity source.
 
-## 9. 分阶段交付计划与优先级
+### 8.3 Quality bar for the minimum version
 
-工作量按一名熟悉 Go 与 React 的开发者计（人日）。阶段按依赖顺序排列，后一阶段只依赖前面阶段的产出。
+- Every P0 in chapter 3 has an automated test. Backend coverage is at least 80%. Security-related packages are at least 95%.
+- Reachable vulnerabilities from `govulncheck` are 0. High and above in production dependencies are 0. The secret scan is 0.
+- With simulated data of 10,000 buckets and 100,000 objects under a single prefix, the first screen of a list appears within 2 seconds, and there is no extra request per object.
+- A 5 GB upload and a 5 GB download complete under a 256 MB memory limit (the test raises the upload limit explicitly).
+- Estimate: 32.75 person-days (summed item by item from chapter 9: phases 0, 1, 2, and 2B are 24 person-days in full; from phase 3, browse is 1.5, upload and download are 2.5, and batch delete is counted as half of the "batch delete and ZIP" item, which is 0.75; the two P0 items in phase 3A total 3, together with 1 for the theme and the About page). The minimum-version scope is fixed by 8.1. Do not cut it down.
 
-### 阶段 0：可构建与基线（P0，约 4 人日）
-| 项 | 估算 |
+## 9. Phased delivery plan and priority
+
+Effort is counted for one developer who knows Go and React (person-days). Phases are ordered by dependency. A later phase depends only on the output of the phases before it.
+
+### Phase 0: Buildable, and a baseline (P0, about 4 person-days)
+
+| Item | Estimate |
 |---|---|
-| 固定 Node、pnpm、Go 版本，镜像构建 | 0.5 |
-| 非 root distroless 镜像、内置健康检查 | 0.5 |
-| CI 骨架（构建、lint、测试、漏洞扫描） | 1 |
-| OpenAPI 类型生成（7.8；白名单与作用域选择器依赖） | 1 |
-| 测试数据生成命令（6.6；8.3 性能门槛依赖） | 1 |
+| Pin the Node, pnpm, and Go versions, and build the image | 0.5 |
+| Non-root distroless image, with a built-in health check | 0.5 |
+| CI skeleton (build, lint, test, vulnerability scan) | 1 |
+| OpenAPI type generation (7.8; the allowlist and the scope picker depend on it) | 1 |
+| Test-data generation command (6.6; the performance bar in 8.3 depends on it) | 1 |
 
-### 阶段 1：安全（P0，约 7.5 人日）
-| 项 | 估算 |
+### Phase 1: Security (P0, about 7.5 person-days)
+
+| Item | Estimate |
 |---|---|
-| 用户库、初始化向导、默认鉴权、默认本地监听（3.1） | 1.5 |
-| 配置去敏、日志脱敏、示例无密钥与密钥自生成（3.2、3.14–3.16） | 1 |
-| 预览防护与安全头、对象 no-store（3.3、3.11） | 0.5 |
-| 会话落库、轮换、改密失效、cookie 属性（3.4、3.12） | 1.5 |
-| 限流、CSRF、请求体上限（3.5、3.6、3.9） | 1 |
-| 端点白名单代理与角色矩阵（3.7、3.19） | 1.5 |
-| 登录审计与审计表（3.13，5.21 基础部分） | 0.5 |
+| User store, setup wizard, default authentication, default local listen (3.1) | 1.5 |
+| Config redaction, log redaction, examples with no secrets, and self-generated secrets (3.2, 3.14 through 3.16) | 1 |
+| Preview protection and security headers, object `no-store` (3.3, 3.11) | 0.5 |
+| Persist sessions, rotate them, invalidate them on password change, cookie attributes (3.4, 3.12) | 1.5 |
+| Rate limiting, CSRF, request-body limit (3.5, 3.6, 3.9) | 1 |
+| Endpoint allowlist proxy and the role matrix (3.7, 3.19) | 1.5 |
+| Login audit and the audit table (3.13, the basic part of 5.21) | 0.5 |
 
-### 阶段 2：正确性与兼容（P0/P1，约 7 人日）
-| 项 | 优先级 | 估算 |
+### Phase 2: Correctness and compatibility (P0 and P1, about 7 person-days)
+
+| Item | Priority | Estimate |
 |---|---|---|
-| 按桶 ID 访问、递归删除分页、容量精度（4.1、4.3、4.4） | P0 | 1.5 |
-| 凭据缓存与失效、key 编码、授权校验（4.2、4.5、4.6） | P1 | 1.5 |
-| 错误响应与状态码、尾斜杠、BASE_PATH、密钥文件、更新源（4.7–4.9、4.12–4.15） | P1 | 1.5 |
-| 版本自检与 v2.4 字段探测（2.1、2.2） | P0 | 0.5 |
-| 列表接口能力探测（ListBucketsInfo、ListKeysInfo）（2.3、5.22） | P0 | 1 |
-| 并发上限、超时与取消（4.11、6.3） | P1 | 1 |
+| Address by bucket ID, paged recursive delete, capacity precision (4.1, 4.3, 4.4) | P0 | 1.5 |
+| Credential cache and invalidation, key encoding, grant validation (4.2, 4.5, 4.6) | P1 | 1.5 |
+| Error responses and status codes, trailing slash, `BASE_PATH`, secret files, update source (4.7 through 4.9, 4.12 through 4.15) | P1 | 1.5 |
+| Version self-check and v2.4 field probe (2.1, 2.2) | P0 | 0.5 |
+| List-API capability probe (`ListBucketsInfo`, `ListKeysInfo`) (2.3, 5.22) | P0 | 1 |
+| Concurrency cap, timeouts, and cancellation (4.11, 6.3) | P1 | 1 |
 
-### 阶段 2B：基础管理页面（P0，约 5.5 人日）
-| 项 | 估算 |
+### Phase 2B: Basic management pages (P0, about 5.5 person-days)
+
+| Item | Estimate |
 |---|---|
-| 桶列表、创建、删除、别名（5.1） | 1 |
-| 配额与权限（5.18、5.19） | 1 |
-| 密钥列表、创建、导入、删除、UpdateKey（改名、过期、允许建桶）、查看 secret（5.7） | 1 |
-| 集群健康、状态与统计卡片（5.9、5.10 不含指标面板） | 1 |
-| 用户管理基础：增删、禁用、改角色、重置密码与防锁死（5.20 核心部分） | 1 |
-| 下载与分享权限位：数据模型、授权检查、界面开关与测试（3.19） | 0.5 |
+| Bucket list, create, delete, aliases (5.1) | 1 |
+| Quotas and permissions (5.18, 5.19) | 1 |
+| Key list, create, import, delete, `UpdateKey` (rename, expiration, allow bucket creation), view the secret (5.7) | 1 |
+| Cluster health, status, and statistics cards (5.9, and 5.10 without the metrics panel) | 1 |
+| Basic user management: create and delete, disable, change role, reset password, and lockout protection (the core part of 5.20) | 1 |
+| Download and share permission bits: data model, authorization check, UI switch, and tests (3.19) | 0.5 |
 
-### 阶段 3：对象体验（P1，约 8 人日）
-| 项 | 估算 |
+### Phase 3: Object experience (P1, about 8 person-days)
+
+| Item | Estimate |
 |---|---|
-| 分页浏览、搜索、排序（5.2、5.22 对象部分） | 1.5 |
-| 流式上传、分片、上传队列、临时文件处理、流式下载与字节区间读取（5.3、4.10、6.2、5.32 后端部分） | 2.5 |
-| 批量删除与批量下载 ZIP（5.4、5.6） | 1.5 |
-| 分享与权限（5.5、3.10） | 1 |
-| 未完成上传清理（5.14） | 0.5 |
-| 有界缩略图（6.2） | 1 |
+| Paginated browse, search, and sort (5.2, the object part of 5.22) | 1.5 |
+| Streamed upload, multipart, upload queue, temporary-file handling, streamed download, and byte-range reads (5.3, 4.10, 6.2, the backend part of 5.32) | 2.5 |
+| Batch delete and bulk ZIP download (5.4, 5.6) | 1.5 |
+| Sharing and permissions (5.5, 3.10) | 1 |
+| Cleanup of incomplete uploads (5.14) | 0.5 |
+| Bounded thumbnails (6.2) | 1 |
 
-### 阶段 3A：界面与交互（P0/P1，约 6 人日）
-| 项 | 优先级 | 估算 |
+### Phase 3A: UI and interaction (P0 and P1, about 6 person-days)
+
+| Item | Priority | Estimate |
 |---|---|---|
-| 导航与页面结构、统一交互状态、确认分级（5.25–5.27） | P0 | 2 |
-| 列表筛选排序与多选、凭据复制、上传面板（5.30、5.31、5.33） | P0 | 1 |
-| 主题与无障碍、版本与能力提示（5.35、5.36） | P1 | 1 |
-| 布局变更流程与跟踪、概览可视化与自动刷新（5.28、5.29） | P1 | 1.5 |
-| 管理令牌作用域选择器、预览查看器增强（5.34、5.32） | P1 | 0.5 |
+| Navigation and page structure, shared interaction states, graded confirmation (5.25 through 5.27) | P0 | 2 |
+| List filtering, sorting, and multi-select, copying a credential, upload panel (5.30, 5.31, 5.33) | P0 | 1 |
+| Theme and accessibility, version and capability notice (5.35, 5.36) | P1 | 1 |
+| Layout change flow and tracking, overview visualization and auto-refresh (5.28, 5.29) | P1 | 1.5 |
+| Admin-token scope picker, preview-viewer enhancements (5.34, 5.32) | P1 | 0.5 |
 
-### 阶段 4：Garage v2.3/v2.4 管理能力（P1，约 6.5 人日）
-| 项 | 估算 |
+### Phase 4: Garage v2.3 and v2.4 management capabilities (P1, about 6.5 person-days)
+
+| Item | Estimate |
 |---|---|
-| CORS 与生命周期（5.16） | 2 |
-| 指标面板（5.10） | 1 |
-| 布局预览、历史、跳过死节点（5.8） | 1.5 |
-| 受限管理令牌与本项目令牌自检（5.15、3.7 推荐项） | 2 |
+| CORS and lifecycle (5.16) | 2 |
+| Metrics panel (5.10) | 1 |
+| Layout preview, history, skip dead nodes (5.8) | 1.5 |
+| Restricted admin tokens, and a self-check of this project's token (5.15, the recommended item in 3.7) | 2 |
 
-### 阶段 5：运维能力（P2，约 6 人日）
-| 项 | 估算 |
+### Phase 5: Operations capabilities (P2, about 6 person-days)
+
+| Item | Estimate |
 |---|---|
-| Worker 与修复任务（5.11） | 2 |
-| 块错误、元数据快照（5.12、5.13） | 1.5 |
-| 审计日志页面、筛选导出、保留期（5.21） | 1.5 |
-| InspectObject 诊断（5.2） | 1 |
+| Workers and repair tasks (5.11) | 2 |
+| Block errors and metadata snapshots (5.12, 5.13) | 1.5 |
+| Audit log page, filter and export, retention (5.21) | 1.5 |
+| `InspectObject` diagnostics (5.2) | 1 |
 
-### 阶段 6：扩展与分发（P2，约 6 人日）
-| 项 | 估算 |
+### Phase 6: Extensions and distribution (P2, about 6 person-days)
+
+| Item | Estimate |
 |---|---|
-| 用户管理完善、离线 CLI（5.20） | 1.5 |
-| 签名发布、SBOM、多架构（7.9） | 1.5 |
-| i18n（6.7） | 1.5 |
-| Helm Chart、自签证书选项 | 1.5 |
+| Complete user management, and the offline CLI (5.20) | 1.5 |
+| Signed releases, SBOM, multi-arch (7.9) | 1.5 |
+| i18n (6.7) | 1.5 |
+| Helm Chart, and the self-signed certificate option | 1.5 |
 
-说明：阶段 3A 中依赖后续阶段的项（5.28 依赖阶段 4 的布局接口，5.34 依赖 5.15，5.29 的审计小部件依赖 5.21）在依赖项交付后接入，接入工作已含在各自估算中。
+Note: items in phase 3A that depend on a later phase (5.28 depends on the layout API from phase 4, 5.34 depends on 5.15, and the audit widget in 5.29 depends on 5.21) are wired in after that dependency is delivered. The wiring work is already included in the estimates for those items.
 
-### 远期（不在本轮）
-- OIDC 登录（含按身份源角色映射与单点登出）、按团队的桶级授权、多集群管理、unix socket 监听与连接、多副本部署、跟踪 Garage Admin API 下一主版本。
+### Later (not in this round)
 
-合计：P0 23 人日，P1 21.5 人日，P2 12 人日，总计 56.5 人日（不含远期）。各阶段末以本章引用的验收标准全部通过为完成条件。
+- OIDC login (including mapping roles from the identity source, and single logout), bucket-level authorization by team, multi-cluster management, listening on a unix socket and connecting to one, multi-replica deployment, and tracking the next major version of the Garage Admin API.
+
+Total: P0 is 23 person-days, P1 is 21.5 person-days, P2 is 12 person-days, and the total is 56.5 person-days (the later work is not included). A phase is complete when every acceptance criterion this chapter cites has passed.
