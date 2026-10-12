@@ -13,6 +13,7 @@ mod objects;
 mod password;
 mod zip;
 mod preview;
+mod prometheus;
 mod proxy;
 mod redact;
 mod session;
