@@ -1,82 +1,82 @@
-# Garage 版本与 Admin API
+# Garage versions and the Admin API
 
-端点名与字段名以 Garage 源码中的 Admin API v2 定义为准。路径形式为 `/v2/<端点名>`。
+Endpoint names and field names follow the Admin API v2 definition in the Garage source. The path form is `/v2/<endpoint name>`.
 
-## 2.1 版本
+## 2.1 Versions
 
-| 项 | 要求 |
+| Item | Requirement |
 |---|---|
-| 最低支持 | Garage v2.3.0 |
-| 推荐版本 | Garage v2.4.1（当前最新发布） |
-| 不支持 | v2.2.x 及更早版本（含 v1.x、v0.x）；启动自检发现版本过低时拒绝连接并提示升级 |
-| 前瞻 | main-v2 未发布的列表接口按能力探测使用（见 2.3） |
-| 示例部署 | 文档与 compose 示例默认使用 v2.4.1 |
+| Minimum supported | Garage v2.3.0 |
+| Recommended version | Garage v2.4.1 (the current latest release) |
+| Not supported | v2.2.x and earlier (including v1.x and v0.x). When the startup self-check finds a version that is too old, refuse the connection and prompt to upgrade. |
+| Ahead of release | Use unpublished main-v2 list APIs through a capability probe (see 2.3). |
+| Example deployment | The docs and the compose example use v2.4.1 by default. |
 
-已从 Garage 源码核对的版本事实：
+Version facts already checked against the Garage source:
 
-- v2.3.0 与 v2.4.1 的 Admin API 路径集合相同：`/v2` 下 46 个端点，另有 `/health`、`/check`、`/metrics`（`/check` 是静态网站域名校验，供反向代理签发证书前使用，不是连通性检查）。
-- v2.3.0 已具备：`UpdateBucket` 的 `corsRules`、`lifecycleRules`、`websiteAccess`、`quotas`；`GetBucketInfo` 返回同名字段；`GetClusterStatistics`、`GetNodeStatistics`；`GetClusterHealth` 使用 `storageNodesUp`。这些功能按 v2.3.0 基线直接实现，不做版本分支。
-- 仅 v2.4.x 才有（必须按字段探测，缺失时隐藏对应展示）：
-  - `PreviewClusterLayoutChanges` 与 `ApplyClusterLayout` 响应中的结构化布局计算统计（`statistics`，含按节点、按 zone 的统计）；v2.3.0 下只显示 Garage 返回的文本信息。
-  - `GetNodeInfo` 的 `addr`、`role`、`draining`、`isUp`、`metadataPartition`、`dataPartition` 字段。
-- 仅 main-v2（未发布）：`ListBucketsInfo`、`ListKeysInfo`，以及 `ListBuckets` / `ListKeys` 的 `offset`、`limit` 参数；`GetNodeInfo` 的 `connectionParameters`。
+- v2.3.0 and v2.4.1 have the same set of Admin API paths: 46 endpoints under `/v2`, plus `/health`, `/check`, and `/metrics`. `/check` validates a static-website domain. A reverse proxy uses it before issuing a certificate. It is not a connectivity check.
+- v2.3.0 already has: `corsRules`, `lifecycleRules`, `websiteAccess`, and `quotas` on `UpdateBucket`; `GetBucketInfo` returns the fields of the same names; `GetClusterStatistics` and `GetNodeStatistics`; `GetClusterHealth` uses `storageNodesUp`. Implement these features directly on the v2.3.0 baseline. Do not branch by version.
+- Present only on v2.4.x (probe by field, and hide the matching display when the field is missing):
+  - Structured layout-calculation statistics in the `PreviewClusterLayoutChanges` and `ApplyClusterLayout` responses (`statistics`, including per-node and per-zone statistics). On v2.3.0, show only the text Garage returns.
+  - The `addr`, `role`, `draining`, `isUp`, `metadataPartition`, and `dataPartition` fields of `GetNodeInfo`.
+- Present only on main-v2 (unpublished): `ListBucketsInfo`, `ListKeysInfo`, and the `offset` and `limit` parameters of `ListBuckets` / `ListKeys`. Also `connectionParameters` on `GetNodeInfo`.
 
-验收：
+Acceptance:
 
-- 对 v2.3.x 与 v2.4.1 两个版本跑集成测试，核心流程（登录、列桶、浏览、上传、删除、布局应用）全部通过。本地用容器运行这两个版本的 Garage 是允许的测试方式。
-- v2.3.x 下布局预览页不报错，只显示文本信息；节点详情缺字段时显示「—」。
+- Run integration tests against both v2.3.x and v2.4.1. The core flows (log in, list buckets, browse, upload, delete, apply layout) all pass. Running these two Garage versions in local containers is an allowed way to test.
+- On v2.3.x the layout preview page does not error. It shows only the text. When a node-detail field is missing, show "—".
 
-## 2.2 版本自检
+## 2.2 Version self-check
 
-- 启动时及每次重连 Garage 时调用 `GetNodeInfo`（`node=self`）读取 `garageVersion`，低于 v2.3.0 时在界面显示阻断提示，后端拒绝写操作。
-- 能力探测结果缓存在进程内，Garage 重连后重新探测。
+- At startup, and on every reconnect to Garage, call `GetNodeInfo` (`node=self`) and read `garageVersion`. When it is below v2.3.0, show a blocking notice in the UI, and the backend rejects writes.
+- Cache the capability-probe result in the process. Probe again after Garage reconnects.
 
-验收：对 v2.2.x 实例启动时出现明确提示，不出现前端异常。
+Acceptance: Starting against a v2.2.x instance shows a clear notice, and no frontend exception appears.
 
-## 2.3 main-v2 列表接口
+## 2.3 main-v2 list APIs
 
-- main-v2 中 `ListBuckets`、`ListKeys` 新增 `offset` 与 `limit`；未传 `limit` 时最多返回 10000 条。新增 `ListBucketsInfo`、`ListKeysInfo`，一次返回带详情的列表，默认上限 1000。
-- 要求：
-  1. 首次调用时探测 `ListBucketsInfo`、`ListKeysInfo` 是否可用；可用则用它替代「`ListBuckets` + 每桶 `GetBucketInfo`」。
-  2. 不可用时（v2.3.x、v2.4.x）用 `ListBuckets` 加有界并发的详情调用（见 [correctness.md](correctness.md) 的 4.11），详情按页懒加载，不对全部桶一次性取详情。
-  3. 本项目对外列表接口统一分页，前端分页或无限滚动，不一次性全量加载。
-  4. 返回条数等于 `limit` 时必须继续翻页或提示「还有更多」，不得静默截断。
+- In main-v2, `ListBuckets` and `ListKeys` add `offset` and `limit`. When `limit` is omitted, they return at most 10000 rows. `ListBucketsInfo` and `ListKeysInfo` are added. One call returns a list that includes details. The default cap is 1000.
+- Requirements:
+  1. On the first call, probe whether `ListBucketsInfo` and `ListKeysInfo` are available. When they are, use them instead of "`ListBuckets` + `GetBucketInfo` per bucket".
+  2. When they are not available (v2.3.x, v2.4.x), use `ListBuckets` plus bounded-concurrency detail calls (see 4.11 of [correctness.md](correctness.md)). Load details lazily per page. Do not fetch details for every bucket at once.
+  3. This project's outward list APIs paginate in one way. The frontend paginates, or it uses infinite scroll. It does not load the full set at once.
+  4. When the number of rows returned equals `limit`, keep paging, or tell the user "there is more". Do not truncate silently.
 
-验收：模拟 12000 个桶的 Garage 响应，列表可翻到最后一条；两条路径都有测试。
+Acceptance: Against a simulated Garage response of 12000 buckets, the list can be paged to the last row. Both paths have tests.
 
-## 2.4 端点清单
+## 2.4 Endpoint list
 
-| 分类 | 端点 | 用途 |
+| Category | Endpoint | Purpose |
 |---|---|---|
-| 集群 | `GetClusterHealth` | 首页健康卡片 |
-| | `GetClusterStatus` | 节点列表 |
-| | `GetClusterStatistics` | 集群容量与统计 |
-| | `ConnectClusterNodes` | 连接节点 |
-| 节点 | `GetNodeInfo` | 节点详情、版本自检（v2.4 字段探测） |
-| | `GetNodeStatistics` | 节点统计 |
-| | `CreateMetadataSnapshot` | 元数据快照 |
-| | `LaunchRepairOperation` | 修复任务 |
-| 布局 | `GetClusterLayout`、`GetClusterLayoutHistory` | 当前布局与历史 |
-| | `UpdateClusterLayout`、`PreviewClusterLayoutChanges` | 暂存变更与预览（`statistics` 为 v2.4+） |
-| | `ApplyClusterLayout`、`RevertClusterLayout` | 应用或撤销 |
-| | `ClusterLayoutSkipDeadNodes` | 跳过死节点 |
-| 管理令牌 | `ListAdminTokens`、`GetAdminTokenInfo`、`GetCurrentAdminTokenInfo` | 列表与详情、自检 |
-| | `CreateAdminToken`、`UpdateAdminToken`、`DeleteAdminToken` | 管理（字段 `name`、`expiration`、`scope`） |
-| 密钥 | `ListKeys`、`ListKeysInfo`（探测）、`GetKeyInfo` | 列表与详情 |
-| | `CreateKey`、`ImportKey`、`UpdateKey`、`DeleteKey` | 管理（含 `allow.createBucket`、`expiration`） |
-| 桶 | `ListBuckets`、`ListBucketsInfo`（探测）、`GetBucketInfo` | 列表与详情（按 id 查询） |
-| | `CreateBucket`、`UpdateBucket`、`DeleteBucket` | 管理（`websiteAccess`、`quotas`、`corsRules`、`lifecycleRules`） |
-| | `CleanupIncompleteUploads` | 清理未完成上传 |
-| | `InspectObject` | 对象诊断 |
-| 权限与别名 | `AllowBucketKey`、`DenyBucketKey` | 授权与撤销 |
-| | `AddBucketAlias`、`RemoveBucketAlias` | 全局与本地别名 |
-| Worker | `ListWorkers`、`GetWorkerInfo` | Worker 列表与详情 |
-| | `GetWorkerVariable`、`SetWorkerVariable` | Worker 变量 |
-| 块 | `ListBlockErrors`、`GetBlockInfo` | 块错误 |
-| | `RetryBlockResync`、`PurgeBlocks` | 重试与清除 |
-| 特殊 | `/metrics` | Prometheus 指标（需 `metrics_token`） |
-| | `/health` | 连通性与读写法定数检查（无需令牌；集群可读写时返回成功） |
+| Cluster | `GetClusterHealth` | Home-page health card |
+| | `GetClusterStatus` | Node list |
+| | `GetClusterStatistics` | Cluster capacity and statistics |
+| | `ConnectClusterNodes` | Connect nodes |
+| Node | `GetNodeInfo` | Node detail and version self-check (v2.4 field probe) |
+| | `GetNodeStatistics` | Node statistics |
+| | `CreateMetadataSnapshot` | Metadata snapshot |
+| | `LaunchRepairOperation` | Repair task |
+| Layout | `GetClusterLayout`, `GetClusterLayoutHistory` | Current layout and history |
+| | `UpdateClusterLayout`, `PreviewClusterLayoutChanges` | Stage a change and preview (`statistics` is v2.4+) |
+| | `ApplyClusterLayout`, `RevertClusterLayout` | Apply or revert |
+| | `ClusterLayoutSkipDeadNodes` | Skip dead nodes |
+| Admin token | `ListAdminTokens`, `GetAdminTokenInfo`, `GetCurrentAdminTokenInfo` | List, detail, and self-check |
+| | `CreateAdminToken`, `UpdateAdminToken`, `DeleteAdminToken` | Management (fields `name`, `expiration`, `scope`) |
+| Key | `ListKeys`, `ListKeysInfo` (probe), `GetKeyInfo` | List and detail |
+| | `CreateKey`, `ImportKey`, `UpdateKey`, `DeleteKey` | Management (includes `allow.createBucket` and `expiration`) |
+| Bucket | `ListBuckets`, `ListBucketsInfo` (probe), `GetBucketInfo` | List and detail (query by id) |
+| | `CreateBucket`, `UpdateBucket`, `DeleteBucket` | Management (`websiteAccess`, `quotas`, `corsRules`, `lifecycleRules`) |
+| | `CleanupIncompleteUploads` | Clean up incomplete uploads |
+| | `InspectObject` | Object diagnostics |
+| Permission and alias | `AllowBucketKey`, `DenyBucketKey` | Grant and revoke |
+| | `AddBucketAlias`, `RemoveBucketAlias` | Global and local aliases |
+| Worker | `ListWorkers`, `GetWorkerInfo` | Worker list and detail |
+| | `GetWorkerVariable`, `SetWorkerVariable` | Worker variables |
+| Block | `ListBlockErrors`, `GetBlockInfo` | Block errors |
+| | `RetryBlockResync`, `PurgeBlocks` | Retry and purge |
+| Special | `/metrics` | Prometheus metrics (requires `metrics_token`) |
+| | `/health` | Connectivity and read/write quorum check (no token required; returns success when the cluster can read and write) |
 
-不使用：`CheckDomain`（由 Garage 网站服务自用）。
+Not used: `CheckDomain` (Garage's website service uses it itself).
 
-白名单必须覆盖本表全部端点、能力探测用的 `ListBucketsInfo` 与 `ListKeysInfo`，以及 `/metrics`。规则见 [security.md](security.md) 的 3.7。
+The allowlist must cover every endpoint in this table, `ListBucketsInfo` and `ListKeysInfo` used by the capability probe, and `/metrics`. The rule is 3.7 of [security.md](security.md).
