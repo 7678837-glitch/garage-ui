@@ -42,6 +42,7 @@ pub(crate) use auth::public_config;
 pub(crate) use auth::setup;
 pub(crate) use auth::status;
 pub(crate) use buckets::add_bucket_alias;
+pub(crate) use buckets::cleanup_uploads;
 pub(crate) use buckets::create_bucket;
 pub(crate) use buckets::delete_bucket;
 pub(crate) use buckets::get_bucket;
@@ -49,6 +50,7 @@ pub(crate) use buckets::get_bucket_cors;
 pub(crate) use buckets::get_bucket_lifecycle;
 pub(crate) use buckets::grant_bucket_permissions;
 pub(crate) use buckets::list_buckets;
+pub(crate) use buckets::list_multipart_uploads;
 pub(crate) use buckets::put_bucket_cors;
 pub(crate) use buckets::put_bucket_lifecycle;
 pub(crate) use buckets::put_bucket_credential;
@@ -141,6 +143,14 @@ pub fn routes(app: App) -> Router<App> {
         .route(
             "/api/buckets/{id}/lifecycle",
             get(get_bucket_lifecycle).put(put_bucket_lifecycle),
+        )
+        .route(
+            "/api/buckets/{id}/multipart",
+            get(list_multipart_uploads),
+        )
+        .route(
+            "/api/buckets/{id}/cleanup-uploads",
+            post(cleanup_uploads),
         )
         .route("/api/buckets/{id}/credential", put(put_bucket_credential))
         .route(
@@ -2270,6 +2280,181 @@ mod tests {
             "lifecycleRules must be an array",
         );
         assert_eq!(updates(&mock).len(), 2);
+    }
+
+    fn multipart_uploads_xml(uploads: &[(&str, &str, &str)]) -> String {
+        let mut xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8"?><ListMultipartUploadsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>bkt-1</Bucket><IsTruncated>false</IsTruncated>"#,
+        );
+        for (key, upload_id, initiated) in uploads {
+            xml.push_str(&format!(
+                "<Upload><Key>{key}</Key><UploadId>{upload_id}</UploadId><Initiated>{initiated}</Initiated></Upload>"
+            ));
+        }
+        xml.push_str("</ListMultipartUploadsResult>");
+        http_xml(&xml)
+    }
+
+    fn cleanup_calls(mock: &Upstream) -> Vec<UpstreamCall> {
+        mock.calls()
+            .into_iter()
+            .filter(|call| call.line.contains("CleanupIncompleteUploads"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn cleanup_drops_uploads_older_than_the_threshold() {
+        let admin = Upstream::start(UpstreamReply::Ok(
+            r#"{"uploadsDeleted":1}"#.to_string(),
+        ))
+        .await;
+        let calls = Arc::clone(&admin.calls);
+        let s3 = S3Mock::start(move |line| {
+            if !line.contains("uploads") {
+                return "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_string();
+            }
+            let cleaned = calls.lock().expect("admin calls").iter().any(|call| {
+                call.line.contains("CleanupIncompleteUploads")
+            });
+            if cleaned {
+                multipart_uploads_xml(&[])
+            } else {
+                multipart_uploads_xml(&[("old.bin", "up-old", "2000-01-01T00:00:00Z")])
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", admin.url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("S3_ENDPOINT_URL", s3.url.as_str()),
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (session, _) = login(&app).await;
+
+        let rejected = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/cleanup-uploads",
+                Some(r#"{"olderThanSecs":-1}"#),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_error(
+            &rejected,
+            StatusCode::BAD_REQUEST,
+            "invalid_age",
+            "olderThanSecs must be an integer that is at least 0",
+        );
+        assert!(
+            cleanup_calls(&admin).is_empty(),
+            "{:?}",
+            admin.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+
+        let listed = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/multipart",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&listed.body).unwrap(),
+            json!({
+                "uploads": [{
+                    "key": "old.bin",
+                    "uploadId": "up-old",
+                    "initiated": "2000-01-01T00:00:00Z"
+                }]
+            })
+        );
+
+        let cleaned = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/cleanup-uploads",
+                Some(r#"{"olderThanSecs":3600}"#),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(cleaned.status, StatusCode::OK, "{}", cleaned.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&cleaned.body).unwrap(),
+            json!({ "uploadsDeleted": 1 })
+        );
+        let sent = cleanup_calls(&admin);
+        assert_eq!(
+            sent.len(),
+            1,
+            "{:?}",
+            admin.calls()
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            sent[0].line.contains("POST /v2/CleanupIncompleteUploads "),
+            "{}",
+            sent[0].line
+        );
+        assert!(!sent[0].line.contains('?'), "{}", sent[0].line);
+        let sent_body: Value = serde_json::from_str(&sent[0].body).unwrap();
+        assert_eq!(
+            sent_body,
+            json!({ "bucketId": "bkt-1", "olderThanSecs": 3600 })
+        );
+        assert!(!sent[0].body.contains("uploadsDeleted"), "{}", sent[0].body);
+
+        let empty = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/multipart",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(empty.status, StatusCode::OK, "{}", empty.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&empty.body).unwrap(),
+            json!({ "uploads": [] })
+        );
+        assert!(!empty.body.contains("up-old"), "{}", empty.body);
+
+        let viewer = viewer_session(&app, &session).await;
+        let denied = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/cleanup-uploads",
+                Some(r#"{"olderThanSecs":3600}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(cleanup_calls(&admin).len(), 1);
     }
 
     #[tokio::test]
