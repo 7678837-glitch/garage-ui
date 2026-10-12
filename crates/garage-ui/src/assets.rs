@@ -100,4 +100,32 @@ mod tests {
         assert!(content_type("assets/app.js").starts_with("text/javascript"));
         assert!(content_type("assets/app.css").starts_with("text/css"));
     }
+
+    #[test]
+    fn index_is_not_cached_and_a_hashed_asset_is_immutable() {
+        let index = file_response("index.html", "<base href=\"/\">").expect("index.html");
+        assert_eq!(cache_control(&index), Some("no-cache"));
+
+        let hashed = Assets::iter()
+            .find(|path| {
+                let name = path.rsplit('/').next().unwrap_or(path.as_ref());
+                path.starts_with("assets/")
+                    && name.contains('-')
+                    && (name.ends_with(".js") || name.ends_with(".css"))
+            })
+            .expect("hashed js or css under assets/");
+        let asset = file_response(hashed.as_ref(), "<base href=\"/\">").expect("hashed asset");
+        assert_eq!(
+            cache_control(&asset),
+            Some("public, max-age=31536000, immutable"),
+            "{hashed}"
+        );
+    }
+
+    fn cache_control(response: &Response) -> Option<&str> {
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    }
 }
