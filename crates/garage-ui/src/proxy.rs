@@ -6,7 +6,7 @@ use crate::access::{self, Op};
 use crate::config;
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
-use crate::state::{App, GarageLink};
+use crate::state::{App, GarageLink, S3Probe};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Endpoint {
@@ -236,6 +236,94 @@ fn reported_garage_version(value: &Value) -> Option<&str> {
         }
     }
     found
+}
+
+// connectionParameters sits on the same object as garageVersion.
+// A v2.4 MultiResponse keeps that object under success.
+pub async fn s3_origin(app: &App) -> (Option<String>, String) {
+    let configured_endpoint = app.settings.s3_endpoint_url.clone();
+    let configured_region = app.settings.configured_s3_region.clone();
+    if let (Some(endpoint), Some(region)) = (configured_endpoint.clone(), configured_region.clone())
+    {
+        return (Some(endpoint), region);
+    }
+    let probed = app.cached_s3_probe(read_s3_probe(app)).await;
+    let endpoint = configured_endpoint.or(probed.endpoint);
+    let region = configured_region
+        .or(probed.region)
+        .unwrap_or_else(|| app.settings.s3_region.clone());
+    (endpoint, region)
+}
+
+fn empty_probe() -> S3Probe {
+    S3Probe {
+        endpoint: None,
+        region: None,
+    }
+}
+
+async fn read_s3_probe(app: &App) -> S3Probe {
+    let Ok(response) = send(app, "GetNodeInfo", &Method::GET, "node=self", &[]).await else {
+        return empty_probe();
+    };
+    if !response.status().is_success() {
+        return empty_probe();
+    }
+    let Ok(bytes) = axum::body::to_bytes(response.into_body(), 1024 * 1024).await else {
+        return empty_probe();
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return empty_probe();
+    };
+    s3_probe_from(&value)
+}
+
+fn s3_probe_from(value: &Value) -> S3Probe {
+    let carriers = connection_carriers(value);
+    S3Probe {
+        endpoint: agreed(carriers.iter().copied(), "s3Endpoint").and_then(normalize_s3_endpoint),
+        region: agreed(carriers.iter().copied(), "s3Region"),
+    }
+}
+
+fn connection_carriers(value: &Value) -> Vec<&Value> {
+    if value.get("garageVersion").is_some() {
+        return vec![value];
+    }
+    let Some(nodes) = value.get("success").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    nodes
+        .values()
+        .filter(|node| node.get("garageVersion").is_some())
+        .collect()
+}
+
+fn agreed<'a>(carriers: impl Iterator<Item = &'a Value>, field: &str) -> Option<String> {
+    let mut found = None;
+    for carrier in carriers {
+        let Some(text) = carrier
+            .get("connectionParameters")
+            .and_then(Value::as_object)
+            .and_then(|params| params.get(field))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        else {
+            continue;
+        };
+        match &found {
+            None => found = Some(text.to_string()),
+            Some(current) if current == text => {}
+            Some(_) => return None,
+        }
+    }
+    found
+}
+
+fn normalize_s3_endpoint(raw: String) -> Option<String> {
+    let joined = config::join(&raw, "");
+    (!joined.is_empty()).then_some(joined)
 }
 
 pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, ApiError> {

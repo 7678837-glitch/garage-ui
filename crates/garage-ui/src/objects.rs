@@ -225,7 +225,7 @@ pub async fn presign_get(
                 "Public S3 address is not configured",
             )
         })?;
-    let region = app.settings.s3_region.clone();
+    let (_, region) = proxy::s3_origin(app).await;
     let bucket = bucket_id.to_string();
     let object_key = key.to_string();
     let sources = sources(app, bucket_id).await;
@@ -1256,13 +1256,10 @@ where
     F: FnMut(Client) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<T, S3Failure>> + Send + 'static,
 {
-    let endpoint = app
-        .settings
-        .s3_endpoint_url
-        .clone()
+    let (endpoint, region) = proxy::s3_origin(app).await;
+    let endpoint = endpoint
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unavailable("garage_unavailable", "Garage is unavailable"))?;
-    let region = app.settings.s3_region.clone();
     let sources = sources(app, &bucket_id).await;
     let notes = Arc::new(Mutex::new(None::<String>));
     let notes_for_call = Arc::clone(&notes);
