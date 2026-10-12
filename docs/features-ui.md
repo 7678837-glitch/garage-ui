@@ -1,82 +1,82 @@
-# 界面与交互
+# UI and interaction
 
-## 5.22 分页
+## 5.22 Pagination
 
-- 需求：本项目所有列表接口（桶、密钥、对象、用户、审计、管理令牌、块错误）统一分页约定：`offset`/`limit` 或续页令牌，响应中带 `next` 或 `hasMore`；前端统一分页组件。
-- Garage：`ListBucketsInfo` / `ListKeysInfo` 的 `offset`、`limit`（能力探测）；S3 续页令牌。
+- Requirement: Every list API in this project (buckets, keys, objects, users, audit, admin tokens, block errors) uses one pagination contract: `offset`/`limit`, or a continuation token. The response carries `next` or `hasMore`. The frontend uses one pagination component.
+- Garage: `offset` and `limit` of `ListBucketsInfo` / `ListKeysInfo` (capability probe), and the S3 continuation token.
 
-验收：所有列表接口对 `limit` 越界做规范化（默认 100，上限 1000）。
+Acceptance: Every list API normalizes an out-of-range `limit` (default 100, maximum 1000).
 
-## 5.25 导航与页面结构
+## 5.25 Navigation and page structure
 
-- 需求：左侧固定导航（窄屏折叠为抽屉），一级入口依次为：概览、桶、密钥、节点与布局、运维（Worker、块错误、快照、修复）、管理令牌、审计、设置。只读角色看不到无权使用的入口。
-- 每个资源采用「列表页 → 详情页（标签页）」结构：桶详情含概览、对象、权限、设置（网站、配额、CORS、生命周期）、未完成上传；密钥详情含概览、可访问的桶、设置；节点详情含信息、统计、Worker、块错误、维护操作。
-- 顶部显示面包屑、当前用户与角色、连接的 Garage 版本与健康状态徽标。
-- 所有详情页、标签页、对象前缀都有可分享、可刷新的独立地址；浏览器前进后退保持状态。
+- Requirement: A fixed navigation on the left (on a narrow screen it collapses to a drawer). The top-level entries, in order, are Overview, Buckets, Keys, Nodes and layout, Operations (Workers, block errors, snapshots, repair), Admin tokens, Audit, and Settings. A read-only role does not see an entry it is not allowed to use.
+- Each resource uses a list page, then a detail page (tabs). Bucket detail contains Overview, Objects, Permissions, Settings (website, quotas, CORS, lifecycle), and incomplete uploads. Key detail contains Overview, the buckets it can access, and Settings. Node detail contains information, statistics, Workers, block errors, and maintenance actions.
+- The top shows breadcrumbs, the current user and role, the connected Garage version, and a health-status badge.
+- Every detail page, tab, and object prefix has its own address that can be shared and refreshed. Browser back and forward keep the state.
 
-验收：E2E 中直接打开任一深层地址可正确渲染；只读账号导航不含写操作入口；窄屏下导航可展开收起。
+Acceptance: In E2E, opening any deep address directly renders it correctly. A read-only account's navigation has no entry for a write action. On a narrow screen the navigation can be expanded and collapsed.
 
-最小版的导航只挂已交付模块。未交付的运维、管理令牌、审计页面、CORS、生命周期、网站、未完成上传不显示入口。已交付页面的地址规则从第一天成立。
+The minimum version's navigation mounts only modules that have already been delivered. Operations, admin tokens, the audit page, CORS, lifecycle, website, and incomplete uploads that are not yet delivered show no entry. Address rules for pages that have been delivered hold from the first day.
 
-## 5.26 统一交互状态
+## 5.26 Shared interaction states
 
-- 需求：每个数据区块必须实现四种状态：
-  1. 加载：首屏用骨架占位，后续刷新只显示轻量进度提示，不清空已显示数据。
-  2. 空：说明当前为空的原因，并给出下一步操作（如「创建第一个桶」）；只读角色不显示创建按钮。
-  3. 错误：区块内显示错误条，包含可读说明、错误码、「重试」按钮；Garage 不可达时显示全局横幅而非逐块报错。
-  4. 部分结果：分页截断、搜索达上限、探测到能力缺失时，明确提示原因。
-- 写操作：提交中禁用按钮并显示进度；成功后以非阻塞提示告知并刷新相关数据；失败时保留表单输入并显示错误。
-- 设置类表单显示保存状态（未保存、保存中、已保存、失败），离开有未保存修改的页面时提示。
+- Requirement: Every data block must implement four states:
+  1. Loading. The first screen uses a skeleton placeholder. A later refresh shows only a light progress hint and does not clear data already on screen.
+  2. Empty. Say why it is currently empty, and give the next action (for example "Create the first bucket"). A read-only role does not show a create button.
+  3. Error. The block shows an error bar with a readable explanation, an error code, and a "Retry" button. When Garage is unreachable, show one global banner instead of an error on every block.
+  4. Partial result. When pagination is truncated, a search hits its cap, or a missing capability is detected, state the reason explicitly.
+- Writes: while a submit is in progress, disable the button and show progress. After success, tell the user with a non-blocking notice and refresh the related data. On failure, keep the form input and show the error.
+- A settings form shows its save state (unsaved, saving, saved, failed). Leaving a page that has unsaved changes prompts the user.
 
-验收：前端组件测试对每个列表组件覆盖加载、空、错误三态；模拟 Garage 断开时出现全局横幅。
+Acceptance: Frontend component tests cover loading, empty, and error for every list component. When Garage is simulated as disconnected, a global banner appears.
 
-## 5.27 确认流程分级
+## 5.27 Graded confirmation
 
-- 需求：按风险把写操作分三级：
-  1. 低风险（改名、改配额、改网站文档）：无需确认，可撤销或可再次修改。
-  2. 中风险（删除单个对象、撤销权限、删除空桶、删除密钥）：模态确认框，写明对象名与后果，默认焦点在「取消」。
-  3. 高风险（递归删除、批量删除、清除块、跳过死节点、应用布局、开启公开网站访问、创建全权管理令牌）：需输入目标名称（或块哈希、布局版本号）后才能确认；说明不可逆后果与影响范围（对象数、容量）。
-- 确认框支持键盘操作（Esc 取消、回车仅在输入匹配后生效）。
+- Requirement: Split write actions into three levels by risk.
+  1. Low risk (rename, change a quota, change the website document). No confirmation. The change can be undone, or it can be edited again.
+  2. Medium risk (delete a single object, revoke a permission, delete an empty bucket, delete a key). A modal confirmation states the object name and the consequence. The default focus is "Cancel".
+  3. High risk (recursive delete, batch delete, purge blocks, skip dead nodes, apply a layout, turn on public website access, create a full-authority admin token). The user can confirm only after typing the target name (or the block hash, or the layout version). State the irreversible consequence and the scope of impact (object count, capacity).
+- The confirmation dialog supports the keyboard (Esc cancels. Enter takes effect only after the typed value matches).
 
-验收：表驱动测试固定每个写操作的风险等级；高风险操作在输入不匹配时确认按钮不可用。
+Acceptance: A table-driven test fixes the risk level of every write action. For a high-risk action, the confirm button is disabled when the input does not match.
 
-最小版为当时存在的写操作分级。清除块、跳过死节点、应用布局、公开网站、全权管理令牌的确认随对应功能交付，等级表先把这些操作登记为高风险。
+The minimum version grades the write actions that exist at that time. Confirmation for purge blocks, skip dead nodes, apply layout, public website, and a full-authority admin token ships with the matching feature. The level table registers those actions as high risk first.
 
-## 5.30 列表的筛选、排序与选择
+## 5.30 Filtering, sorting, and selection on lists
 
-- 需求：桶、密钥、节点、管理令牌、用户列表支持按名称筛选，按名称、创建时间、容量等列排序，默认排序固定且有说明；排序与筛选状态写入地址。桶列表按容量排序使用 [features-cluster.md](features-cluster.md) 的 5.29 汇总缓存。
-- 对象列表支持多选（含按住 Shift 选择区间、全选当前页），选中后出现批量操作条（删除、下载 ZIP、复制路径）。不提供跨页「全选」；需要处理整个前缀时使用文件夹递归操作（4.3、5.6）。
+- Requirement: The bucket, key, node, admin-token, and user lists support filtering by name, and sorting by columns such as name, creation time, and capacity. The default sort is fixed and is explained. Sort and filter state is written into the address. Sorting the bucket list by capacity uses the 5.29 summary cache in [features-cluster.md](features-cluster.md).
+- The object list supports multi-select (including holding Shift to select a range, and selecting every row on the current page). After a selection, a bulk-action bar appears (delete, download ZIP, copy path). There is no cross-page "select all". To act on a whole prefix, use the folder recursive operation (4.3 and 5.6).
 
-验收：刷新后排序与筛选保持；批量操作条只在有选择时出现。
+Acceptance: After a refresh, the sort and the filter remain. The bulk-action bar appears only when something is selected.
 
-最小版的批量操作条包含删除与复制路径。ZIP 随 5.6 出现。按容量排序在汇总缓存交付前不可用，界面不提供该排序，避免一次请求打满全部桶详情。
+The minimum version's bulk-action bar includes delete and copy path. ZIP appears with 5.6. Sort by capacity is unavailable until the summary cache is delivered. The UI does not offer that sort, so that one request does not fetch the detail of every bucket.
 
-## 5.32 对象预览查看器
+## 5.32 Object preview viewer
 
-最小版只做白名单内联预览。区间读取、同目录切换、大文本截断随本条完整交付。
+The minimum version does only allowlisted inline preview. Range reads, switching inside the same directory, and truncating large text are delivered with the full form of this item.
 
-- 需求：对象详情侧栏显示元数据（大小、类型、ETag、修改时间、自定义元数据）；白名单类型在查看器中预览：图片、音视频（支持拖动进度，即后端支持字节区间读取并流式返回）、PDF、纯文本（超过可配置大小只显示开头部分）；同目录内可用左右键切换上一个、下一个对象。
-- 不在白名单的类型显示「下载」而非预览，遵守 [security.md](security.md) 的 3.3。预览、下载与缩略图都需要 3.19 中的下载权限；无此权限的只读用户只能看到元数据，界面不显示预览与下载入口。
-- 与 3.3 的关系：图片、音视频以媒体元素直接引用对象地址，文本由前端读取后按纯文本渲染，均不受对象响应沙箱 CSP 影响；PDF 放在沙箱 iframe 中，只放开脚本、不授予同源。区间读取的响应同样带 `nosniff` 与 `no-store`。
+- Requirement: The object-detail sidebar shows metadata (size, type, ETag, modification time, custom metadata). Allowlisted types preview in the viewer: images, audio and video (seeking by dragging the progress bar is supported, which means the backend supports a byte-range read and returns a stream), PDF, and plain text (above a configurable size, show only the beginning). Inside the same directory, the Left and Right keys move to the previous object and the next object.
+- A type outside the allowlist shows "Download" instead of a preview, and follows 3.3 of [security.md](security.md). Preview, download, and thumbnails all require the download permission in 3.19. A read-only user without that permission sees only metadata. The UI shows no preview entry and no download entry.
+- How this relates to 3.3: images, audio, and video point a media element directly at the object address. The frontend reads text and renders it as plain text. Neither is affected by the sandbox CSP on the object response. A PDF is placed in a sandboxed iframe. Only scripts are allowed, and same origin is not granted. A range-read response also carries `nosniff` and `no-store`.
 
-验收：视频可拖动到任意位置播放；大文本只加载开头；切换对象时取消上一次未完成的加载。
+Acceptance: A video can be dragged to any position and played. Large text loads only the beginning. Switching objects cancels the previous load that has not finished.
 
-## 5.33 上传面板
+## 5.33 Upload panel
 
-- 需求：拖放区域覆盖对象列表；上传面板列出每个文件的进度、速度、状态（排队、上传中、完成、失败、已取消），支持单个取消、重试、全部清除；离开页面时若仍在上传给出提示；同名对象按「覆盖、跳过、全部覆盖」询问。
+- Requirement: The drop zone covers the object list. The upload panel lists each file's progress, speed, and state (queued, uploading, completed, failed, cancelled). It supports cancelling one file, retry, and clear all. If an upload is still running when the user leaves the page, prompt the user. For an object of the same name, ask with the choices "overwrite", "skip", and "overwrite all".
 
-验收：E2E 上传 3 个文件并取消其中 1 个，面板状态正确，被取消的分片已中止。
+Acceptance: E2E uploads 3 files and cancels 1 of them. The panel state is correct, and the cancelled parts have been aborted.
 
-## 5.35 外观与无障碍
+## 5.35 Appearance and accessibility
 
-- 需求：浅色、深色、跟随系统三种主题，选择保存在本地偏好（非敏感数据）；所有颜色满足 WCAG AA 对比度；状态不只靠颜色表达（同时有图标或文字）；所有交互元素可键盘访问并有可见焦点，图标按钮有可读标签；布局在 360 像素宽屏幕上可用。
+- Requirement: Three themes, light, dark, and follow the system. The choice is stored in a local preference (data that is not sensitive). Every color meets WCAG AA contrast. A state is not conveyed by color alone (an icon or text is present as well). Every interactive element can be reached from the keyboard and has a visible focus. An icon button has a readable label. The layout is usable on a screen that is 360 pixels wide.
 
-验收：自动化无障碍检查（如 axe）在主要页面零严重问题；两种主题下截图测试通过。
+Acceptance: An automated accessibility check (such as axe) reports zero serious problems on the main pages. Screenshot tests pass under both themes.
 
-最小版按 [scope.md](scope.md) 的 8.1 包含浅色、深色与基础无障碍。跟随系统属于本条完整范围。
+Per 8.1 of [scope.md](scope.md), the minimum version includes light, dark, and basic accessibility. Follow the system belongs to the full scope of this item.
 
-## 5.36 版本与能力提示
+## 5.36 Version and capability notice
 
-- 需求：设置页「关于」显示本项目版本、构建信息、连接的 Garage 版本与能力探测结果（哪些 v2.4 字段可用、列表接口是否可用）；连接的 Garage 低于最低版本时全站横幅提示。
+- Requirement: "About" on the Settings page shows this project's version, the build information, the connected Garage version, and the capability-probe result (which v2.4 fields are available, and whether the list APIs are available). When the connected Garage is below the minimum version, a site-wide banner says so.
 
-验收：对 v2.3.x 与 v2.4.1 两种实例，能力列表显示正确。
+Acceptance: Against a v2.3.x instance and a v2.4.1 instance, the capability list displays correctly.
