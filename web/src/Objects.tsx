@@ -303,15 +303,27 @@ function codeOf(text: string): string | null {
   return typeof code === "string" && code.length > 0 ? code : null;
 }
 
-async function readPreviewText(path: string): Promise<string> {
+type TextPreview = {
+  body: string;
+  partial: boolean;
+};
+
+async function readPreviewText(path: string, signal: AbortSignal): Promise<TextPreview> {
   // api() parses the response as JSON, so a plain-text preview has to read the body itself.
-  const response = await fetch(path, { credentials: "include" });
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: { Range: "bytes=0-262143" },
+    signal,
+  });
   if (!response.ok) {
     const text = await response.text();
     noteUnauthenticated(response.status, codeOf(text));
     throw new Error(UNAVAILABLE);
   }
-  return response.text();
+  return {
+    body: await response.text(),
+    partial: response.status === 206,
+  };
 }
 
 function InlineBody({
@@ -323,13 +335,18 @@ function InlineBody({
   kind: InlineKind;
   objectKey: string;
   src: string;
-  text: string | undefined;
+  text: TextPreview | undefined;
 }) {
   switch (kind) {
     case "image":
       return <img alt={objectKey} src={src} />;
     case "text":
-      return text === undefined ? null : <pre>{text}</pre>;
+      return text === undefined ? null : (
+        <>
+          <pre>{text.body}</pre>
+          {text.partial ? <p>Showing the first 256 KiB.</p> : null}
+        </>
+      );
     case "pdf":
       // Allow scripts only, and do not grant same origin, so a PDF script cannot reach the console.
       return <iframe sandbox="allow-scripts" src={src} title={objectKey} />;
@@ -701,7 +718,7 @@ export function Objects({
   const kind = preview === null ? null : inlineKind(preview.contentType);
   const previewText = useQuery({
     queryKey: ["bucket-object-text", bucketId, previewKey],
-    queryFn: () => readPreviewText(previewPath(bucketId, previewKey ?? "")),
+    queryFn: ({ signal }) => readPreviewText(previewPath(bucketId, previewKey ?? ""), signal),
     enabled: previewKey !== null && kind === "text",
   });
   const deleteError = removeObject.error instanceof Error ? removeObject.error.message : null;
