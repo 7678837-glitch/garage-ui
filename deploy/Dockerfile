@@ -6,11 +6,13 @@ COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
-RUN bun run build
+# The image embeds the Vite bundle. `bun run build` also typechecks tests, which this image does not ship.
+RUN bunx vite build
 
 FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS build
+# aws-lc-sys invokes cmake. The pinned rust image does not ship it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends musl-tools \
+    && apt-get install -y --no-install-recommends musl-tools cmake \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock VERSION ./
