@@ -350,6 +350,14 @@ struct StatusRole<'a> {
     tags: Option<&'a [u8]>,
 }
 
+pub(crate) async fn layout_history(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    read_cluster(&app, &current, &headers, "v2/GetClusterLayoutHistory").await
+}
+
 pub(crate) async fn preview_layout(
     State(app): State<App>,
     Authed(current): Authed,
