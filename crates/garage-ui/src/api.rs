@@ -85,6 +85,7 @@ pub fn routes(app: App) -> Router<App> {
             get(object_metadata).delete(delete_bucket_object),
         )
         .route("/api/buckets/{id}/search", get(search_bucket_objects))
+        .route("/api/buckets/{id}/inspect/{*key}", get(inspect_object))
         .route("/api/keys", get(list_keys).post(create_key))
         .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
         .route("/api/keys/{id}/secret", post(key_secret))
@@ -2305,6 +2306,31 @@ async fn search_bucket_objects(
     )
     .await?;
     Ok(Json(page))
+}
+
+async fn inspect_object(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::InspectObject)?;
+    let query = format!(
+        "bucketId={}&key={}",
+        percent_encode(&id),
+        percent_encode(&key)
+    );
+    proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/InspectObject",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -6270,6 +6296,70 @@ mod tests {
         let anonymous = exchange(
             &garage_less,
             request("GET", "/api/nodes/a%26b%3Dc/statistics", None, None),
+        )
+        .await;
+        assert_error(
+            &anonymous,
+            StatusCode::UNAUTHORIZED,
+            "unauthenticated",
+            "Login required",
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_object_returns_the_garage_body() {
+        let body = r#"{ "blocks" : 2 }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        assert_cluster_get(
+            &cluster_calls(&mock, "InspectObject"),
+            "/v2/InspectObject?bucketId=a%26b%3Dc&key=photos%2Fa%3Db",
+        );
+    }
+
+    #[tokio::test]
+    async fn viewer_cannot_inspect_an_object() {
+        let mock = Upstream::start(UpstreamReply::Ok(r#"{ "blocks" : 2 }"#.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(mock.hits(), 0);
+        let bare = crate::util::temp_dir();
+        let garage_less = state::test_app(&bare).await;
+        let anonymous = exchange(
+            &garage_less,
+            request(
+                "GET",
+                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                None,
+                None,
+            ),
         )
         .await;
         assert_error(
