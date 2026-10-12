@@ -77,6 +77,111 @@ pub(crate) async fn node_statistics(
     .await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerVariableAssignment {
+    variable: String,
+    value: String,
+}
+
+fn invalid_variable() -> ApiError {
+    ApiError::bad_request("invalid_variable", "variable and value are required")
+}
+
+fn worker_assignment(body: &[u8]) -> Result<WorkerVariableAssignment, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_variable())?;
+    // serde_json accepts a JSON array as a struct, field by field. The request must be an object.
+    if !value.is_object() {
+        return Err(invalid_variable());
+    }
+    serde_json::from_value(value).map_err(|_| invalid_variable())
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WorkerVariableQuery {
+    variable: Option<String>,
+}
+
+pub(crate) async fn put_worker_variable(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::RunOps)?;
+    let assigned = worker_assignment(&body)?;
+    let payload = serde_json::to_vec(&json!({
+        "variable": assigned.variable,
+        "value": assigned.value,
+    }))
+    .map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "SetWorkerVariable",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
+pub(crate) async fn get_worker_variable(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    Query(query): Query<WorkerVariableQuery>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewOps)?;
+    let payload = serde_json::to_vec(&json!({ "variable": query.variable }))
+        .map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "GetWorkerVariable",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
+async fn worker_node(app: &App, response: Response, id: &str) -> Result<Response, ApiError> {
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| ApiError::internal())?;
+    if let Some(node) = value
+        .get("success")
+        .and_then(Value::as_object)
+        .and_then(|nodes| nodes.get(id))
+    {
+        return Ok(Json(node.clone()).into_response());
+    }
+    if let Some(message) = value
+        .get("error")
+        .and_then(Value::as_object)
+        .and_then(|nodes| nodes.get(id))
+        .and_then(Value::as_str)
+    {
+        return Ok((
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "code": "garage_error", "message": message })),
+        )
+            .into_response());
+    }
+    Err(ApiError::internal())
+}
+
 pub(crate) async fn connect_cluster(
     State(app): State<App>,
     Authed(current): Authed,
@@ -209,7 +314,7 @@ fn unreadable_status() -> ApiError {
     )
 }
 
-// role.capacity 超过 2^53-1 时，serde_json 的数字会改掉字节。这里只抄数字字符。
+// serde_json rewrites a number past 2^53-1, so copy the digit characters.
 fn status_roles(input: &[u8]) -> Result<Vec<StatusRole<'_>>, ApiError> {
     let mut cursor = JsonCursor::new(input);
     if !cursor.eat(b'{') {

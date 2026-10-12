@@ -63,7 +63,9 @@ pub(crate) use cluster::cluster_statistics;
 pub(crate) use cluster::cluster_status;
 pub(crate) use cluster::connect_cluster;
 pub(crate) use cluster::garage;
+pub(crate) use cluster::get_worker_variable;
 pub(crate) use cluster::node_statistics;
+pub(crate) use cluster::put_worker_variable;
 pub(crate) use cluster::stage_layout;
 pub(crate) use keys::create_key;
 pub(crate) use keys::delete_key;
@@ -196,6 +198,10 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/cluster/status", get(cluster_status))
         .route("/api/cluster/statistics", get(cluster_statistics))
         .route("/api/nodes/{id}/statistics", get(node_statistics))
+        .route(
+            "/api/nodes/{id}/worker-variables",
+            get(get_worker_variable).put(put_worker_variable),
+        )
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
@@ -1324,6 +1330,7 @@ mod tests {
     enum UpstreamReply {
         Ok(String),
         Fixed(&'static str, String),
+        WorkerVariables,
     }
 
     impl Upstream {
@@ -1382,9 +1389,29 @@ mod tests {
                 r#"{"garageVersion":"v2.3.0"}"#.to_string(),
             );
         }
+        if let UpstreamReply::WorkerVariables = reply {
+            if line.contains("/v2/SetWorkerVariable?") {
+                return (
+                    "200 OK".to_string(),
+                    r#"{"success":{"n1":{"variable":"scrub_tranquility","value":"3"}},"error":{"gone":"down"}}"#
+                        .to_string(),
+                );
+            }
+            if line.contains("/v2/GetWorkerVariable?") {
+                return (
+                    "200 OK".to_string(),
+                    r#"{"success":{"n1":{"scrub_tranquility":"3"}},"error":{"gone":"down"}}"#
+                        .to_string(),
+                );
+            }
+        }
         match reply {
             UpstreamReply::Ok(body) => ("200 OK".to_string(), body.clone()),
             UpstreamReply::Fixed(status, body) => ((*status).to_string(), body.clone()),
+            UpstreamReply::WorkerVariables => (
+                "500 Internal Server Error".to_string(),
+                r#"{"error":"unexpected worker call"}"#.to_string(),
+            ),
         }
     }
 
@@ -4134,6 +4161,177 @@ mod tests {
             "unauthenticated",
             "Login required",
         );
+    }
+
+    fn assert_worker_post(calls: &[UpstreamCall], path: &str, body: Value) {
+        assert_eq!(
+            calls.len(),
+            1,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(calls[0].line.starts_with("POST "), "{}", calls[0].line);
+        let target = calls[0].line.split_whitespace().nth(1).unwrap_or("");
+        assert_eq!(target, path, "{}", calls[0].line);
+        assert_eq!(
+            serde_json::from_str::<Value>(&calls[0].body).unwrap(),
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn set_worker_variable_reads_back_the_new_value() {
+        let mock = Upstream::start(UpstreamReply::WorkerVariables).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let sent = r#"{"variable":"scrub_tranquility","value":"3"}"#;
+        let put = exchange(
+            &app,
+            with_confirm(request(
+                "PUT",
+                "/api/nodes/n1/worker-variables",
+                Some(sent),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(put.status, StatusCode::OK, "{}", put.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&put.body).unwrap(),
+            json!({ "variable": "scrub_tranquility", "value": "3" })
+        );
+        assert_worker_post(
+            &cluster_calls(&mock, "SetWorkerVariable"),
+            "/v2/SetWorkerVariable?node=n1",
+            json!({ "variable": "scrub_tranquility", "value": "3" }),
+        );
+
+        let got = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/n1/worker-variables?variable=scrub_tranquility",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(got.status, StatusCode::OK, "{}", got.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&got.body).unwrap(),
+            json!({ "scrub_tranquility": "3" })
+        );
+        assert_worker_post(
+            &cluster_calls(&mock, "GetWorkerVariable"),
+            "/v2/GetWorkerVariable?node=n1",
+            json!({ "variable": "scrub_tranquility" }),
+        );
+
+        let listed = exchange(
+            &app,
+            request("GET", "/api/nodes/n1/worker-variables", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+        let gets = cluster_calls(&mock, "GetWorkerVariable");
+        assert_eq!(
+            gets.len(),
+            2,
+            "{:?}",
+            gets.iter().map(|call| call.line.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&gets[1].body).unwrap(),
+            json!({ "variable": null })
+        );
+
+        let sets_before_reject = cluster_calls(&mock, "SetWorkerVariable").len();
+        for body in [
+            r#"{"variable":"scrub_tranquility"}"#,
+            r#"{"variable":"scrub_tranquility","value":"3","extra":true}"#,
+            r#"{"variable":"scrub_tranquility","value":3}"#,
+            r#"["scrub_tranquility","3"]"#,
+            "null",
+            "[]",
+            r#""scrub_tranquility""#,
+        ] {
+            let rejected = exchange(
+                &app,
+                request(
+                    "PUT",
+                    "/api/nodes/n1/worker-variables",
+                    Some(body),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_eq!(
+                rejected.status,
+                StatusCode::BAD_REQUEST,
+                "{body} -> {}",
+                rejected.body
+            );
+            assert_error(
+                &rejected,
+                StatusCode::BAD_REQUEST,
+                "invalid_variable",
+                "variable and value are required",
+            );
+        }
+        assert_eq!(
+            cluster_calls(&mock, "SetWorkerVariable").len(),
+            sets_before_reject
+        );
+
+        let viewer = viewer_session(&app, &admin).await;
+        let denied = exchange(
+            &app,
+            with_confirm(request(
+                "PUT",
+                "/api/nodes/n1/worker-variables",
+                Some(sent),
+                Some(&viewer),
+            )),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            cluster_calls(&mock, "SetWorkerVariable").len(),
+            sets_before_reject
+        );
+        let viewer_get = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/n1/worker-variables?variable=scrub_tranquility",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(
+            &viewer_get,
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Not allowed",
+        );
+        assert_eq!(cluster_calls(&mock, "GetWorkerVariable").len(), 2);
+
+        let gone = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/gone/worker-variables?variable=scrub_tranquility",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(&gone, StatusCode::BAD_GATEWAY, "garage_error", "down");
     }
 
     #[tokio::test]
