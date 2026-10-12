@@ -8117,6 +8117,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thumbnail_response_write_once_after_head_object_fails() {
+        let mock = S3Mock::start(|_| head_missing()).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        let seen = mock.requests();
+        assert!(
+            seen.iter().any(|line| line.starts_with("HEAD ")),
+            "HeadObject was not called: {seen:?}"
+        );
+        assert_eq!(object_key_of(&seen[0]), "photo.png");
+        assert_eq!(response.status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.body,
+            r#"{"code":"not_found","message":"Not found"}"#
+        );
+    }
+
+    #[tokio::test]
     async fn admin_token_list_hides_the_secret_and_marks_a_null_id() {
         let secret = "fixture-not-a-token";
         let garage = json!([
