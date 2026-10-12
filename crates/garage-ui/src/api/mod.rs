@@ -68,6 +68,7 @@ pub(crate) use cluster::node_statistics;
 pub(crate) use cluster::post_purge_blocks;
 pub(crate) use cluster::post_repair;
 pub(crate) use cluster::put_worker_variable;
+pub(crate) use cluster::preview_layout;
 pub(crate) use cluster::stage_layout;
 pub(crate) use keys::create_key;
 pub(crate) use keys::delete_key;
@@ -207,6 +208,7 @@ pub fn routes(app: App) -> Router<App> {
         .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
         .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
+        .route("/api/layout/preview", post(preview_layout))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
@@ -4879,6 +4881,76 @@ mod tests {
         assert!(body.contains("edit-node"), "{body}");
         assert!(!body.contains("1800000000000"), "{body}");
         assert!(!body.contains("keep-node"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn preview_layout_returns_the_garage_body() {
+        let body = r#"{ "stagedRoleChanges" : [ "n1" ] }"#;
+        let mock = Upstream::start(UpstreamReply::Ok(body.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("POST", "/api/layout/preview", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(response.body, body);
+        let previews = cluster_calls(&mock, "PreviewClusterLayoutChanges");
+        assert_cluster_get(&previews, "/v2/PreviewClusterLayoutChanges");
+        assert!(
+            previews[0]
+                .line
+                .starts_with("POST /v2/PreviewClusterLayoutChanges "),
+            "{}",
+            previews[0].line
+        );
+
+        let failed = r#"{"message":"layout preview failed"}"#.to_string();
+        let failed_mock =
+            Upstream::start(UpstreamReply::Fixed("409 Conflict", failed.clone())).await;
+        let failed_dir = crate::util::temp_dir();
+        let failed_app = app_for(&failed_dir, &failed_mock.url).await;
+        let (failed_admin, _) = login(&failed_app).await;
+        let conflict = exchange(
+            &failed_app,
+            request(
+                "POST",
+                "/api/layout/preview",
+                None,
+                Some(&failed_admin),
+            ),
+        )
+        .await;
+        assert_eq!(conflict.status, StatusCode::CONFLICT, "{}", conflict.body);
+        assert_eq!(conflict.body, failed);
+        let failed_calls = cluster_calls(&failed_mock, "PreviewClusterLayoutChanges");
+        assert_cluster_get(&failed_calls, "/v2/PreviewClusterLayoutChanges");
+        assert!(
+            failed_calls[0]
+                .line
+                .starts_with("POST /v2/PreviewClusterLayoutChanges "),
+            "{}",
+            failed_calls[0].line
+        );
+
+        let viewer = viewer_session(&app, &admin).await;
+        let rows_before = crate::db::recent_audit(&app.db).await.unwrap();
+        let denied = exchange(
+            &app,
+            request("POST", "/api/layout/preview", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(
+            cluster_calls(&mock, "PreviewClusterLayoutChanges").len(),
+            previews.len()
+        );
+        assert_eq!(
+            crate::db::recent_audit(&app.db).await.unwrap().len(),
+            rows_before.len()
+        );
     }
 
     struct InfoSocket {
