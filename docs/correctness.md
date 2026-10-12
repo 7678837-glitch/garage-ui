@@ -1,100 +1,100 @@
-# 正确性要求
+# Correctness requirements
 
-每项格式：需求 / 验收标准。默认优先级 P1，标注者除外。
+Each item states the requirement, then the acceptance criteria. The default priority is P1, except where an item is marked otherwise.
 
-## 4.1 按桶 ID 访问，不依赖全局别名（P0）
+## 4.1 Address buckets by bucket ID, not by a global alias (P0)
 
-- 需求：所有桶相关接口（详情、浏览、上传、删除、分享、权限）以 Garage 桶 ID 寻址；别名只用于展示。只有本地别名或没有任何全局别名的桶也必须能完整操作。
+- Requirement: Every bucket API (detail, browse, upload, delete, share, permissions) addresses the bucket by its Garage bucket ID. An alias is for display only. A bucket that has only a local alias, or no global alias at all, must still support the full set of operations.
 
-验收：创建一个仅有本地别名的桶，可浏览、上传、删除；别名包含 `&` 或 `=` 时不影响操作。
+Acceptance: Create a bucket that has only a local alias. Browse, upload, and delete succeed. An alias that contains `&` or `=` does not affect the operation.
 
-## 4.2 凭证缓存与权限撤销及时生效
+## 4.2 Credential cache and permission revocation take effect promptly
 
-需求：
+Requirement:
 
-1. 浏览对象所用的 S3 凭据优先使用为本项目专设的 key（可配置），没有时才由管理员为桶显式选择，不再隐式选取任意一个读写 key。
-2. 查不到可用凭据时不缓存空结果，直接返回明确错误（412 并提示「该桶没有可用的读写密钥」）。
-3. 凭据缓存 TTL 不超过 60 秒；本项目内执行 `AllowBucketKey`、`DenyBucketKey`、`DeleteKey`、`UpdateKey` 后立即清除相关缓存。
-4. S3 返回 403 时清除缓存并重试一次。
+1. The S3 credentials used to browse objects prefer a key reserved for this project (configurable). Only when that key is absent does an administrator explicitly choose one for the bucket. The product no longer implicitly picks an arbitrary read-write key.
+2. When no usable credential can be found, do not cache an empty result. Return a clear error at once (412, with the message "This bucket has no usable read-write key").
+3. The credential-cache TTL is at most 60 seconds. After this project runs `AllowBucketKey`, `DenyBucketKey`, `DeleteKey`, or `UpdateKey`, clear the related cache immediately.
+4. When S3 returns 403, clear the cache and retry once.
 
-验收：撤销 key 后下一次浏览不再使用该 key；先无 key 后授权，立即可浏览。
+Acceptance: After a key is revoked, the next browse does not use that key. Grant access when there was no key, and browse works immediately.
 
-## 4.3 递归删除分页删完（P0）
+## 4.3 Recursive delete pages until every object is deleted (P0)
 
-- 需求：删除「文件夹」时分页列出前缀下全部对象（每页最多 1000），按批调用批量删除，直到列完。返回已删除数与逐条错误列表（错误列表恒为数组）。部分失败时返回 207 或 200 加错误明细，不得报「全部成功」。
+- Requirement: When deleting a "folder", list every object under the prefix, one page at a time (at most 1000 per page), and call batch delete in batches until the listing is finished. Return the deleted count and a per-object error list (the error list is always an array). On a partial failure, return 207, or 200 plus the error details. Do not report "all succeeded".
 
-验收：前缀下 2500 个对象全部被删除，返回 `deleted=2500`；注入其中 3 个失败时，返回 3 条错误。
+Acceptance: All 2500 objects under the prefix are deleted, and the response is `deleted=2500`. When 3 of those objects are injected as failures, the response contains 3 errors.
 
-## 4.4 容量精度（P0）
+## 4.4 Capacity precision (P0)
 
-- 需求：节点容量以字节为内部单位，显示时按用户选择的单位保留至少两位小数；编辑表单回写时不得四舍五入或向下取整到整数单位。未改动容量的节点不得被重写。
+- Requirement: Node capacity uses bytes as the internal unit. Display it in the unit the user chose, with at least two decimal places. When the edit form writes the value back, do not round half up and do not floor it to an integer unit. A node whose capacity was not changed must not be rewritten.
 
-验收：1.8 TB 节点打开编辑后不做修改保存，提交给 `UpdateClusterLayout` 的 `capacity` 与原值逐字节相等。
+Acceptance: Open the editor for a 1.8 TB node, save with no changes, and the `capacity` submitted to `UpdateClusterLayout` is byte-for-byte equal to the original value.
 
-## 4.5 对象 key 做 URL 编码
+## 4.5 URL-encode object keys
 
-- 需求：前端构造路径时按段编码 key；后端解码后原样传给 S3；下载文件名按 RFC 5987 编码写入 `Content-Disposition`。文件夹名只禁止控制字符和 `/`，允许 `=`、`#`、`?`、`%`、空格和非 ASCII。
+- Requirement: When the frontend builds a path, encode the key by segment. The backend decodes it and passes the original value to S3. Write the download filename into `Content-Disposition` with RFC 5987 encoding. A folder name forbids only control characters and `/`. `=`, `#`, `?`, `%`, spaces, and non-ASCII characters are allowed.
 
-验收：名为 `a?b#c%20d=e` 和中文名的对象可浏览、预览、下载、删除、分享。
+Acceptance: Objects named `a?b#c%20d=e` and 中文名 can be browsed, previewed, downloaded, deleted, and shared.
 
-## 4.6 分配密钥时做校验
+## 4.6 Validate when assigning a key
 
-- 需求：授权对话框未选择任何 key 或未勾选任何权限时，提交按钮不可用；请求失败时显示错误，不得提示成功。
+- Requirement: In the grant dialog, the submit button is disabled when no key is selected or no permission is checked. When the request fails, show the error. Do not report success.
 
-验收：前端组件测试覆盖「空选择」「接口失败」两种情况。
+Acceptance: Frontend component tests cover both "empty selection" and "request failure".
 
-## 4.7 请求出错后不再写成功响应
+## 4.7 Do not write a success response after a request error
 
-- 需求：所有处理函数在写出错误响应后立即结束，不得再写状态码或拼接响应体。统一使用一个响应工具，重复写入时在测试模式下直接失败。
+- Requirement: Every handler stops immediately after it writes an error response. It must not write a status code again or append to the response body. Use one response helper. A repeated write fails immediately in test mode.
 
-验收：`HeadObject` 失败时响应体只有错误 JSON，日志中无重复写入告警。
+Acceptance: When `HeadObject` fails, the response body contains only the error JSON, and the log has no duplicate-write warning.
 
-## 4.8 保留真实状态码
+## 4.8 Preserve the real status code
 
-- 需求：Garage 或 S3 返回非 JSON 错误体时，透传其原始状态码，并把文本内容截断放进统一错误结构；对象不存在返回 404 而非 500。
+- Requirement: When Garage or S3 returns a non-JSON error body, pass through the original status code and place the truncated text in the unified error structure. A missing object returns 404, not 500.
 
-验收：Garage 返回 403 纯文本时本项目返回 403；HEAD 不存在对象返回 404。
+Acceptance: When Garage returns 403 as plain text, this project returns 403. HEAD of a missing object returns 404.
 
-## 4.9 端点 URL 结尾斜杠
+## 4.9 Trailing slash on endpoint URLs
 
-- 需求：`API_BASE_URL`、`S3_ENDPOINT_URL`、`S3_PUBLIC_ENDPOINT_URL` 解析时去掉末尾斜杠，拼接路径统一用 URL 拼接函数；仅含斜杠的值视为未设置。
+- Requirement: When parsing `API_BASE_URL`, `S3_ENDPOINT_URL`, and `S3_PUBLIC_ENDPOINT_URL`, strip a trailing slash. Join paths with a URL join function. A value that contains only slashes counts as unset.
 
-验收：配置值带与不带末尾斜杠，请求的目标地址一致。
+Acceptance: With and without a trailing slash on the configured value, the request targets the same address.
 
-## 4.10 上传临时文件处理
+## 4.10 Handling of upload temporary files
 
-- 需求：上传默认流式转发到 S3，不落临时文件；必须落盘时只写入可配置的临时目录（镜像内为 `/data/tmp` 或挂载的 tmpfs），请求结束无论成败都删除。大文件使用 S3 分片上传，失败时中止分片。
+- Requirement: An upload streams to S3 by default and does not land in a temporary file. When it must be written to disk, write it only in the configurable temporary directory (`/data/tmp` inside the image, or a mounted tmpfs). Delete it when the request ends, on success or on failure. A large file uses S3 multipart upload. Abort the multipart upload on failure.
 
-验收：将上传上限配置为不小于 3 GB 时，在根文件系统只读的容器中上传 2 GB 文件成功；中途断开后无残留临时文件和未完成分片（或在「未完成上传」中可见并可清理）。
+Acceptance: With the upload limit set to at least 3 GB, a 2 GB upload succeeds in a container whose root filesystem is read-only. After a disconnect midway, no temporary file and no incomplete multipart upload remain (or the incomplete upload is visible under "incomplete uploads" and can be cleaned up).
 
-## 4.11 并发上限
+## 4.11 Concurrency cap
 
-- 需求：所有对 Garage 的扇出调用（每桶详情、每节点信息）使用有界并发，默认 8，可配置；前端上传队列默认并发 3。
+- Requirement: Every fan-out call to Garage (per-bucket detail, per-node info) uses bounded concurrency. The default is 8, and it is configurable. The frontend upload queue defaults to 3 concurrent uploads.
 
-验收：1000 个桶时同时在途的 `GetBucketInfo` 请求不超过 8。
+Acceptance: With 1000 buckets, at most 8 `GetBucketInfo` requests are in flight at the same time.
 
-## 4.12 BASE_PATH 处理
+## 4.12 BASE_PATH handling
 
-- 需求：子路径部署通过构建产物使用相对资源路径并由服务端注入 base 元信息实现，不对 JS 文本做字符串替换；`BASE_PATH` 规范化为以 `/` 开头、不以 `/` 结尾；访问根路径时 301 跳到 `BASE_PATH`；cookie `Path` 跟随。注入结果在启动时计算一次。
+- Requirement: A subpath deployment uses relative asset paths in the build output, and the server injects the base metadata. Do not replace strings inside JS text. Normalize `BASE_PATH` so that it starts with `/` and does not end with `/`. A request to the root path returns 301 to `BASE_PATH`. The cookie `Path` follows `BASE_PATH`. Compute the injected value once at startup.
 
-验收：`BASE_PATH=/admin` 与空值两种部署下，刷新任意深层路由均能加载；静态资源无 404。
+Acceptance: Under both `BASE_PATH=/admin` and an empty value, refreshing any deep route loads, and no static asset returns 404.
 
-## 4.13 读取密钥文件时去掉换行
+## 4.13 Strip newlines when reading a secret file
 
-- 需求：所有敏感配置支持 `*_FILE` 变体（`API_ADMIN_KEY_FILE`、`METRICS_TOKEN_FILE`、S3 凭据文件等），`_FILE` 优先；读取后去掉末尾的 CR/LF，保留中间内容；启动时读取一次；读取失败报错只含路径，不打印内容。
+- Requirement: Every sensitive setting supports a `*_FILE` variant (`API_ADMIN_KEY_FILE`, `METRICS_TOKEN_FILE`, S3 credential files, and the same pattern for the other sensitive settings). The `_FILE` variant takes priority. After a read, strip trailing CR/LF and keep the content in the middle. Read once at startup. On a read failure, the error includes only the path and does not print the contents.
 
-验收：文件末尾带 CRLF 时 Bearer 头正确；文件不存在时启动报错且信息中无密钥。
+Acceptance: When the file ends with CRLF, the Bearer header is correct. When the file does not exist, startup fails and the error text contains no secret.
 
-## 4.14 更新源可配置
+## 4.14 The update source is configurable
 
-- 需求：更新检查默认关闭；检查地址与发布签名公钥都由配置或构建参数指定，属于本项目自己的发布源；未配置时功能隐藏。
+- Requirement: The update check is off by default. Configuration or build parameters set both the check address and the release-signing public key. They belong to this project's own release source. When they are not configured, hide the feature.
 
-验收：未配置更新源时不产生任何对外请求。
+Acceptance: When no update source is configured, the product makes no outbound request.
 
-## 4.15 其他
+## 4.15 Other
 
-- 配置文件解析失败与文件缺失行为一致：都记录警告并回退到环境变量，必需项缺失时给出明确启动错误，不直接崩溃退出。
-- 鉴权状态接口如实返回是否已登录，不得恒为真。
-- 缩略图声明的 `Content-Type` 与实际编码一致。
-- S3 端点与区域优先读配置；Garage 提供 `GetNodeInfo.connectionParameters` 时（main-v2 能力探测）可用于自动填充。
-- 使用 `aws-sdk-s3` 当前推荐的端点配置方式，消除弃用告警。
+- A config file that fails to parse behaves the same as a missing file. Both cases log a warning and fall back to environment variables. When a required item is missing, report a clear startup error. Do not exit by crashing.
+- The auth-status API returns whether the caller is logged in. It must not be constantly true.
+- The `Content-Type` a thumbnail declares matches the actual encoding.
+- Read the S3 endpoint and region from configuration first. When Garage provides `GetNodeInfo.connectionParameters` (the main-v2 capability probe), that value may fill them in.
+- Use the endpoint configuration that `aws-sdk-s3` currently recommends, so the deprecation warning is gone.
