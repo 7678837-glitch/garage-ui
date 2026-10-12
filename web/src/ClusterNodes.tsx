@@ -19,8 +19,18 @@ const HIDDEN = new Set([
 const UNAVAILABLE = "Nodes are unavailable";
 const CONNECT_FAILED = "Connection failed";
 const PREVIEW_FAILED = "Layout preview failed";
+const HISTORY_FAILED = "Layout history failed";
 
 type LayoutPreview = { phase: "idle" } | { phase: "ready" } | { phase: "failed"; message: string };
+
+type LayoutVersionRow = { version: number; status: string };
+
+type LayoutTrackerRow = { id: string; ack: number; sync: number; syncAck: number };
+
+type LayoutHistory =
+  | { phase: "idle" }
+  | { phase: "ready"; versions: LayoutVersionRow[]; trackers: LayoutTrackerRow[] }
+  | { phase: "failed"; message: string };
 
 function csrfToken(): string {
   const found = document.cookie
@@ -60,6 +70,95 @@ async function previewLayout(): Promise<LayoutPreview> {
     return { phase: "ready" };
   }
   return { phase: "failed", message: await previewFailureMessage(response) };
+}
+
+function historyMessage(parsed: unknown): string {
+  if (typeof parsed !== "object" || parsed === null) {
+    return HISTORY_FAILED;
+  }
+  const message = (parsed as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return HISTORY_FAILED;
+  }
+  return message;
+}
+
+function integerOf(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return null;
+  }
+  return value;
+}
+
+function versionRows(value: unknown): LayoutVersionRow[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const rows: LayoutVersionRow[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const version = integerOf((item as { version?: unknown }).version);
+    const status = (item as { status?: unknown }).status;
+    if (version === null || typeof status !== "string") {
+      continue;
+    }
+    rows.push({ version, status });
+  }
+  return rows;
+}
+
+function trackerRows(value: unknown): LayoutTrackerRow[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  const rows: LayoutTrackerRow[] = [];
+  for (const [id, tracker] of Object.entries(value)) {
+    if (typeof tracker !== "object" || tracker === null) {
+      continue;
+    }
+    const ack = integerOf((tracker as { ack?: unknown }).ack);
+    const sync = integerOf((tracker as { sync?: unknown }).sync);
+    const syncAck = integerOf((tracker as { syncAck?: unknown }).syncAck);
+    if (ack === null || sync === null || syncAck === null) {
+      continue;
+    }
+    rows.push({ id, ack, sync, syncAck });
+  }
+  return rows;
+}
+
+function layoutHistoryFrom(parsed: unknown): LayoutHistory {
+  if (typeof parsed !== "object" || parsed === null) {
+    return { phase: "failed", message: HISTORY_FAILED };
+  }
+  const versions = versionRows((parsed as { versions?: unknown }).versions);
+  if (versions === null) {
+    return { phase: "failed", message: historyMessage(parsed) };
+  }
+  return {
+    phase: "ready",
+    versions,
+    trackers: trackerRows((parsed as { updateTrackers?: unknown }).updateTrackers),
+  };
+}
+
+async function loadLayoutHistory(): Promise<LayoutHistory> {
+  const response = await fetch("/api/layout/history", {
+    method: "GET",
+    credentials: "include",
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await response.text()) as unknown;
+  } catch {
+    return { phase: "failed", message: HISTORY_FAILED };
+  }
+  if (!response.ok) {
+    return { phase: "failed", message: historyMessage(parsed) };
+  }
+  return layoutHistoryFrom(parsed);
 }
 
 type NodeLine = {
@@ -540,6 +639,7 @@ export function ClusterNodes() {
   });
   const [query, setQuery] = useState(readNodeQuery);
   const [layoutPreview, setLayoutPreview] = useState<LayoutPreview>({ phase: "idle" });
+  const [layoutHistory, setLayoutHistory] = useState<LayoutHistory>({ phase: "idle" });
   useEffect(() => {
     const sync = () => setQuery(readNodeQuery());
     window.addEventListener("popstate", sync);
@@ -583,7 +683,39 @@ export function ClusterNodes() {
         >
           Apply layout
         </button>
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          onClick={() => {
+            void loadLayoutHistory().then(setLayoutHistory);
+          }}
+        >
+          Layout history
+        </button>
         {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
+        {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
+        {layoutHistory.phase === "ready" ? (
+          <>
+            <ul>
+              {layoutHistory.versions.map((row, index) => (
+                <li key={index}>
+                  <p>{row.version}</p>
+                  <p>{row.status}</p>
+                </li>
+              ))}
+            </ul>
+            <ul>
+              {layoutHistory.trackers.map((row) => (
+                <li key={row.id}>
+                  <p>{row.id}</p>
+                  <p>{row.ack}</p>
+                  <p>{row.sync}</p>
+                  <p>{row.syncAck}</p>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
       </div>
       <form className="grid gap-3" onSubmit={submit}>
         <label className="block">
