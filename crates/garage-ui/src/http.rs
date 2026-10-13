@@ -460,14 +460,22 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get("x-request-id").unwrap(), "req-1");
-        assert!(
+        let csp = response
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert_eq!(
             response
                 .headers()
-                .get("content-security-policy")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .contains("default-src 'self'")
+                .get_all("content-security-policy")
+                .iter()
+                .count(),
+            1
         );
         assert_eq!(
             response.headers().get("x-content-type-options").unwrap(),
