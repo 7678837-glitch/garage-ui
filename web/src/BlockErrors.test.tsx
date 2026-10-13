@@ -58,6 +58,23 @@ function stubAdminBlockErrors() {
           { status: 200 },
         );
       }
+      if (url === "/api/nodes/n1/blocks/aa11") {
+        return new Response(
+          JSON.stringify({
+            blockHash: "aa11",
+            refcount: 2,
+            versions: [
+              {
+                versionId: "v1",
+                refDeleted: false,
+                versionDeleted: false,
+                garbageCollected: true,
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
       return new Response("no", { status: 500 });
     }),
   );
@@ -146,5 +163,34 @@ test("clicking Purge aa11 posts that one hash after the operator types it", asyn
       { url: "/api/nodes/n1/blocks/purge", body: ["aa11"], confirm: "yes" },
     ]);
   });
+  expect(window.location.hash).toBe("#block-errors/n1");
+});
+
+function infoGets(): string[] {
+  return vi.mocked(fetch).mock.calls.flatMap(([input, init]) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method !== "GET" || url !== "/api/nodes/n1/blocks/aa11") {
+      return [];
+    }
+    return [url];
+  });
+}
+
+test("clicking Info aa11 shows version v1 for that node", async () => {
+  window.location.hash = "#block-errors/n1";
+  stubAdminBlockErrors();
+  renderApp();
+  const info = await screen.findByRole("button", { name: "Info aa11" });
+  expect(infoGets()).toEqual([]);
+  fireEvent.click(info);
+  expect(await screen.findByText("v1")).toBeTruthy();
+  expect(
+    screen
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent)
+      .filter((text) => text === "v1" || text === "no" || text === "yes"),
+  ).toEqual(["v1", "no", "no", "yes"]);
+  expect(infoGets()).toEqual(["/api/nodes/n1/blocks/aa11"]);
   expect(window.location.hash).toBe("#block-errors/n1");
 });
