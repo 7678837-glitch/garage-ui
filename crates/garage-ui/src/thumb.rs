@@ -141,9 +141,7 @@ fn encode(bytes: Vec<u8>) -> Option<Made> {
     let image = reader.decode().ok()?;
     let thumb = image.thumbnail(THUMB_EDGE, THUMB_EDGE);
     let mut encoded = Vec::new();
-    thumb
-        .write_to(Cursor::new(&mut encoded), format)
-        .ok()?;
+    thumb.write_to(Cursor::new(&mut encoded), format).ok()?;
     if encoded.is_empty() {
         return None;
     }
@@ -206,7 +204,10 @@ fn image_response(made: Made) -> Response {
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static("sandbox; frame-ancestors 'self'"),
     );
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),

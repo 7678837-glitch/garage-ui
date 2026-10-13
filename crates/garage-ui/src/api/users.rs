@@ -1,13 +1,3 @@
-use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
-use serde_json::{Value, json};
-use crate::access::Op;
-use crate::db::{self, User};
-use crate::error::ApiError;
-use crate::state::App;
 use super::Authed;
 use super::PageQuery;
 use super::hash_password;
@@ -17,8 +7,18 @@ use super::record;
 use super::require;
 use super::validate_password;
 use super::validate_username;
+use crate::access::Op;
+use crate::db::{self, User};
+use crate::error::ApiError;
+use crate::state::App;
+use axum::Json;
 use axum::Router;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 #[derive(Deserialize)]
 pub(crate) struct NewUser {

@@ -16,20 +16,18 @@ use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
 use crate::password;
 use crate::proxy;
-use crate::session::{
-    self, Current, client_ip, csrf_exempt, csrf_matches,
-};
+use crate::session::{self, Current, client_ip, csrf_exempt, csrf_matches};
 use crate::state::App;
 
+mod admin_tokens;
+mod audit;
 mod auth;
-mod users;
 mod buckets;
+mod cluster;
 mod keys;
 mod objects;
-mod admin_tokens;
-mod cluster;
+mod users;
 mod workers;
-mod audit;
 pub(crate) use objects::put_bucket_object;
 pub(crate) use objects::upload_object;
 #[path = "../thumb.rs"]

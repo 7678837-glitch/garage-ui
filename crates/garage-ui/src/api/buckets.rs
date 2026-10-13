@@ -1,18 +1,3 @@
-use axum::Json;
-use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::{Value, json};
-use crate::access::Op;
-use crate::db;
-use crate::error::ApiError;
-use crate::objects;
-use crate::proxy;
-use crate::session::Current;
-use crate::state::{self, App};
 use super::Authed;
 use super::PageQuery;
 use super::is_json_ws;
@@ -22,8 +7,23 @@ use super::percent_encode;
 use super::post_garage;
 use super::record;
 use super::require;
+use crate::access::Op;
+use crate::db;
+use crate::error::ApiError;
+use crate::objects;
+use crate::proxy;
+use crate::session::Current;
+use crate::state::{self, App};
+use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::{Value, json};
 
 pub(crate) async fn list_buckets(
     State(app): State<App>,
@@ -196,10 +196,8 @@ pub(crate) async fn put_bucket_credential(
     db::set_bucket_key(&app.db, &id, &body.access_key_id)
         .await
         .map_err(|_| ApiError::internal())?;
-    app.clear_credential_cache(&state::credentials::KeyMutation::AllowBucketKey {
-        bucket_id: id,
-    })
-    .await;
+    app.clear_credential_cache(&state::credentials::KeyMutation::AllowBucketKey { bucket_id: id })
+        .await;
     Ok(Json(json!({ "access_key_id": body.access_key_id })))
 }
 
@@ -986,10 +984,7 @@ pub(crate) fn routes() -> Router<App> {
             "/api/buckets/{id}/multipart",
             get(list_multipart_uploads).delete(abort_multipart_uploads),
         )
-        .route(
-            "/api/buckets/{id}/cleanup-uploads",
-            post(cleanup_uploads),
-        )
+        .route("/api/buckets/{id}/cleanup-uploads", post(cleanup_uploads))
         .route("/api/buckets/{id}/credential", put(put_bucket_credential))
         .route(
             "/api/buckets/{id}/permissions",

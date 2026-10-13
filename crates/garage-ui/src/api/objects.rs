@@ -19,6 +19,7 @@ use crate::session::Current;
 use crate::state::App;
 use crate::util::{self, hex_encode, random_bytes};
 use axum::Json;
+use axum::Router;
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
@@ -27,7 +28,6 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
-use axum::Router;
 
 #[derive(Deserialize)]
 pub(crate) struct NameQuery {

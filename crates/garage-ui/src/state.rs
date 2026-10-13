@@ -155,14 +155,19 @@ impl App {
         tokio::task::spawn_blocking(move || {
             let runtime = s3_runtime();
             let mut guard = cache.blocking_lock();
-            guard.read(&bucket_id, now, || load.clone(), |credential| {
-                let (sender, receiver) = std::sync::mpsc::channel();
-                let pending = operation(credential.clone());
-                runtime.spawn(async move {
-                    let _ = sender.send(pending.await);
-                });
-                receiver.recv().expect("s3 runtime")
-            })
+            guard.read(
+                &bucket_id,
+                now,
+                || load.clone(),
+                |credential| {
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    let pending = operation(credential.clone());
+                    runtime.spawn(async move {
+                        let _ = sender.send(pending.await);
+                    });
+                    receiver.recv().expect("s3 runtime")
+                },
+            )
         })
         .await
         .expect("credential read")
@@ -358,11 +363,19 @@ pub async fn boot() -> anyhow::Result<App> {
 }
 
 pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result<App> {
-    std::fs::create_dir_all(&loaded.settings.data_dir)
-        .map_err(|_| anyhow::anyhow!("data directory is not writable: {}", loaded.settings.data_dir.display()))?;
+    std::fs::create_dir_all(&loaded.settings.data_dir).map_err(|_| {
+        anyhow::anyhow!(
+            "data directory is not writable: {}",
+            loaded.settings.data_dir.display()
+        )
+    })?;
     let probe = loaded.settings.data_dir.join(".write-probe");
-    std::fs::write(&probe, b"")
-        .map_err(|_| anyhow::anyhow!("data directory is not writable: {}", loaded.settings.data_dir.display()))?;
+    std::fs::write(&probe, b"").map_err(|_| {
+        anyhow::anyhow!(
+            "data directory is not writable: {}",
+            loaded.settings.data_dir.display()
+        )
+    })?;
     let _ = std::fs::remove_file(&probe);
     let key_bytes = load_session_key(&loaded.settings.data_dir, loaded.key)?;
     let key_id = hex_encode(&key_bytes[..16]);
@@ -412,7 +425,9 @@ async fn import_bootstrap(
 ) -> anyhow::Result<()> {
     match bootstrap {
         config::Bootstrap::Unset => Ok(()),
-        config::Bootstrap::Half => anyhow::bail!("bootstrap account must be configured as a pair; refusing to start"),
+        config::Bootstrap::Half => {
+            anyhow::bail!("bootstrap account must be configured as a pair; refusing to start")
+        }
         config::Bootstrap::Ready {
             username,
             password_hash,
@@ -425,7 +440,9 @@ async fn import_bootstrap(
             }
             db::insert_user(pool, username, password_hash, "admin", false, false)
                 .await
-                .map_err(|_| anyhow::anyhow!("bootstrap account could not be imported; refusing to start"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("bootstrap account could not be imported; refusing to start")
+                })?;
             Ok(())
         }
     }
@@ -448,7 +465,11 @@ fn load_session_key(dir: &Path, material: KeyMaterial) -> anyhow::Result<Vec<u8>
 fn read_or_create_key(path: &Path) -> anyhow::Result<Vec<u8>> {
     if path.exists() {
         let bytes = std::fs::read(path).map_err(|error| {
-            anyhow::anyhow!("failed to read key file: {}: {}", path.display(), error.kind())
+            anyhow::anyhow!(
+                "failed to read key file: {}: {}",
+                path.display(),
+                error.kind()
+            )
         })?;
         let bytes = if bytes.len() == 48 {
             bytes
@@ -481,7 +502,11 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .mode(0o600)
         .open(path)
         .map_err(|error| {
-            anyhow::anyhow!("failed to write key file: {}: {}", path.display(), error.kind())
+            anyhow::anyhow!(
+                "failed to write key file: {}: {}",
+                path.display(),
+                error.kind()
+            )
         })?;
     file.write_all(bytes)?;
     file.sync_all()?;

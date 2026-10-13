@@ -1833,11 +1833,7 @@ fn empty_list_http() -> String {
 
 async fn capture_requests(
     response_for: impl Fn(&str) -> String + Send + Sync + 'static,
-) -> (
-    String,
-    Arc<Mutex<Vec<String>>>,
-    tokio::task::JoinHandle<()>,
-) {
+) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -1902,10 +1898,8 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
     const SECRET: &str = "chosen-secret-value";
     const MESSAGE: &str = "This bucket has no usable read-write key";
     let (s3_url, s3_seen, s3_task) = capture_requests(|_| empty_list_http()).await;
-    let (admin_url, admin_task) = serve_json(
-        r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value"}"#,
-    )
-    .await;
+    let (admin_url, admin_task) =
+        serve_json(r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value"}"#).await;
     let dir = crate::util::temp_dir();
     let app = state::test_app_with(
         &dir,
@@ -2005,25 +1999,30 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
         "{captured:?}"
     );
 
-    let access_key_id: String = sqlx::query_scalar(
-        "SELECT access_key_id FROM bucket_keys WHERE bucket_id = 'bkt-1'",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    let access_key_id: String =
+        sqlx::query_scalar("SELECT access_key_id FROM bucket_keys WHERE bucket_id = 'bkt-1'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(access_key_id, "CHOSEN");
     sqlx::query("PRAGMA wal_checkpoint(FULL)")
         .execute(&app.db)
         .await
         .unwrap();
-    for name in ["garage-ui.sqlite", "garage-ui.sqlite-wal", "garage-ui.sqlite-shm"] {
+    for name in [
+        "garage-ui.sqlite",
+        "garage-ui.sqlite-wal",
+        "garage-ui.sqlite-shm",
+    ] {
         let path = dir.join(name);
         if !path.exists() {
             continue;
         }
         let bytes = std::fs::read(&path).unwrap();
         assert!(
-            !bytes.windows(SECRET.len()).any(|window| window == SECRET.as_bytes()),
+            !bytes
+                .windows(SECRET.len())
+                .any(|window| window == SECRET.as_bytes()),
             "{name} stored the key secret"
         );
     }
@@ -2059,9 +2058,9 @@ fn spawn_upstream(listener: Arc<TcpListener>) -> tokio::task::JoinHandle<String>
 #[tokio::test]
 async fn thumbnail_content_type_matches_png_bytes() {
     const PNG: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
-        0, 0, 3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2,
+        0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0,
+        3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
     const SECRET: &str = "project-secret-value";
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2158,7 +2157,8 @@ async fn thumbnail_content_type_matches_png_bytes() {
         .await
         .unwrap();
     assert_eq!(
-        content_type, "image/png",
+        content_type,
+        "image/png",
         "status {status} body {}",
         String::from_utf8_lossy(&bytes[..bytes.len().min(180)])
     );

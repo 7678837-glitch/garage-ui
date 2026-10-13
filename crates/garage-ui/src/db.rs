@@ -509,13 +509,12 @@ pub async fn load_zip(pool: &SqlitePool, id: &str) -> Result<Option<StoredZip>, 
 }
 
 pub async fn claim_zip(pool: &SqlitePool, id: &str, user_id: i64) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
-        "UPDATE zip_tokens SET used = 1 WHERE id = ? AND user_id = ? AND used = 0",
-    )
-    .bind(id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("UPDATE zip_tokens SET used = 1 WHERE id = ? AND user_id = ? AND used = 0")
+            .bind(id)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() == 1)
 }
 

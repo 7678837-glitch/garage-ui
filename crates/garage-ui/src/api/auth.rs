@@ -1,27 +1,25 @@
-use axum::Json;
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::{Value, json};
-use crate::db::{self, User};
-use crate::error::ApiError;
-use crate::password;
-use crate::proxy;
-use crate::session::{
-    self, apply_login_cookies, clear_cookies, cookie,
-};
-use crate::state::App;
-use crate::version;
 use super::Authed;
 use super::ClientIp;
 use super::hash_password;
 use super::record;
 use super::validate_password;
 use super::validate_username;
+use crate::db::{self, User};
+use crate::error::ApiError;
+use crate::password;
+use crate::proxy;
+use crate::session::{self, apply_login_cookies, clear_cookies, cookie};
+use crate::state::App;
+use crate::version;
+use axum::Json;
 use axum::Router;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::{Value, json};
 
 #[derive(Deserialize)]
 pub(crate) struct Credentials {
@@ -203,7 +201,10 @@ pub(crate) async fn login(
     Ok(response)
 }
 
-pub(crate) async fn logout(State(app): State<App>, Authed(current): Authed) -> Result<Response, ApiError> {
+pub(crate) async fn logout(
+    State(app): State<App>,
+    Authed(current): Authed,
+) -> Result<Response, ApiError> {
     db::delete_session(&app.db, &current.session_id)
         .await
         .map_err(|_| ApiError::internal())?;
@@ -342,7 +343,10 @@ pub(crate) async fn status(
     })))
 }
 
-pub(crate) async fn public_config(State(app): State<App>, Authed(_current): Authed) -> Json<PublicConfig> {
+pub(crate) async fn public_config(
+    State(app): State<App>,
+    Authed(_current): Authed,
+) -> Json<PublicConfig> {
     Json(PublicConfig {
         s3_region: app.settings.s3_region.clone(),
         website_root_domain: app.settings.website_root_domain.clone(),
@@ -359,7 +363,10 @@ pub(crate) struct Capabilities {
     list_keys_info: proxy::Probe,
 }
 
-pub(crate) async fn capabilities(State(app): State<App>, Authed(_current): Authed) -> Json<Capabilities> {
+pub(crate) async fn capabilities(
+    State(app): State<App>,
+    Authed(_current): Authed,
+) -> Json<Capabilities> {
     let probes = proxy::list_probes(app.settings.garage_admin_url.as_deref());
     Json(Capabilities {
         version: version(),

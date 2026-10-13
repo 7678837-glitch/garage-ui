@@ -1,24 +1,24 @@
-use axum::Json;
-use axum::body::Bytes;
-use axum::extract::{Path, Query, RawQuery, State};
-use axum::http::{HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use crate::access::Op;
-use crate::error::ApiError;
-use crate::proxy;
-use crate::session::Current;
-use crate::state::App;
-use crate::util;
 use super::Authed;
 use super::is_json_ws;
 use super::percent_encode;
 use super::post_garage;
 use super::record;
 use super::require;
+use crate::access::Op;
+use crate::error::ApiError;
+use crate::proxy;
+use crate::session::Current;
+use crate::state::App;
+use crate::util;
+use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
+use axum::extract::{Path, Query, RawQuery, State};
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 pub(crate) async fn cluster_health(
     State(app): State<App>,
@@ -173,10 +173,7 @@ fn summary_from(
 }
 
 fn garage_metrics_down() -> ApiError {
-    ApiError::unavailable(
-        "garage_unavailable",
-        "Garage admin API is not reachable",
-    )
+    ApiError::unavailable("garage_unavailable", "Garage admin API is not reachable")
 }
 
 async fn fetch_garage_metrics(
@@ -700,10 +697,7 @@ fn staged_capacity(body: &[u8]) -> Result<StageCapacityBody, ApiError> {
 }
 
 fn unreadable_status() -> ApiError {
-    ApiError::unavailable(
-        "garage_unavailable",
-        "Garage cluster status is unreadable",
-    )
+    ApiError::unavailable("garage_unavailable", "Garage cluster status is unreadable")
 }
 
 // serde_json rewrites a number past 2^53-1, so copy the digit characters.
@@ -789,7 +783,9 @@ impl<'a> JsonCursor<'a> {
         if inner.contains(&b'\\') {
             return Err(());
         }
-        std::str::from_utf8(inner).map(str::to_string).map_err(|_| ())
+        std::str::from_utf8(inner)
+            .map(str::to_string)
+            .map_err(|_| ())
     }
 
     fn raw_string(&mut self) -> Result<&'a [u8], ()> {
@@ -927,7 +923,9 @@ impl<'a> JsonCursor<'a> {
                     return Err(unreadable_status());
                 }
                 match key.as_str() {
-                    "capacity" => capacity = self.capacity_token().map_err(|_| unreadable_status())?,
+                    "capacity" => {
+                        capacity = self.capacity_token().map_err(|_| unreadable_status())?
+                    }
                     "zone" => zone = Some(self.raw_value().map_err(|_| unreadable_status())?),
                     "tags" => tags = Some(self.raw_value().map_err(|_| unreadable_status())?),
                     _ => self.skip_value().map_err(|_| unreadable_status())?,

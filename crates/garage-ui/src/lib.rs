@@ -11,7 +11,6 @@ mod http;
 mod limit;
 mod objects;
 mod password;
-mod zip;
 mod preview;
 mod prometheus;
 mod proxy;
@@ -19,6 +18,7 @@ mod redact;
 mod session;
 mod state;
 mod util;
+mod zip;
 
 #[cfg(test)]
 mod accept;

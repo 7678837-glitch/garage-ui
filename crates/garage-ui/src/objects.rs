@@ -229,10 +229,7 @@ async fn collect_multipart_uploads(
         if output.is_truncated() != Some(true) {
             break;
         }
-        let Some(next_key) = output
-            .next_key_marker()
-            .filter(|marker| !marker.is_empty())
-        else {
+        let Some(next_key) = output.next_key_marker().filter(|marker| !marker.is_empty()) else {
             break;
         };
         let Some(next_id) = output
@@ -305,10 +302,7 @@ pub async fn presign_get(
         .clone()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            ApiError::not_implemented(
-                "share_unavailable",
-                "Public S3 address is not configured",
-            )
+            ApiError::not_implemented("share_unavailable", "Public S3 address is not configured")
         })?;
     let (_, region) = proxy::s3_origin(app).await;
     let bucket = bucket_id.to_string();
@@ -1468,9 +1462,10 @@ where
 }
 
 async fn sources(app: &App, bucket_id: &str) -> CredentialSources {
-    let project_key = app.settings.project_key.as_ref().map(|key| {
-        BucketCredential::new(key.access_key_id.clone(), key.secret_access_key.clone())
-    });
+    let project_key =
+        app.settings.project_key.as_ref().map(|key| {
+            BucketCredential::new(key.access_key_id.clone(), key.secret_access_key.clone())
+        });
     // The project key wins. explicit_key is used only when the project key is absent.
     let explicit_key = if project_key.is_some() {
         None
@@ -1540,9 +1535,7 @@ fn s3_client(
     Client::from_conf(config.build())
 }
 
-fn ca_trust_client(
-    pem: &[u8],
-) -> aws_smithy_runtime_api::client::http::SharedHttpClient {
+fn ca_trust_client(pem: &[u8]) -> aws_smithy_runtime_api::client::http::SharedHttpClient {
     use aws_smithy_http_client::tls::{self, TlsContext, TrustStore};
 
     let trust = TrustStore::default().with_pem_certificate(pem.to_vec());
@@ -1704,7 +1697,8 @@ async fn send_https(
     })
     .await?;
     let response = response.map(SdkBody::from_body_1_x);
-    aws_smithy_runtime_api::client::orchestrator::HttpResponse::try_from(response).map_err(user_error)
+    aws_smithy_runtime_api::client::orchestrator::HttpResponse::try_from(response)
+        .map_err(user_error)
 }
 
 fn origin_form(
@@ -1765,9 +1759,8 @@ async fn connect_tls(
         }
     }
     let tcp = tcp.ok_or(last)?;
-    let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name")
-    })?;
+    let name = rustls::pki_types::ServerName::try_from(host.to_string())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "server name"))?;
     tokio_rustls::TlsConnector::from(std::sync::Arc::clone(config))
         .connect(name, tcp)
         .await
@@ -1788,7 +1781,7 @@ where
                 return Err(timeout_error(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     label,
-                )))
+                )));
             }
         },
         None => work.await,
@@ -1867,7 +1860,10 @@ server.serve_forever()
     }
 
     fn openssl(args: &[&str]) {
-        let output = Command::new("openssl").args(args).output().expect("openssl");
+        let output = Command::new("openssl")
+            .args(args)
+            .output()
+            .expect("openssl");
         assert!(
             output.status.success(),
             "openssl {}: {}",
@@ -2035,15 +2031,21 @@ server.serve_forever()
     }
 
     fn docker(args: &[String]) -> std::process::Output {
-        Command::new("docker").args(args).output().unwrap_or_else(|error| {
-            panic!("docker failed to start: {error}");
-        })
+        Command::new("docker")
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| {
+                panic!("docker failed to start: {error}");
+            })
     }
 
     fn redact_secrets(text: &str) -> String {
         let mut out = String::new();
         for line in text.lines() {
-            if line.contains("Secret key") || line.contains("admin_token") || line.contains("rpc_secret") {
+            if line.contains("Secret key")
+                || line.contains("admin_token")
+                || line.contains("rpc_secret")
+            {
                 continue;
             }
             let mut hexed = String::new();
@@ -2078,7 +2080,11 @@ server.serve_forever()
             return output;
         }
         let stderr = redact_secrets(&String::from_utf8_lossy(&output.stderr));
-        panic!("docker {} exited {}\n{stderr}", args.join(" "), output.status);
+        panic!(
+            "docker {} exited {}\n{stderr}",
+            args.join(" "),
+            output.status
+        );
     }
 
     fn garage_cli(name: &str, args: &[&str]) -> std::process::Output {
@@ -2156,11 +2162,7 @@ metrics_token = "{metrics}"
                 !matches!(host_port, 3900 | 3901 | 3902 | 3903 | 3909),
                 "host port {host_port}"
             );
-            docker_ok(&[
-                "volume".to_string(),
-                "create".to_string(),
-                volume.clone(),
-            ]);
+            docker_ok(&["volume".to_string(), "create".to_string(), volume.clone()]);
             docker_ok(&[
                 "run".to_string(),
                 "-d".to_string(),
@@ -2197,7 +2199,15 @@ metrics_token = "{metrics}"
             node.secret_key = labeled(&text, "Secret key").to_string();
             garage_cli(
                 &node.name,
-                &["bucket", "allow", "--read", "--write", "objects", "--key", "getobject"],
+                &[
+                    "bucket",
+                    "allow",
+                    "--read",
+                    "--write",
+                    "objects",
+                    "--key",
+                    "getobject",
+                ],
             );
             node
         }
