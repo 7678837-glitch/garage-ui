@@ -183,6 +183,57 @@ pub(crate) async fn create_key(
     finish_created_key(&app, &current, response).await
 }
 
+pub(crate) async fn get_key(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewKeys)?;
+    let query = format!("id={}", percent_encode(&id));
+    let response = proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/GetKeyInfo",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await?;
+    hide_key_secret(&app, response).await
+}
+
+async fn hide_key_secret(app: &App, response: Response) -> Result<Response, ApiError> {
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(response);
+    }
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let bytes = without_secret_access_key(&bytes)?;
+    let mut out = Response::new(Body::from(bytes));
+    *out.status_mut() = status;
+    *out.headers_mut() = headers;
+    Ok(out)
+}
+
+fn without_secret_access_key(bytes: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(bytes.to_vec());
+    };
+    let Some(object) = value.as_object_mut() else {
+        return Ok(bytes.to_vec());
+    };
+    if object.remove("secretAccessKey").is_none() {
+        return Ok(bytes.to_vec());
+    }
+    serde_json::to_vec(&value).map_err(|_| ApiError::internal())
+}
+
 pub(crate) async fn patch_key(
     State(app): State<App>,
     Authed(current): Authed,
@@ -300,6 +351,9 @@ fn created_key_id(bytes: &[u8]) -> Option<String> {
 pub(crate) fn routes() -> Router<App> {
     Router::new()
         .route("/api/keys", get(list_keys).post(create_key))
-        .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
+        .route(
+            "/api/keys/{id}",
+            get(get_key).patch(patch_key).delete(delete_key),
+        )
         .route("/api/keys/{id}/secret", post(key_secret))
 }

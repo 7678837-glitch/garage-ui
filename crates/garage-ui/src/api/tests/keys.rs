@@ -424,3 +424,81 @@
             "Garage admin API is not configured",
         );
     }
+
+    #[tokio::test]
+    async fn get_key_returns_buckets_from_get_key_info() {
+        let secret = "wJalrXUtnFEMI";
+        let buckets = json!([
+            {
+                "id": "bkt-photos",
+                "globalAliases": ["photos"],
+                "localAliases": ["roll"],
+                "permissions": { "owner": true, "read": true, "write": false }
+            },
+            {
+                "id": "bkt-logs",
+                "globalAliases": [],
+                "localAliases": [],
+                "permissions": { "owner": false, "read": false, "write": true }
+            }
+        ]);
+        let upstream = json!({
+            "accessKeyId": "GK1",
+            "name": "photos",
+            "secretAccessKey": secret,
+            "expired": false,
+            "permissions": { "createBucket": false },
+            "buckets": buckets
+        })
+        .to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(upstream)).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/keys/GK1?showSecretKey=true",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["accessKeyId"], "GK1");
+        assert_eq!(body["buckets"], buckets);
+        assert!(body.get("secretAccessKey").is_none(), "{}", response.body);
+        assert!(!response.body.contains(secret), "{}", response.body);
+        let calls = mock.calls();
+        assert_eq!(
+            calls.len(),
+            1,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            calls[0].line.contains("GET /v2/GetKeyInfo?id=GK1 "),
+            "{}",
+            calls[0].line
+        );
+        assert!(
+            !calls[0].line.to_ascii_lowercase().contains("showsecretkey"),
+            "{}",
+            calls[0].line
+        );
+        let viewer = viewer_session(&app, &admin).await;
+        let viewed = exchange(
+            &app,
+            request("GET", "/api/keys/GK1", None, Some(&viewer)),
+        )
+        .await;
+        assert_eq!(viewed.status, StatusCode::OK, "{}", viewed.body);
+        let viewed_body: Value = serde_json::from_str(&viewed.body).unwrap();
+        assert_eq!(viewed_body["buckets"], buckets);
+        assert!(viewed_body.get("secretAccessKey").is_none(), "{}", viewed.body);
+    }
