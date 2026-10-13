@@ -645,6 +645,24 @@ pub(crate) async fn revert_layout(
     post_garage(&app, &current, &headers, "RevertClusterLayout", None, b"").await
 }
 
+pub(crate) async fn skip_dead_nodes(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeLayout)?;
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "ClusterLayoutSkipDeadNodes",
+        None,
+        &body,
+    )
+    .await
+}
+
 fn unreadable_layout() -> ApiError {
     ApiError::unavailable("garage_unavailable", "Cluster layout version is unreadable")
 }
@@ -1216,6 +1234,7 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/layout/preview", post(preview_layout))
         .route("/api/layout/apply", post(apply_layout))
         .route("/api/layout/revert", post(revert_layout))
+        .route("/api/layout/skip-dead-nodes", post(skip_dead_nodes))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
 }

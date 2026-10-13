@@ -493,6 +493,14 @@ function revertLayout(): Promise<unknown> {
   return api("/api/layout/revert", { method: "POST" });
 }
 
+function skipDeadNodes(version: string, allowMissingData: boolean): Promise<unknown> {
+  return api("/api/layout/skip-dead-nodes", {
+    method: "POST",
+    headers: { "x-confirm": "yes" },
+    body: `{"allowMissingData":${allowMissingData},"version":${version}}`,
+  });
+}
+
 type PendingBlockPurge = {
   id: string;
   hash: string;
@@ -694,7 +702,13 @@ export function ClusterNodes() {
   });
   const apply = useMutation({ mutationFn: applyLayout });
   const revert = useMutation({ mutationFn: revertLayout });
+  const skip = useMutation({
+    mutationFn: ({ version, missing }: { version: string; missing: boolean }) =>
+      skipDeadNodes(version, missing),
+  });
   const [applyOpen, setApplyOpen] = useState(false);
+  const [allowMissingData, setAllowMissingData] = useState(false);
+  const [skipStep, setSkipStep] = useState<"risk" | "loss" | null>(null);
   const [purgeTarget, setPurgeTarget] = useState<PendingBlockPurge | null>(null);
   const purge = useMutation({
     mutationFn: (target: PendingBlockPurge) => purgeBlocks(target.id, target.hash),
@@ -837,6 +851,29 @@ export function ClusterNodes() {
           }}
         >
           Revert staged changes
+        </button>
+        <label className="block text-sm">
+          <input
+            type="checkbox"
+            checked={allowMissingData}
+            onChange={(event) => {
+              setAllowMissingData(event.target.checked);
+            }}
+          />
+          Allow missing data
+        </label>
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          disabled={layoutVersion === null}
+          onClick={() => {
+            if (layoutVersion === null) {
+              return;
+            }
+            setSkipStep("risk");
+          }}
+        >
+          Skip dead nodes
         </button>
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -1012,6 +1049,42 @@ export function ClusterNodes() {
           onConfirm={() => {
             setApplyOpen(false);
             apply.mutate();
+          }}
+        />
+      ) : null}
+      {skipStep === "risk" && layoutVersion !== null ? (
+        <ConfirmDialog
+          action="skip-dead-node"
+          name={layoutVersion}
+          scope="cluster"
+          consequence="This forces layout progress past dead nodes."
+          onCancel={() => {
+            setSkipStep(null);
+          }}
+          onConfirm={() => {
+            const version = layoutVersion;
+            if (allowMissingData) {
+              setSkipStep("loss");
+              return;
+            }
+            setSkipStep(null);
+            skip.mutate({ version, missing: false });
+          }}
+        />
+      ) : null}
+      {skipStep === "loss" && layoutVersion !== null ? (
+        <ConfirmDialog
+          action="skip-dead-node"
+          name={layoutVersion}
+          scope="cluster"
+          consequence="Data may be lost."
+          onCancel={() => {
+            setSkipStep(null);
+          }}
+          onConfirm={() => {
+            const version = layoutVersion;
+            setSkipStep(null);
+            skip.mutate({ version, missing: true });
           }}
         />
       ) : null}

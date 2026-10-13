@@ -1052,3 +1052,63 @@ test("snapshot every node shows the notice", async () => {
   expect(init?.body ?? null).toBeNull();
   expect(new Headers(init?.headers).get("x-confirm")).toBeNull();
 });
+
+test("skip dead nodes passes the current version and confirms when data may be lost", async () => {
+  document.cookie = "garage_csrf=csrf-token";
+  const current = "9007199254740993";
+  const fetchMock = installFetch("admin", () =>
+    textResponse(
+      `{"layoutVersion":${current},"nodes":[{"id":"node-up","hostname":"alpha","isUp":true,"draining":false}]}`,
+    ),
+  );
+  renderApp();
+  expect(await screen.findByText("node-up")).toBeTruthy();
+
+  const skipPosts = () =>
+    fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/skip-dead-nodes");
+  const allow = screen.getByRole("checkbox", { name: "Allow missing data" }) as HTMLInputElement;
+  const skip = screen.getByRole("button", { name: "Skip dead nodes" });
+  expect(allow.checked).toBe(false);
+  expect(skipPosts()).toHaveLength(0);
+  expect(screen.queryByText("Data may be lost.")).toBeNull();
+
+  async function confirmCurrent() {
+    const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(`Type ${current} to confirm`), {
+      target: { value: current },
+    });
+    expect((screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await act(async () => {});
+  }
+
+  fireEvent.click(skip);
+  expect(screen.queryByText("Data may be lost.")).toBeNull();
+  expect(screen.getByRole("heading", { name: `Confirm ${current}` })).toBeTruthy();
+  await confirmCurrent();
+  expect(screen.queryByText("Data may be lost.")).toBeNull();
+  expect(skipPosts()).toHaveLength(1);
+  const kept = skipPosts()[0]?.[1] as RequestInit | undefined;
+  expect(kept?.method).toBe("POST");
+  expect(kept?.body).toBe(`{"allowMissingData":false,"version":${current}}`);
+  expect(new Headers(kept?.headers).get("x-confirm")).toBe("yes");
+
+  fireEvent.click(allow);
+  expect(allow.checked).toBe(true);
+  expect(skipPosts()).toHaveLength(1);
+  fireEvent.click(skip);
+  expect(screen.queryByText("Data may be lost.")).toBeNull();
+  await confirmCurrent();
+  expect(screen.getByText("Data may be lost.").tagName).toBe("P");
+  expect(skipPosts()).toHaveLength(1);
+  await confirmCurrent();
+  expect(skipPosts()).toHaveLength(2);
+  const lost = skipPosts()[1]?.[1] as RequestInit | undefined;
+  expect(lost?.method).toBe("POST");
+  expect(lost?.body).toBe(`{"allowMissingData":true,"version":${current}}`);
+  expect(lost?.body).not.toContain('"version":9007199254740994');
+  expect(new Headers(lost?.headers).get("x-confirm")).toBe("yes");
+});
