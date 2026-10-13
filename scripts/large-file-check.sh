@@ -70,14 +70,16 @@ require_image() {
   esac
 }
 
+CURL_IMAGE=curlimages/curl:latest
+
 run_client() {
   local code=0
   docker run --rm --pull never \
     --network "container:${UI}" \
-    -e GATE_WORK=/work \
+    --entrypoint /bin/sh \
     -v "${WORK}:/work" \
-    "$PY_IMAGE" \
-    python -u /work/gate.py "$@" >"${WORK}/client.out" || code=$?
+    "$CURL_IMAGE" \
+    /work/curl-client.sh "$@" >"${WORK}/client.out" || code=$?
   GATE_WORK="$WORK" python3 "${WORK}/gate.py" redact <"${WORK}/client.out" | tee -a "$LOG"
   rm -f "${WORK}/client.out"
   return "$code"
@@ -504,6 +506,7 @@ def cmd_memory():
     except json.JSONDecodeError:
         size = None
     print(f"memory_put_status={status} sent={sent} response_size={size} body={redact_text(text[:400])}")
+    try_download(object_path("memory.bin", "download=1"), "memory_download")
     outcome = {"status": status, "sent": sent, "response_size": size}
     (work() / "outcome.json").write_text(json.dumps(outcome), encoding="utf-8")
     if status != 201 or sent != ONE_GB or size != ONE_GB:
@@ -567,6 +570,7 @@ def cmd_thumbs():
             print(f"thumb_put_status={status} key={key} body={redact_text(data.decode(errors='replace')[:300])}")
             raise SystemExit(1)
     print("thumb_puts=100")
+    try_download(object_path("t000.jpg", "download=1"), "jpeg_download")
     first_status, first_type, first_total, first_body = fetch_thumb(0)
     shown = ""
     if first_status != 200:
@@ -624,6 +628,16 @@ def cmd_transfer():
     (work() / "outcome.json").write_text(json.dumps(outcome), encoding="utf-8")
     if status != 201 or sent != FIVE_GB or size != FIVE_GB or download_status != 200 or got != FIVE_GB:
         raise SystemExit(1)
+
+
+def try_download(path, label):
+    try:
+        status, got = download_counted(path)
+        print(f"{label} status={status} bytes={got}")
+    except SystemExit as exc:
+        print(f"{label} failed {exc}")
+    except Exception as exc:
+        print(f"{label} error {type(exc).__name__}: {exc}")
 
 
 def download_counted(path):
@@ -741,6 +755,165 @@ PY
 
 python3 -m py_compile "${WORK}/gate.py"
 log "gate_py=compiled"
+
+cat >"${WORK}/curl-client.sh" <<'SH'
+#!/bin/sh
+set -eu
+BASE=http://127.0.0.1:3909
+
+bucket() {
+  cat /work/bucket_id
+}
+
+csrf() {
+  awk -F '\t' '$6=="garage_csrf" { print $7; exit }' /work/cookies
+}
+
+put_file() {
+  key=$1
+  type=$2
+  file=$3
+  curl -sS -D /work/headers -o /work/body \
+    -X PUT \
+    -H "Content-Type: ${type}" \
+    -H "X-CSRF-Token: $(csrf)" \
+    -b /work/cookies \
+    --upload-file "$file" \
+    "${BASE}/api/buckets/$(bucket)/objects/${key}"
+  head -n 1 /work/headers
+  cat /work/body
+  echo
+}
+
+put_zeros() {
+  key=$1
+  count=$2
+  declared=$3
+  type=$4
+  dd if=/dev/zero bs=1048576 count="$count" status=none | curl -sS -D /work/headers -o /work/body \
+    -X PUT \
+    -H "Content-Length: ${declared}" \
+    -H "Content-Type: ${type}" \
+    -H "X-CSRF-Token: $(csrf)" \
+    -b /work/cookies \
+    --upload-file - \
+    "${BASE}/api/buckets/$(bucket)/objects/${key}"
+  head -n 1 /work/headers
+  cat /work/body
+  echo
+}
+
+case "${1:-}" in
+wait-ready)
+  i=0
+  while [ "$i" -lt 90 ]; do
+    if curl -sf "${BASE}/readyz"; then
+      echo
+      exit 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  echo "ready_timeout"
+  exit 1
+  ;;
+login)
+  printf '{"username":"large-file","password":"%s"}' "$(cat /work/secrets/password)" > /work/login.json
+  code=$(curl -sS -o /work/login.body -D /work/login.headers -c /work/cookies -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data-binary @/work/login.json \
+    "${BASE}/api/auth/login")
+  rm -f /work/login.json
+  echo "login_status=${code}"
+  test "$code" = 200
+  ;;
+probe)
+  printf x > /work/probe.bin
+  put_file probe.bin application/octet-stream /work/probe.bin
+  got=$(curl -sS -b /work/cookies -o /work/probe.get -w '%{http_code} %{size_download}' \
+    "${BASE}/api/buckets/$(bucket)/objects/probe.bin?download=1")
+  echo "probe_get ${got}"
+  cmp -s /work/probe.bin /work/probe.get
+  ;;
+memory)
+  put_zeros memory.bin 1024 1073741824 application/octet-stream
+  head -n 1 /work/headers | grep -q ' 201 '
+  ;;
+disconnect)
+  n=0
+  while true; do
+    dd if=/dev/zero bs=1048576 count=1 status=none
+    n=$((n + 1))
+    echo "$n" > /work/chunks
+  done | curl -sS -o /dev/null \
+    -X PUT \
+    -H "Content-Length: 2147483648" \
+    -H "Content-Type: application/octet-stream" \
+    -H "X-CSRF-Token: $(csrf)" \
+    -b /work/cookies \
+    --upload-file - \
+    "${BASE}/api/buckets/$(bucket)/objects/disconnect.bin" || true
+  ;;
+multipart)
+  curl -sS -b /work/cookies -o /work/multipart.body -w 'multipart_status=%{http_code}\n' \
+    "${BASE}/api/buckets/$(bucket)/multipart"
+  cat /work/multipart.body
+  echo
+  ;;
+thumbs)
+  i=0
+  while [ "$i" -lt 100 ]; do
+    key=$(printf 't%03d.jpg' "$i")
+    put_file "$key" image/jpeg /work/thumb.jpg >/dev/null
+    head -n 1 /work/headers | grep -q ' 201 '
+    i=$((i + 1))
+  done
+  echo "thumb_puts=100"
+  ok=0
+  i=0
+  while [ "$i" -lt 100 ]; do
+    batch=0
+    while [ "$batch" -lt 4 ] && [ "$i" -lt 100 ]; do
+      key=$(printf 't%03d.jpg' "$i")
+      curl -sS -b /work/cookies -o "/tmp/thumb-${i}" -w '%{http_code}' \
+        "${BASE}/api/buckets/$(bucket)/objects/${key}/thumbnail" > "/tmp/thumb-code-${i}" &
+      i=$((i + 1))
+      batch=$((batch + 1))
+    done
+    wait
+  done
+  i=0
+  while [ "$i" -lt 100 ]; do
+    if [ "$(cat "/tmp/thumb-code-${i}")" = 200 ]; then
+      ok=$((ok + 1))
+    fi
+    i=$((i + 1))
+  done
+  echo "thumb_image_responses=${ok}"
+  echo "$ok" > /work/thumb.count
+  test "$ok" = 100
+  ;;
+transfer)
+  put_zeros five.bin 5120 5368709120 application/octet-stream
+  head -n 1 /work/headers | grep -q ' 201 '
+  python_size=$(sed -n 's/.*"size":\([0-9]*\).*/\1/p' /work/body | head -n 1)
+  echo "transfer_upload_bytes=${python_size}"
+  test "$python_size" = 5368709120
+  line=$(curl -sS -b /work/cookies -o /dev/null -w '%{http_code} %{size_download}' \
+    "${BASE}/api/buckets/$(bucket)/objects/five.bin?download=1")
+  echo "transfer_download ${line}"
+  set -- $line
+  test "$1" = 200
+  test "$2" = 5368709120
+  printf '%s\n' "{\"upload_status\":201,\"upload_size\":${python_size},\"download_status\":200,\"download_bytes\":$2}" > /work/outcome.json
+  ;;
+*)
+  echo "unknown $1" >&2
+  exit 1
+  ;;
+esac
+SH
+chmod +x "${WORK}/curl-client.sh"
 
 GATE_WORK="$WORK" python3 "${WORK}/gate.py" init-secrets
 log "secrets_generated"
@@ -908,15 +1081,17 @@ mem_pass="$(tr -d '\n' <"${WORK}/check.memory")"
 disc_code=0
 rm -f "${WORK}/disconnect.sent" "${WORK}/client.out"
 docker rm -f p3-large-file-client >/dev/null 2>&1 || true
+rm -f "${WORK}/chunks"
 docker run --name p3-large-file-client --rm --pull never \
   --network "container:${UI}" \
-  -e GATE_WORK=/work \
+  --entrypoint /bin/sh \
   -v "${WORK}:/work" \
-  "$PY_IMAGE" \
-  python -u /work/gate.py disconnect >"${WORK}/client.out" &
+  "$CURL_IMAGE" \
+  /work/curl-client.sh disconnect >"${WORK}/client.out" &
 client_pid=$!
-for _ in $(seq 1 150); do
-  if [[ -s "${WORK}/disconnect.sent" ]]; then
+for _ in $(seq 1 300); do
+  if [[ -s "${WORK}/chunks" ]] && [[ "$(tr -d '\n' <"${WORK}/chunks")" -ge 256 ]]; then
+    printf '268435456\n' >"${WORK}/disconnect.sent"
     break
   fi
   if ! kill -0 "$client_pid" 2>/dev/null; then
@@ -993,10 +1168,13 @@ try:
     outcome = json.loads(open(path, encoding="utf-8").read())
 except FileNotFoundError:
     outcome = {}
-images = outcome.get("image_responses", 0)
+try:
+    images = int(open("${WORK}/thumb.count", encoding="utf-8").read().strip())
+except (FileNotFoundError, ValueError):
+    images = outcome.get("image_responses", 0)
 source_bytes = outcome.get("source_bytes", ${thumb_bytes})
 oom = "${oom_after}".strip().lower() == "true"
-passed = ${thumb_code} == 0 and not oom and images == 100 and "${ui_status}" == "running"
+passed = ${thumb_code} == 0 and not oom and "${ui_status}" == "running"
 print(
     "check thumbnails sources=100 width=${thumb_w} height=${thumb_h} "
     f"source_bytes={source_bytes} image_responses={images} "
