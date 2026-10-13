@@ -323,4 +323,6 @@ mod tests {
     include!("tests/workers.rs");
     include!("tests/audit.rs");
     include!("tests/uninitialized.rs");
+    #[path = "cors_preflight.rs"]
+    mod cors_preflight;
 }
