@@ -88,6 +88,46 @@ test("an admin on #audit sees Ada and login", async () => {
   });
 });
 
+function auditUrls(fetchMock: ReturnType<typeof stubAdminAudit>, kind: "list" | "export"): string[] {
+  return fetchMock.mock.calls
+    .map((call) => String(call[0]))
+    .filter((url) =>
+      kind === "export"
+        ? url === "/api/audit/export" || url.startsWith("/api/audit/export?")
+        : url === "/api/audit" || url.startsWith("/api/audit?"),
+    );
+}
+
+test("filtering the audit list by user Ada", async () => {
+  window.location.hash = "#audit";
+  const fetchMock = stubAdminAudit();
+  renderApp();
+  expect(await screen.findByText("login")).toBeTruthy();
+  expect(auditUrls(fetchMock, "list")).toEqual(["/api/audit"]);
+  fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
+  await waitFor(() => {
+    expect(auditUrls(fetchMock, "export")).toEqual(["/api/audit/export"]);
+  });
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "Ada" } });
+  await waitFor(() => {
+    expect(auditUrls(fetchMock, "list").at(-1)).toBe("/api/audit?user=Ada");
+  });
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "1700000000" } });
+  fireEvent.change(screen.getByLabelText("To"), { target: { value: "1700000100" } });
+  fireEvent.change(screen.getByLabelText("Action"), { target: { value: "bucket-1" } });
+  await waitFor(() => {
+    expect(auditUrls(fetchMock, "list").at(-1)).toBe(
+      "/api/audit?user=Ada&from=1700000000&to=1700000100&action=bucket-1",
+    );
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
+  await waitFor(() => {
+    expect(auditUrls(fetchMock, "export").at(-1)).toBe(
+      "/api/audit/export?user=Ada&from=1700000000&to=1700000100&action=bucket-1",
+    );
+  });
+});
+
 test("exporting audit downloads audit.csv", async () => {
   const priorCreate = URL.createObjectURL;
   const priorRevoke = URL.revokeObjectURL;
