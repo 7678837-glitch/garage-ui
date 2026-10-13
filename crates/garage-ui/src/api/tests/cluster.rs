@@ -523,6 +523,63 @@
         assert!(calls[0].line.starts_with("GET "), "{}", calls[0].line);
     }
 
+    #[tokio::test]
+    async fn node_block_info_returns_that_nodes_block() {
+        let expected = json!({
+            "blockHash": "aa11",
+            "refcount": 2,
+            "versions": [{
+                "versionId": "v1",
+                "refDeleted": false,
+                "versionDeleted": false,
+                "garbageCollected": true
+            }]
+        });
+        let upstream = json!({
+            "success": {
+                "n1": expected,
+                "n2": {
+                    "blockHash": "bb22",
+                    "refcount": 7,
+                    "versions": [{
+                        "versionId": "v2",
+                        "refDeleted": true,
+                        "versionDeleted": true,
+                        "garbageCollected": false
+                    }]
+                }
+            }
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(upstream.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/nodes/n1/blocks/aa11", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!({
+                "blockHash": "aa11",
+                "refcount": 2,
+                "versions": [{
+                    "versionId": "v1",
+                    "refDeleted": false,
+                    "versionDeleted": false,
+                    "garbageCollected": true
+                }]
+            })
+        );
+        assert_worker_post(
+            &cluster_calls(&mock, "GetBlockInfo"),
+            "/v2/GetBlockInfo?node=n1",
+            json!({ "blockHash": "aa11" }),
+        );
+    }
+
     fn assert_worker_post(calls: &[UpstreamCall], path: &str, body: Value) {
         assert_eq!(
             calls.len(),

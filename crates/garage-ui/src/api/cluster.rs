@@ -474,6 +474,28 @@ pub(crate) async fn post_retry_blocks(
     worker_node(&app, posted, &id).await
 }
 
+pub(crate) async fn get_block_info(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, hash)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewOps)?;
+    let payload =
+        serde_json::to_vec(&json!({ "blockHash": hash })).map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "GetBlockInfo",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
 async fn worker_node(app: &App, response: Response, id: &str) -> Result<Response, ApiError> {
     if !response.status().is_success() {
         return Ok(response);
@@ -1056,6 +1078,7 @@ pub(crate) fn routes() -> Router<App> {
         )
         .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
         .route("/api/nodes/{id}/blocks/retry", post(post_retry_blocks))
+        .route("/api/nodes/{id}/blocks/{hash}", get(get_block_info))
         .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/history", get(layout_history))
