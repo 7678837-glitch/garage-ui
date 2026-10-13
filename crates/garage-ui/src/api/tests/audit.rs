@@ -62,3 +62,64 @@
             "Not allowed",
         );
     }
+
+    #[tokio::test]
+    async fn audit_export_returns_the_login_row() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let _ = sign_in(&app, "Ada", PASSWORD).await;
+
+        let exported = exchange(
+            &app,
+            request("GET", "/api/audit/export?user=Ada", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
+        assert_eq!(header_text(&exported, "content-type"), Some("text/csv"));
+        let mut lines = exported.body.lines();
+        assert_eq!(
+            lines.next(),
+            Some("at,username,ip,result,reason,method,path,target,status")
+        );
+        let login_line = lines.find(|line| {
+            let fields: Vec<&str> = line.split(',').collect();
+            fields.len() == 9
+                && fields[1] == "Ada"
+                && fields[4] == "login"
+                && fields[5] == "POST"
+                && fields[6] == "/api/auth/login"
+                && fields[7].is_empty()
+                && fields[8] == "200"
+        });
+        assert!(login_line.is_some(), "{}", exported.body);
+
+        let nobody = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/audit/export?user=nobody",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(nobody.status, StatusCode::OK, "{}", nobody.body);
+        assert_eq!(
+            nobody.body,
+            "at,username,ip,result,reason,method,path,target,status\n"
+        );
+
+        let viewer = viewer_session(&app, &session).await;
+        let denied = exchange(
+            &app,
+            request("GET", "/api/audit/export", None, Some(&viewer)),
+        )
+        .await;
+        assert_error(
+            &denied,
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Not allowed",
+        );
+    }

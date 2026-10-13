@@ -1,6 +1,8 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
+use axum::http::{HeaderValue, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -139,6 +141,51 @@ async fn list_audit(
     })))
 }
 
+fn csv_cell(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn csv_body(rows: &[AuditItem]) -> String {
+    let mut out = String::from("at,username,ip,result,reason,method,path,target,status\n");
+    for row in rows {
+        let cells = [
+            row.at.to_string(),
+            csv_cell(&row.username),
+            csv_cell(&row.ip),
+            csv_cell(&row.result),
+            csv_cell(&row.reason),
+            csv_cell(&row.method),
+            csv_cell(&row.path),
+            csv_cell(&row.target),
+            row.status.to_string(),
+        ];
+        out.push_str(&cells.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+async fn export_audit(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Query(query): Query<AuditQuery>,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewAudit)?;
+    let filter = audit_filter(&query)?;
+    let rows = load_audit(&app, &filter).await?;
+    Ok((
+        [(header::CONTENT_TYPE, HeaderValue::from_static("text/csv"))],
+        csv_body(&rows),
+    )
+        .into_response())
+}
+
 pub(crate) fn routes() -> Router<App> {
-    Router::new().route("/api/audit", get(list_audit))
+    Router::new()
+        .route("/api/audit/export", get(export_audit))
+        .route("/api/audit", get(list_audit))
 }
