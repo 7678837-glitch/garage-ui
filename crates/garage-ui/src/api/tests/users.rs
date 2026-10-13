@@ -1236,3 +1236,95 @@
         assert!(!audit_text(row).contains(replacement));
         assert!(!audit_text(row).contains(PASSWORD));
     }
+
+    #[tokio::test]
+    async fn revoking_download_invalidates_an_exchanged_unused_zip_token() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Dora",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": true,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let created_body: Value = serde_json::from_str(&created.body).unwrap();
+        assert_eq!(created_body["can_download"], true);
+        assert_eq!(created_body["can_share"], false);
+        let user_id = created_body["id"].as_i64().expect("id");
+        let viewer = sign_in(&app, "Dora", PASSWORD).await;
+
+        let token = "exchanged-unused-zip";
+        crate::db::insert_zip(&app.db, token, user_id, "bkt-1", r#"["a.txt"]"#)
+            .await
+            .unwrap();
+        let stored = crate::db::load_zip(&app.db, token)
+            .await
+            .unwrap()
+            .expect("unused token");
+        assert_eq!(stored.user_id, user_id);
+        assert_eq!(stored.bucket_id, "bkt-1");
+        assert_eq!(stored.used, 0);
+
+        let revoked = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{user_id}"),
+                Some(&json!({ "can_download": false, "can_share": false }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.body);
+        let revoked_body: Value = serde_json::from_str(&revoked.body).unwrap();
+        assert_eq!(revoked_body["can_download"], false);
+        assert_eq!(revoked_body["can_share"], false);
+        assert!(
+            crate::db::load_zip(&app.db, token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let restored = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{user_id}"),
+                Some(&json!({ "can_download": true, "can_share": false }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+        let restored_body: Value = serde_json::from_str(&restored.body).unwrap();
+        assert_eq!(restored_body["can_download"], true);
+        assert_eq!(restored_body["can_share"], false);
+
+        let archive = exchange(
+            &app,
+            request(
+                "GET",
+                &format!("/api/buckets/bkt-1/archive?token={token}"),
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&archive, StatusCode::NOT_FOUND, "not_found", "Not found");
+    }
