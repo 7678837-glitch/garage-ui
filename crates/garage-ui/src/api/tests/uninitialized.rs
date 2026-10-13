@@ -5,7 +5,7 @@
     fn api_calls(router: &impl std::fmt::Debug) -> Vec<(String, String)> {
         let text = format!("{router:?}");
         let path_router = section_until(&text, "path_router:", "fallback_router:");
-        let paths = path_table(&section_brace(path_router, "paths:"));
+        let paths = path_table(section_brace(path_router, "paths:"));
         let mut calls = Vec::new();
         for (id, path) in paths {
             if !path.starts_with("/api") {
@@ -18,13 +18,13 @@
             let block = section_brace(&path_router[start..], "MethodRouter {");
             let mut methods = Vec::new();
             for name in METHODS {
-                if field_is_set(&block, name) {
+                if field_is_set(block, name) {
                     methods.push(name.to_uppercase());
                 }
             }
             if methods.is_empty() {
                 assert!(
-                    field_is_set(&block, "fallback"),
+                    field_is_set(block, "fallback"),
                     "{path} has no method in the router"
                 );
                 methods.push("GET".to_string());
