@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { Workers } from "./Workers";
 
 afterEach(() => {
   cleanup();
@@ -540,4 +541,160 @@ test("starting repair on #workers/* posts tables after typing the star", async (
     ]);
   });
   expect(window.location.hash).toBe("#workers/*");
+});
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status });
+}
+
+const workerRow = {
+  id: 7,
+  name: "block_resync",
+  state: "busy",
+  errors: 3,
+  progress: "1/4",
+};
+
+function renderWorkers() {
+  window.location.hash = "#workers/n1";
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <Workers />
+    </QueryClientProvider>,
+  );
+  return client;
+}
+
+test("shows Loading workers and marks the workers section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderWorkers();
+  const section = screen.getByRole("region", { name: "Workers" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByLabelText("Loading workers").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading workers")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no workers.")).toBeNull();
+  expect(screen.queryByText("Refreshing workers")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Busy only" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Errors only" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save variable" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Details 7" })).toBeNull();
+  release(json([workerRow]));
+  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Workers" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByLabelText("Loading workers")).toBeNull();
+  expect(screen.queryByText("Loading workers")).toBeNull();
+});
+
+test("says there are no workers", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/workers");
+      expect(init?.credentials).toBe("include");
+      return json([]);
+    }),
+  );
+  renderWorkers();
+  expect((await screen.findByText("There are no workers.")).textContent).toBe(
+    "There are no workers.",
+  );
+  expect(screen.getByText("There are no workers.").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Details 7" })).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Busy only" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Errors only" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
+  expect(screen.queryByLabelText("Loading workers")).toBeNull();
+  expect(screen.queryByText("Loading workers")).toBeNull();
+  expect(screen.getByRole("region", { name: "Workers" }).getAttribute("aria-busy")).toBe("false");
+});
+
+test("shows the API code and requests the worker list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/workers");
+      expect((init?.method ?? "GET").toUpperCase()).toBe("GET");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
+      }
+      return json([workerRow]);
+    }),
+  );
+  renderWorkers();
+  expect((await screen.findByText("Garage returned an error")).textContent).toBe(
+    "Garage returned an error",
+  );
+  expect(screen.getByText("upstream_failed").textContent).toBe("upstream_failed");
+  expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no workers.")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Busy only" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.queryByText("upstream_failed")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
+});
+
+test("keeps one visible worker row while a later fetch refreshes", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/workers");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(json([workerRow]));
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderWorkers();
+  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.queryByText("Refreshing workers")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["nodes", "n1", "workers"] });
+  expect(await screen.findByText("Refreshing workers")).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.queryByLabelText("Loading workers")).toBeNull();
+  expect(screen.queryByText("Loading workers")).toBeNull();
+  expect(screen.getByRole("region", { name: "Workers" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByRole("alert")).toBeNull();
+  releaseNext(json([workerRow]));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing workers")).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(calls).toBe(2);
 });

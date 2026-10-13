@@ -1,11 +1,21 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { useLocationHash, workersNodeId } from "./Nav";
 
 const UNAVAILABLE = "Workers are unavailable";
+
+function failureOf(error: unknown): { message: string; code: string | null } {
+  if (error instanceof ApiError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return { message: error.message, code: null };
+  }
+  return { message: UNAVAILABLE, code: null };
+}
 
 type WorkerRow = {
   id: number;
@@ -364,12 +374,20 @@ function WorkersList({ nodeId }: { nodeId: string }) {
     queryKey: ["nodes", nodeId, "workers", filter.busyOnly, filter.errorOnly],
     queryFn: () => loadWorkers(nodeId, filter),
   });
-  const message = workers.error instanceof Error ? workers.error.message : UNAVAILABLE;
   const groups = workers.data ?? [];
   const rowCount = groups.reduce((count, group) => count + group.rows.length, 0);
+  const view = {
+    busy: workers.isPending,
+    refreshing: rowCount > 0 && workers.isFetching && !workers.isPending,
+    empty: Boolean(workers.data) && rowCount === 0,
+    failure: workers.isError ? failureOf(workers.error) : null,
+  };
 
   return (
-    <>
+    <section className="grid gap-4" aria-label="Workers" aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">Workers</h2>
+      <NodeRepair nodeId={nodeId} />
+      <WorkerVariable nodeId={nodeId} />
       <div className="flex flex-wrap gap-4 text-sm">
         <label className="flex items-center gap-2">
           <input
@@ -392,12 +410,14 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           Errors only
         </label>
       </div>
-      {workers.isPending ? (
+      {view.busy ? (
         <div className="h-16 border border-line" aria-label="Loading workers" />
       ) : null}
-      {workers.isError && !isGarageDown(workers.error) ? (
+      {view.refreshing ? <p>Refreshing workers</p> : null}
+      {view.failure && !isGarageDown(view.failure) ? (
         <>
-          <p>{message}</p>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
             className="border border-ink px-3 py-1 text-left"
             type="button"
@@ -409,7 +429,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           </button>
         </>
       ) : null}
-      {workers.isSuccess && rowCount === 0 ? <p>There are no workers.</p> : null}
+      {view.empty ? <p>There are no workers.</p> : null}
       {groups.map((group) =>
         group.rows.length === 0 ? null : (
           <div key={group.nodeId} className="grid gap-2">
@@ -464,25 +484,20 @@ function WorkersList({ nodeId }: { nodeId: string }) {
       {selected !== null ? (
         <WorkerDetail nodeId={selected.nodeId} workerId={selected.workerId} />
       ) : null}
-    </>
+    </section>
   );
 }
 
 export function Workers() {
   const [hash] = useLocationHash();
   const nodeId = workersNodeId(hash);
-  return (
-    <section className="grid gap-4" aria-label="Workers">
-      <h2 className="text-lg font-semibold">Workers</h2>
-      {nodeId === null ? (
+  if (nodeId === null) {
+    return (
+      <section className="grid gap-4" aria-label="Workers" aria-busy={false}>
+        <h2 className="text-lg font-semibold">Workers</h2>
         <p>No node is selected.</p>
-      ) : (
-        <>
-          <NodeRepair nodeId={nodeId} />
-          <WorkerVariable nodeId={nodeId} />
-          <WorkersList nodeId={nodeId} />
-        </>
-      )}
-    </section>
-  );
+      </section>
+    );
+  }
+  return <WorkersList nodeId={nodeId} />;
 }
