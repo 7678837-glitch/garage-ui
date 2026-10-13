@@ -107,7 +107,7 @@ export function Audit() {
   return (
     <section className="grid min-w-0 gap-4" aria-label="Audit" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Audit</h2>
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex min-w-0 flex-wrap items-end gap-3">
         {FILTER_FIELDS.map(([key, label]) => (
           <label className="block text-sm" key={key}>
             {label}
