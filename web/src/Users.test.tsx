@@ -849,7 +849,7 @@ test("shows Deleting while delete is submitting and keeps the row when it fails"
 });
 
 test("turns user pages by 100 and keeps the filter, sort, and hash", async () => {
-  window.history.replaceState(null, "", "/?users=ada&usersSort=created#users/stay");
+  window.history.replaceState(null, "", "/?users=a&usersSort=created#users/stay");
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -867,7 +867,7 @@ test("turns user pages by 100 and keeps the filter, sort, and hash", async () =>
   renderUsers();
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(calls[0]).toBe("/api/users?offset=0&limit=100");
-  expect(window.location.search).toContain("users=ada");
+  expect(window.location.search).toContain("users=a&");
   expect(window.location.search).toContain("usersSort=created");
   expect(window.location.search).not.toContain("usersOffset");
   const previous = screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement;
@@ -881,14 +881,14 @@ test("turns user pages by 100 and keeps the filter, sort, and hash", async () =>
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
   expect(calls[1]).toBe("/api/users?offset=100&limit=100");
   expect(window.location.search).toContain("usersOffset=100");
-  expect(window.location.search).toContain("users=ada");
+  expect(window.location.search).toContain("users=a&");
   expect(window.location.search).toContain("usersSort=created");
   expect(window.location.hash).toBe("#users/stay");
   expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Previous" }));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(window.location.search).not.toContain("usersOffset");
-  expect(window.location.search).toContain("users=ada");
+  expect(window.location.search).toContain("users=a&");
   expect(window.location.hash).toBe("#users/stay");
 });
 
