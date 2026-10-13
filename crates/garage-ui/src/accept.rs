@@ -720,6 +720,19 @@ async fn csrf_rejects_a_session_without_a_token_and_logout_clears_it() {
 }
 
 #[tokio::test]
+async fn login_presenting_a_session_returns_a_new_id_and_retires_the_old_one() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let presented = setup_admin(&app).await;
+    let response = login(&app, "Ada", PASSWORD, Some(&presented), None).await;
+    assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+    let rotated = session_from(&response.headers);
+    assert_ne!(rotated.id, presented.id);
+    assert_closed(&app, &presented).await;
+    assert_open(&app, &rotated).await;
+}
+
+#[tokio::test]
 async fn sessions_survive_reopen_until_the_key_or_password_changes() {
     let dir = crate::util::temp_dir();
     let app = state::test_app(&dir).await;
