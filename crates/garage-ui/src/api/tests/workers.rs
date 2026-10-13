@@ -375,3 +375,31 @@
             json!({ "repairType": "tables" })
         );
     }
+
+    #[tokio::test]
+    async fn viewer_cannot_read_node_workers() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            json!({
+                "success": { "n1": [] },
+                "error": {}
+            })
+            .to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        for (path, endpoint) in [
+            ("/api/nodes/n1/workers", "ListWorkers"),
+            ("/api/nodes/n1/workers/7", "GetWorkerInfo"),
+        ] {
+            let denied = exchange(&app, request("GET", path, None, Some(&viewer))).await;
+            assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+            assert!(
+                cluster_calls(&mock, endpoint).is_empty(),
+                "{endpoint} reached upstream"
+            );
+        }
+        assert_eq!(mock.hits(), 0);
+    }
