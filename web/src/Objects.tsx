@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -552,6 +552,35 @@ function objectKeys(entries: readonly Entry[]): string[] {
   return keys;
 }
 
+function neighborObject(keys: readonly string[], current: string, direction: -1 | 1): string {
+  const index = keys.indexOf(current);
+  if (index < 0) {
+    return current;
+  }
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= keys.length) {
+    return current;
+  }
+  return keys[nextIndex];
+}
+
+function arrowMovesSelection(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement) {
+    return target.type === "checkbox";
+  }
+  if (
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target instanceof HTMLMediaElement
+  ) {
+    return false;
+  }
+  if (target instanceof Element && target.closest("dialog") !== null) {
+    return false;
+  }
+  return true;
+}
+
 function batchSelection(
   entries: readonly Entry[],
   picked: readonly string[],
@@ -650,6 +679,10 @@ export function Objects({
   const [zipLink, setZipLink] = useState<{ keys: readonly string[]; href: string } | null>(null);
   const [inspectKey, setInspectKey] = useState<string | null>(null);
   const zipAnchor = useRef<HTMLAnchorElement>(null);
+  const stepRef = useRef<{ previewKey: string | null; visibleKeys: readonly string[] }>({
+    previewKey: null,
+    visibleKeys: [],
+  });
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
@@ -790,6 +823,7 @@ export function Objects({
   const zipHref = zipLink !== null && sameKeys(zipLink.keys, archiveKeys) ? zipLink.href : null;
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
   const previewKey = canTransfer ? singleKey : null;
+  stepRef.current = { previewKey, visibleKeys };
   const shareObject = useMutation({
     mutationFn: async (ttl: number) => {
       const key = singleKey;
@@ -847,6 +881,39 @@ export function Objects({
     queryFn: () => readJson("/api/keys?limit=100").then(parseKeyIds),
     enabled: needsKey,
   });
+  useEffect(() => {
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+      const current = stepRef.current;
+      if (current.previewKey === null || !arrowMovesSelection(event.target)) {
+        return;
+      }
+      const next = neighborObject(
+        current.visibleKeys,
+        current.previewKey,
+        event.key === "ArrowLeft" ? -1 : 1,
+      );
+      event.preventDefault();
+      if (next === current.previewKey) {
+        return;
+      }
+      setCopyNote(null);
+      setBrowse((state) => ({
+        ...state,
+        picked: [next],
+        anchor: next,
+      }));
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
   const showFailure = failure !== null && !isGarageDown(failure);
   const showMeta = metaFailure !== null && !isGarageDown(metaFailure);
   const showRows = visible.length > 0 && (searching ? found.isSuccess : page !== null);

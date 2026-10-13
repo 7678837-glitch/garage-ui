@@ -1715,3 +1715,116 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
     { url: inspectUrl, method: "GET" },
   ]);
 });
+
+test("left and right keys select the previous and next object in the same directory", async () => {
+  window.location.hash = "#buckets/bkt-1/photos/";
+  const prefixes: string[] = [];
+  const keys = ["photos/a.txt", "photos/b.txt", "photos/c.txt"] as const;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/auth/status") {
+        return json({ can_share: false });
+      }
+      if (url.searchParams.get("preview") === "1") {
+        return new Response("note", { status: 200 });
+      }
+      if (url.pathname === "/api/buckets/bkt-1/objects") {
+        const prefix = url.searchParams.get("prefix") ?? "";
+        prefixes.push(prefix);
+        return json(
+          page(
+            [
+              { kind: "prefix", prefix: "photos/album/" },
+              objectRow("photos/a.txt", 1, "2026-10-11T00:00:00Z"),
+              objectRow("photos/b.txt", 2, "2026-10-12T00:00:00Z"),
+              objectRow("photos/c.txt", 3, "2026-10-13T00:00:00Z"),
+            ],
+            null,
+            prefix,
+          ),
+        );
+      }
+      const sizes: Record<string, number> = {
+        "/api/buckets/bkt-1/objects/photos/a.txt": 1,
+        "/api/buckets/bkt-1/objects/photos/b.txt": 2,
+        "/api/buckets/bkt-1/objects/photos/c.txt": 3,
+      };
+      const size = sizes[url.pathname];
+      if (size === undefined) {
+        return json({ message: "unexpected" }, 500);
+      }
+      const key = url.pathname.slice("/api/buckets/bkt-1/objects/".length);
+      return json({
+        key,
+        size,
+        etag: "abc",
+        lastModified: "2026-10-11T00:00:00Z",
+        contentType: "text/plain",
+      });
+    }),
+  );
+  renderObjects();
+
+  function expectDirectory() {
+    expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
+    expect(window.location.search).toBe("");
+    expect(prefixes.length).toBeGreaterThan(0);
+    expect(prefixes.every((prefix) => prefix === "photos/")).toBe(true);
+    expect(screen.getByRole("button", { name: "photos/album/" })).toBeTruthy();
+    for (const key of keys) {
+      expect(screen.getByRole("button", { name: key })).toBeTruthy();
+    }
+  }
+
+  function expectSelected(key: string) {
+    for (const item of keys) {
+      expect(box(`Select ${item}`).checked).toBe(item === key);
+    }
+    expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
+      `/api/buckets/bkt-1/objects/${key}?download=1`,
+    );
+  }
+
+  async function expectSize(size: number) {
+    const details = await screen.findByRole("region", { name: "Object details" });
+    await waitFor(() => {
+      expect(details.textContent).toContain(`Size ${size}`);
+    });
+  }
+
+  expect(await screen.findByRole("checkbox", { name: "Select photos/b.txt" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select photos/b.txt" }));
+  expectSelected("photos/b.txt");
+  await expectSize(2);
+  expectDirectory();
+
+  fireEvent.keyDown(window, { key: "ArrowRight" });
+  expectSelected("photos/c.txt");
+  await expectSize(3);
+  expectDirectory();
+
+  fireEvent.keyDown(window, { key: "ArrowLeft" });
+  expectSelected("photos/b.txt");
+  await expectSize(2);
+  expectDirectory();
+
+  fireEvent.keyDown(window, { key: "ArrowLeft" });
+  expectSelected("photos/a.txt");
+  await expectSize(1);
+  expectDirectory();
+
+  fireEvent.keyDown(window, { key: "ArrowLeft" });
+  expectSelected("photos/a.txt");
+  expectDirectory();
+
+  fireEvent.keyDown(window, { key: "ArrowRight" });
+  expectSelected("photos/b.txt");
+  fireEvent.keyDown(window, { key: "ArrowRight" });
+  expectSelected("photos/c.txt");
+  fireEvent.keyDown(window, { key: "ArrowRight" });
+  expectSelected("photos/c.txt");
+  await expectSize(3);
+  expectDirectory();
+});
