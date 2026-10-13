@@ -3181,6 +3181,12 @@
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let cache_control = response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let disposition = response
             .headers()
             .get("content-disposition")
@@ -3212,6 +3218,7 @@
         );
         assert!(!had_length, "archive response buffered a content-length");
         assert_eq!(content_type, "application/zip");
+        assert_eq!(cache_control, "private, no-store");
         assert!(
             disposition.contains("archive.zip"),
             "{disposition}"
