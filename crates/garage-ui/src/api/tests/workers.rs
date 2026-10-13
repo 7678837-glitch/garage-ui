@@ -220,6 +220,34 @@
     }
 
     #[tokio::test]
+    async fn node_worker_rejects_a_non_integer_or_negative_id() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            json!({
+                "success": { "n1": {} },
+                "error": {}
+            })
+            .to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        for uri in [
+            "/api/nodes/n1/workers/abc",
+            "/api/nodes/n1/workers/-1",
+        ] {
+            let rejected = exchange(&app, request("GET", uri, None, Some(&admin))).await;
+            assert_error(
+                &rejected,
+                StatusCode::BAD_REQUEST,
+                "invalid_worker",
+                "Worker id must be a non-negative integer",
+            );
+        }
+        assert_eq!(cluster_calls(&mock, "GetWorkerInfo").len(), 0);
+    }
+
+    #[tokio::test]
     async fn every_node_lists_workers_for_star() {
         let n1 = json!([{
             "id": 7,
