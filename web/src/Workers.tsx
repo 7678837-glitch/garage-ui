@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { api } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { useLocationHash, workersNodeId } from "./Nav";
@@ -11,6 +12,11 @@ type WorkerRow = {
   state: string;
   errors: number;
   progress: string;
+};
+
+type WorkerFilter = {
+  busyOnly: boolean;
+  errorOnly: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,20 +81,59 @@ function workersFrom(body: unknown): WorkerRow[] {
   return body.map(workerRow);
 }
 
-async function loadWorkers(nodeId: string): Promise<WorkerRow[]> {
-  return workersFrom(await api<unknown>(`/api/nodes/${encodeURIComponent(nodeId)}/workers`));
+function workersPath(nodeId: string, filter: WorkerFilter): string {
+  const params = new URLSearchParams();
+  if (filter.busyOnly) {
+    params.set("busy", "1");
+  }
+  if (filter.errorOnly) {
+    params.set("errors", "1");
+  }
+  const query = params.toString();
+  const path = `/api/nodes/${encodeURIComponent(nodeId)}/workers`;
+  if (query.length === 0) {
+    return path;
+  }
+  return `${path}?${query}`;
+}
+
+async function loadWorkers(nodeId: string, filter: WorkerFilter): Promise<WorkerRow[]> {
+  return workersFrom(await api<unknown>(workersPath(nodeId, filter)));
 }
 
 function WorkersList({ nodeId }: { nodeId: string }) {
+  const [filter, setFilter] = useState<WorkerFilter>({ busyOnly: false, errorOnly: false });
   const workers = useQuery({
-    queryKey: ["nodes", nodeId, "workers"],
-    queryFn: () => loadWorkers(nodeId),
+    queryKey: ["nodes", nodeId, "workers", filter.busyOnly, filter.errorOnly],
+    queryFn: () => loadWorkers(nodeId, filter),
   });
   const message = workers.error instanceof Error ? workers.error.message : UNAVAILABLE;
   const rows = workers.data ?? [];
 
   return (
     <>
+      <div className="flex flex-wrap gap-4 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={filter.busyOnly}
+            onChange={(event) => {
+              setFilter((current) => ({ ...current, busyOnly: event.target.checked }));
+            }}
+          />
+          Busy only
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={filter.errorOnly}
+            onChange={(event) => {
+              setFilter((current) => ({ ...current, errorOnly: event.target.checked }));
+            }}
+          />
+          Errors only
+        </label>
+      </div>
       {workers.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading workers" />
       ) : null}
