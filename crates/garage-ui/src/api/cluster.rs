@@ -610,6 +610,94 @@ pub(crate) async fn preview_layout(
     .await
 }
 
+pub(crate) async fn apply_layout(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeLayout)?;
+    let layout = read_cluster(&app, &current, &headers, "v2/GetClusterLayout").await?;
+    if !layout.status().is_success() {
+        return Ok(layout);
+    }
+    let bytes = axum::body::to_bytes(layout.into_body(), app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let version = next_layout_version(&bytes)?;
+    let body = format!(r#"{{"version":{version}}}"#);
+    post_garage(
+        &app,
+        &current,
+        &headers,
+        "ApplyClusterLayout",
+        None,
+        body.as_bytes(),
+    )
+    .await
+}
+
+pub(crate) async fn revert_layout(
+    State(app): State<App>,
+    Authed(current): Authed,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ChangeLayout)?;
+    post_garage(&app, &current, &headers, "RevertClusterLayout", None, b"").await
+}
+
+fn unreadable_layout() -> ApiError {
+    ApiError::unavailable("garage_unavailable", "Cluster layout version is unreadable")
+}
+
+fn next_layout_version(input: &[u8]) -> Result<String, ApiError> {
+    let digits = layout_version_digits(input)?;
+    Ok(increment_digits(digits))
+}
+
+fn layout_version_digits(input: &[u8]) -> Result<&str, ApiError> {
+    let mut cursor = JsonCursor::new(input);
+    if !cursor.eat(b'{') {
+        return Err(unreadable_layout());
+    }
+    if cursor.peek() == Some(b'}') {
+        return Err(unreadable_layout());
+    }
+    loop {
+        let key = cursor.string().map_err(|_| unreadable_layout())?;
+        if !cursor.eat(b':') {
+            return Err(unreadable_layout());
+        }
+        if key == "version" {
+            return cursor.integer_digits().map_err(|_| unreadable_layout());
+        }
+        cursor.skip_value().map_err(|_| unreadable_layout())?;
+        if !cursor.eat(b',') {
+            break;
+        }
+    }
+    Err(unreadable_layout())
+}
+
+fn increment_digits(digits: &str) -> String {
+    let mut chars: Vec<u8> = digits.as_bytes().to_vec();
+    let mut carry = true;
+    for byte in chars.iter_mut().rev() {
+        if !carry {
+            break;
+        }
+        if *byte == b'9' {
+            *byte = b'0';
+        } else {
+            *byte += 1;
+            carry = false;
+        }
+    }
+    if carry {
+        chars.insert(0, b'1');
+    }
+    chars.into_iter().map(char::from).collect()
+}
+
 pub(crate) async fn stage_layout(
     State(app): State<App>,
     Authed(current): Authed,
@@ -820,6 +908,24 @@ impl<'a> JsonCursor<'a> {
         let start = self.at;
         self.skip_value()?;
         Ok(&self.input[start..self.at])
+    }
+
+    fn integer_digits(&mut self) -> Result<&'a str, ()> {
+        self.skip();
+        let bytes = &self.input[self.at..];
+        if !bytes.first().is_some_and(u8::is_ascii_digit) {
+            return Err(());
+        }
+        let mut end = 0;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if bytes.get(end).is_some_and(|byte| !is_value_end(*byte)) {
+            return Err(());
+        }
+        let digits = std::str::from_utf8(&bytes[..end]).map_err(|_| ())?;
+        self.at += end;
+        Ok(digits)
     }
 
     fn capacity_token(&mut self) -> Result<Option<&'a str>, ()> {
@@ -1108,6 +1214,8 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/history", get(layout_history))
         .route("/api/layout/preview", post(preview_layout))
+        .route("/api/layout/apply", post(apply_layout))
+        .route("/api/layout/revert", post(revert_layout))
         .route("/api/layout/stage", post(stage_layout))
         .route("/api/garage/{*path}", any(garage))
 }

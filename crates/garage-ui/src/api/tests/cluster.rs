@@ -1463,6 +1463,66 @@
         );
     }
 
+    #[tokio::test]
+    async fn apply_uses_version_current_plus_one_or_reverts_every_staged_change() {
+        let current = r#"{"version":9007199254740993,"stagedRoleChanges":[{"id":"n1","remove":true}],"roles":[],"partitionSize":1,"parameters":{"zoneRedundancy":"maximum"}}"#;
+        let mock = Upstream::start(UpstreamReply::Ok(current.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let applied = exchange(
+            &app,
+            request("POST", "/api/layout/apply", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+        assert_eq!(applied.body, current);
+        let applies = cluster_calls(&mock, "ApplyClusterLayout");
+        assert_eq!(
+            applies.len(),
+            1,
+            "{:?}",
+            applies.iter().map(|call| call.line.clone()).collect::<Vec<_>>()
+        );
+        assert!(
+            applies[0]
+                .line
+                .starts_with("POST /v2/ApplyClusterLayout "),
+            "{}",
+            applies[0].line
+        );
+        assert_eq!(applies[0].body, r#"{"version":9007199254740994}"#);
+        assert!(
+            cluster_calls(&mock, "RevertClusterLayout").is_empty(),
+            "apply reverted staged changes"
+        );
+        assert!(cluster_calls(&mock, "UpdateClusterLayout").is_empty());
+
+        let reverted = exchange(
+            &app,
+            request("POST", "/api/layout/revert", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(reverted.status, StatusCode::OK, "{}", reverted.body);
+        let reverts = cluster_calls(&mock, "RevertClusterLayout");
+        assert_eq!(
+            reverts.len(),
+            1,
+            "{:?}",
+            reverts.iter().map(|call| call.line.clone()).collect::<Vec<_>>()
+        );
+        assert!(
+            reverts[0]
+                .line
+                .starts_with("POST /v2/RevertClusterLayout "),
+            "{}",
+            reverts[0].line
+        );
+        assert_eq!(reverts[0].body, "");
+        assert_eq!(cluster_calls(&mock, "ApplyClusterLayout").len(), 1);
+        assert!(cluster_calls(&mock, "UpdateClusterLayout").is_empty());
+    }
+
     const METRICS_TOKEN: &str = "metrics-token-value1";
     const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
 

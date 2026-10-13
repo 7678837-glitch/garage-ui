@@ -415,6 +415,48 @@ function parseNode(value: unknown): Omit<NodeLine, "capacity"> {
   };
 }
 
+type ClusterStatus = {
+  nodes: NodeLine[];
+  layoutVersion: string | null;
+};
+
+function topLevelDigits(text: string, key: string): string | null {
+  const root = skipWs(text, 0);
+  if (text[root] !== "{") {
+    return null;
+  }
+  const field = objectEntries(text, root).find((entry) => entry.key === key);
+  if (!field) {
+    return null;
+  }
+  const digits = text.slice(field.start, field.end);
+  if (!/^[0-9]+$/.test(digits)) {
+    return null;
+  }
+  return digits;
+}
+
+function incrementDigits(digits: string): string {
+  const chars = digits.split("");
+  let carry = 1;
+  for (let index = chars.length - 1; index >= 0 && carry === 1; index -= 1) {
+    const sum = Number(chars[index]) + carry;
+    chars[index] = String(sum % 10);
+    carry = Math.floor(sum / 10);
+  }
+  if (carry === 1) {
+    chars.unshift("1");
+  }
+  return chars.join("");
+}
+
+function parseStatus(text: string): ClusterStatus {
+  return {
+    nodes: parseNodes(text),
+    layoutVersion: topLevelDigits(text, "layoutVersion"),
+  };
+}
+
 function parseNodes(text: string): NodeLine[] {
   const capacities = roleCapacityById(text);
   let parsed: unknown;
@@ -441,6 +483,14 @@ function stageCapacity(id: string, capacity: string): Promise<unknown> {
     method: "POST",
     body: JSON.stringify({ id, capacity }),
   });
+}
+
+function applyLayout(): Promise<unknown> {
+  return api("/api/layout/apply", { method: "POST" });
+}
+
+function revertLayout(): Promise<unknown> {
+  return api("/api/layout/revert", { method: "POST" });
 }
 
 type PendingBlockPurge = {
@@ -515,7 +565,7 @@ function failureFrom(text: string, status: number): { message: string; code: str
   return { message, code };
 }
 
-async function loadNodes(): Promise<NodeLine[]> {
+async function loadNodes(): Promise<ClusterStatus> {
   const response = await fetch("/api/cluster/status", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
@@ -524,7 +574,7 @@ async function loadNodes(): Promise<NodeLine[]> {
     // The node list is parsed from the raw text and does not go through api(). The banner only recognizes error.code.
     throw new ApiError(failure.message, failure.code);
   }
-  return parseNodes(text);
+  return parseStatus(text);
 }
 
 function connectLine(value: unknown): string {
@@ -642,6 +692,9 @@ export function ClusterNodes() {
   const stage = useMutation({
     mutationFn: ({ id, capacity }: { id: string; capacity: string }) => stageCapacity(id, capacity),
   });
+  const apply = useMutation({ mutationFn: applyLayout });
+  const revert = useMutation({ mutationFn: revertLayout });
+  const [applyOpen, setApplyOpen] = useState(false);
   const [purgeTarget, setPurgeTarget] = useState<PendingBlockPurge | null>(null);
   const purge = useMutation({
     mutationFn: (target: PendingBlockPurge) => purgeBlocks(target.id, target.hash),
@@ -664,9 +717,12 @@ export function ClusterNodes() {
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
+  const rows = nodes.isSuccess ? nodes.data.nodes : [];
+  const layoutVersion = nodes.isSuccess ? nodes.data.layoutVersion : null;
+  const nextLayoutVersion = layoutVersion === null ? null : incrementDigits(layoutVersion);
   const shown = nodes.isSuccess
     ? orderedNodes(
-        nodes.data.filter((node) => nodeMatches(node, query.filter)),
+        rows.filter((node) => nodeMatches(node, query.filter)),
         query.sort,
       )
     : [];
@@ -687,7 +743,7 @@ export function ClusterNodes() {
   const openedNode =
     nodeDetail === null || !nodes.isSuccess
       ? null
-      : (nodes.data.find((node) => node.id === nodeDetail.id) ?? null);
+      : (rows.find((node) => node.id === nodeDetail.id) ?? null);
   return (
     <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
       <h2 className="text-lg font-semibold">Nodes</h2>
@@ -763,9 +819,24 @@ export function ClusterNodes() {
         <button
           className="border border-ink px-3 py-1 text-left"
           type="button"
-          disabled={layoutPreview.phase !== "ready"}
+          disabled={layoutPreview.phase !== "ready" || nextLayoutVersion === null}
+          onClick={() => {
+            if (layoutPreview.phase !== "ready" || nextLayoutVersion === null) {
+              return;
+            }
+            setApplyOpen(true);
+          }}
         >
           Apply layout
+        </button>
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          onClick={() => {
+            revert.mutate();
+          }}
+        >
+          Revert staged changes
         </button>
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -882,7 +953,7 @@ export function ClusterNodes() {
           </button>
         </>
       ) : null}
-      {nodeDetail === null && nodes.isSuccess && nodes.data.length === 0 ? (
+      {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
         <p>There are no nodes. Connect the first node.</p>
       ) : null}
       {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
@@ -926,6 +997,21 @@ export function ClusterNodes() {
             const target = purgeTarget;
             setPurgeTarget(null);
             purge.mutate(target);
+          }}
+        />
+      ) : null}
+      {applyOpen && nextLayoutVersion !== null ? (
+        <ConfirmDialog
+          action="apply-layout"
+          name={nextLayoutVersion}
+          scope="cluster"
+          consequence="This applies the staged layout."
+          onCancel={() => {
+            setApplyOpen(false);
+          }}
+          onConfirm={() => {
+            setApplyOpen(false);
+            apply.mutate();
           }}
         />
       ) : null}
