@@ -690,17 +690,20 @@ test("shows user management for an admin and locks that signed-in row", async ()
       }
       if (url.includes("/api/users")) {
         return new Response(
-          JSON.stringify([
-            {
-              id: 7,
-              username: "Ada",
-              role: "admin",
-              can_download: false,
-              can_share: false,
-              disabled: false,
-              password_hash: "$2b$12$from-the-api",
-            },
-          ]),
+          JSON.stringify({
+            items: [
+              {
+                id: 7,
+                username: "Ada",
+                role: "admin",
+                can_download: false,
+                can_share: false,
+                disabled: false,
+                password_hash: "$2b$12$from-the-api",
+              },
+            ],
+            hasMore: false,
+          }),
           { status: 200 },
         );
       }
