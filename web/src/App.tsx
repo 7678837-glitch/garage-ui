@@ -393,6 +393,13 @@ function Home({ status }: { status: SessionStatus }) {
       />
       <div className="grid min-w-0 flex-1 gap-6">
         <GarageBanner />
+        <p
+          className="inline-block w-fit border border-ink px-2 py-0.5"
+          role="status"
+          aria-label="Health status"
+        >
+          {healthText}
+        </p>
         <p>
           {status.username} · {status.role}
         </p>
@@ -407,7 +414,6 @@ function Home({ status }: { status: SessionStatus }) {
               {status.tls_insecure === true ? (
                 <p role="alert">TLS certificate verification is off.</p>
               ) : null}
-              <p>{healthText}</p>
               <button
                 className="border border-ink px-3 py-1 text-left"
                 type="button"

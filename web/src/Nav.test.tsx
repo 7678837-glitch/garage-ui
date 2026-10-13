@@ -183,3 +183,21 @@ test("nodes and layout is its own admin page and is absent from overview", async
     true,
   );
 });
+
+test("the top bar keeps a health status badge when the section changes", async () => {
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("ok · test")).toBeTruthy();
+  const badge = screen.getByRole("status", { name: "Health status" });
+  expect(badge.textContent).toBe("ok · test");
+  const version = screen.getByText("Garage v2.4.1");
+  const crumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+  expect(version.nextElementSibling).toBe(crumb);
+
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Keys" }));
+  expect(await screen.findByRole("heading", { name: "Keys" })).toBeTruthy();
+  expect(screen.getByRole("status", { name: "Health status" }).textContent).toBe("ok · test");
+  expect(screen.getByText("Garage v2.4.1").nextElementSibling).toBe(
+    screen.getByRole("navigation", { name: "Breadcrumb" }),
+  );
+});
