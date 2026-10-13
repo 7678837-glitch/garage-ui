@@ -354,8 +354,8 @@ function Home({ status }: { status: SessionStatus }) {
   const newPassword = form.watch("new_password") ?? "";
   const passwordDirty = currentPassword.length > 0 || newPassword.length > 0;
   useEffect(() => {
-    // The password form mounts only on the overview. This effect lives on Home, so leaving the overview has to clear the dirty flag itself.
-    setFormDirty("password", section === "overview" && passwordDirty);
+    // The password form mounts only on Settings. This effect lives on Home, so leaving Settings has to clear the dirty flag itself.
+    setFormDirty("password", section === "settings" && passwordDirty);
     return () => setFormDirty("password", false);
   }, [passwordDirty, section]);
   const change = useMutation({
@@ -408,42 +408,6 @@ function Home({ status }: { status: SessionStatus }) {
                 <p role="alert">TLS certificate verification is off.</p>
               ) : null}
               <p>{healthText}</p>
-              <form
-                className="grid gap-3"
-                onSubmit={form.handleSubmit((input) => change.mutate(input))}
-              >
-                <label className="block">
-                  <span className="text-sm">Current password</span>
-                  <input
-                    className="mt-1 w-full border border-line px-2 py-1"
-                    type="password"
-                    autoComplete="current-password"
-                    {...form.register("current_password")}
-                  />
-                </label>
-                <ErrorText message={errors.current_password?.message} />
-                <label className="block">
-                  <span className="text-sm">New password</span>
-                  <input
-                    className="mt-1 w-full border border-line px-2 py-1"
-                    type="password"
-                    autoComplete="new-password"
-                    {...form.register("new_password")}
-                  />
-                </label>
-                <ErrorText message={errors.new_password?.message} />
-                <ErrorText
-                  message={change.error instanceof Error ? change.error.message : undefined}
-                />
-                {passwordStatus ? <p>{passwordStatus}</p> : null}
-                <button
-                  className="border border-ink px-3 py-1 text-left"
-                  type="submit"
-                  disabled={change.isPending}
-                >
-                  Change password
-                </button>
-              </form>
               <button
                 className="border border-ink px-3 py-1 text-left"
                 type="button"
@@ -453,9 +417,49 @@ function Home({ status }: { status: SessionStatus }) {
                 {logout.isPending ? "Logging out" : "Log out"}
               </button>
             </div>
-            <About garageVersion={status.garage_version} />
             {admin ? <ClusterHealth /> : null}
             {admin ? <ClusterNodes /> : null}
+          </>
+        ) : null}
+        {section === "settings" ? (
+          <>
+            <form
+              className="grid max-w-sm gap-3"
+              onSubmit={form.handleSubmit((input) => change.mutate(input))}
+            >
+              <label className="block">
+                <span className="text-sm">Current password</span>
+                <input
+                  className="mt-1 w-full border border-line px-2 py-1"
+                  type="password"
+                  autoComplete="current-password"
+                  {...form.register("current_password")}
+                />
+              </label>
+              <ErrorText message={errors.current_password?.message} />
+              <label className="block">
+                <span className="text-sm">New password</span>
+                <input
+                  className="mt-1 w-full border border-line px-2 py-1"
+                  type="password"
+                  autoComplete="new-password"
+                  {...form.register("new_password")}
+                />
+              </label>
+              <ErrorText message={errors.new_password?.message} />
+              <ErrorText
+                message={change.error instanceof Error ? change.error.message : undefined}
+              />
+              {passwordStatus ? <p>{passwordStatus}</p> : null}
+              <button
+                className="border border-ink px-3 py-1 text-left"
+                type="submit"
+                disabled={change.isPending}
+              >
+                Change password
+              </button>
+            </form>
+            <About garageVersion={status.garage_version} />
           </>
         ) : null}
         {section === "buckets" ? (

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -137,4 +137,27 @@ test("a viewer opening #nodes stays on overview and an admin marks Nodes and lay
   const nodes = await screen.findByRole("link", { name: "Nodes and layout" });
   expect(nodes.getAttribute("aria-current")).toBe("page");
   expect(nodes.getAttribute("href")).toBe("#nodes");
+});
+
+test("settings shows About and the password form, and overview does not", async () => {
+  stubSignedIn("viewer");
+  renderApp();
+  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
+  expect(screen.queryByLabelText("Current password")).toBeNull();
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
+
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Settings" }));
+  expect(window.location.hash).toBe("#settings");
+  expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
+  expect(screen.getByText("List buckets info unknown")).toBeTruthy();
+  expect(screen.getByText("List keys info unknown")).toBeTruthy();
+  expect(screen.getByLabelText("Current password")).toBeTruthy();
+  expect(screen.getByLabelText("New password")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
+  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
 });

@@ -77,6 +77,9 @@ test("shows health status when the session is authenticated", async () => {
   renderApp();
   expect(await screen.findByText("ok · test")).toBeTruthy();
   expect(screen.getAllByText("Ada · admin")).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
+  expect(screen.getAllByText("Garage version is not set")).toHaveLength(1);
+  await chooseSection("Settings");
   expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
@@ -384,6 +387,7 @@ test("password form shows unsaved, saving, saved, and failed", async () => {
     }),
   );
   renderApp();
+  await chooseSection("Settings");
   const current = (await screen.findByLabelText("Current password")) as HTMLInputElement;
   const next = screen.getByLabelText("New password") as HTMLInputElement;
   expect(screen.queryByText("Unsaved changes")).toBeNull();
@@ -426,6 +430,7 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
   const uploadGuard = () => "upload";
   window.onbeforeunload = uploadGuard;
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  window.location.hash = "#settings";
   stubSignedIn("admin");
   renderApp();
   const current = (await screen.findByLabelText("Current password")) as HTMLInputElement;
@@ -441,7 +446,7 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
   expect(leaving.defaultPrevented).toBe(true);
   fireEvent.click(sectionsNav().getByRole("link", { name: "Keys" }));
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
-  expect(window.location.hash).toBe("");
+  expect(window.location.hash).toBe("#settings");
   expect(current.value).toBe("current secret");
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   window.location.hash = "#keys";
@@ -450,7 +455,7 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
       setTimeout(resolve, 0);
     });
   });
-  expect(window.location.hash).toBe("");
+  expect(window.location.hash).toBe("#settings");
   expect(current.value).toBe("current secret");
   await act(async () => {
     await new Promise((resolve) => {
@@ -462,6 +467,7 @@ test("a cancelled confirm keeps the hash and a dirty password does not replace o
 });
 
 test("an accepted leave does not ask again after the password form unmounts", async () => {
+  window.location.hash = "#settings/extra";
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   stubSignedIn("admin");
   renderApp();
@@ -469,10 +475,10 @@ test("an accepted leave does not ask again after the password form unmounts", as
   fireEvent.change(current, { target: { value: "current secret" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
 
-  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Settings" }));
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
-  expect(window.location.hash).toBe("#overview");
+  expect(window.location.hash).toBe("#settings");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
     "current secret",
   );
@@ -482,9 +488,9 @@ test("an accepted leave does not ask again after the password form unmounts", as
   expect(window.location.hash).toBe("#buckets");
   expect(screen.queryByLabelText("Current password")).toBeNull();
 
-  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Settings" }));
   expect(confirm).toHaveBeenCalledTimes(2);
-  expect(window.location.hash).toBe("#overview");
+  expect(window.location.hash).toBe("#settings");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
     "current secret",
   );
@@ -496,6 +502,7 @@ test("an accepted leave does not ask again after the password form unmounts", as
 });
 
 test("a hashchange that arrives after returning to the dirty password form does not ask", async () => {
+  window.location.hash = "#settings";
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   stubSignedIn("admin");
   renderApp();
@@ -509,9 +516,9 @@ test("a hashchange that arrives after returning to the dirty password form does 
   expect(window.location.hash).toBe("#buckets");
   expect(screen.queryByLabelText("Current password")).toBeNull();
 
-  fireEvent.click(sectionsNav().getByRole("link", { name: "Overview" }));
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Settings" }));
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(window.location.hash).toBe("#overview");
+  expect(window.location.hash).toBe("#settings");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
     "current secret",
   );
@@ -519,7 +526,7 @@ test("a hashchange that arrives after returning to the dirty password form does 
 
   window.dispatchEvent(new HashChangeEvent("hashchange"));
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(window.location.hash).toBe("#overview");
+  expect(window.location.hash).toBe("#settings");
   expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(
     "current secret",
   );
@@ -556,6 +563,7 @@ test("shows why a short new password did not submit", async () => {
   });
   vi.stubGlobal("fetch", fetchMock);
   renderApp();
+  await chooseSection("Settings");
   fireEvent.change(await screen.findByLabelText("Current password"), {
     target: { value: "current secret" },
   });
@@ -704,6 +712,7 @@ test("shows user management for an admin and locks that signed-in row", async ()
   );
   renderApp();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  await chooseSection("Settings");
   expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
@@ -748,14 +757,18 @@ test("hides user management from a viewer", async () => {
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
+  expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
+  await chooseSection("Settings");
   expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   expect(await screen.findByText("Version 20261010.1")).toBeTruthy();
   expect(screen.getByText("List buckets info unknown")).toBeTruthy();
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
   expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
-  expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
@@ -1035,7 +1048,7 @@ test("an admin sees Users and a viewer opening #users sees overview", async () =
   stubSignedIn("viewer");
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
   expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
 });
@@ -1045,7 +1058,7 @@ test("a non-admin #users/x stays on overview and keeps the hash", async () => {
   stubSignedIn("viewer");
   renderApp();
   expect(await screen.findByText("Bea · viewer")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
   expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
@@ -1123,7 +1136,7 @@ test("a signed-in page shows one breadcrumb built from the section labels", asyn
   const version = screen.getAllByText("Garage v2.4.1")[0];
   expect(version.nextElementSibling).toBe(overview);
   expect(
-    overview.compareDocumentPosition(screen.getByRole("heading", { name: "About" })),
+    overview.compareDocumentPosition(screen.getByRole("heading", { name: "Cluster health" })),
   ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
   cleanup();
@@ -1528,6 +1541,7 @@ test("keeps the change-password form when the current password is rejected", asy
     }),
   );
   renderApp();
+  await chooseSection("Settings");
   fireEvent.change(await screen.findByLabelText("Current password"), {
     target: { value: "current secret" },
   });
