@@ -990,3 +990,39 @@ test("lists the buckets a key can access with read, write, and owner", async () 
   expect(window.location.hash).toBe("#key/GK1/buckets");
   expect(calls).toContain("/api/keys/GK1");
 });
+
+test("the key buckets tab shows the grant bits", async () => {
+  window.location.hash = "#key/GK1/buckets";
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      const parsed = new URL(url, "http://ui.local");
+      if (parsed.pathname === "/api/keys") {
+        return json({ items: [{ id: "GK1", name: "photos" }], hasMore: false });
+      }
+      if (url === "/api/keys/GK1") {
+        return json({
+          buckets: [
+            {
+              id: "bkt-photos",
+              permissions: { owner: true, read: true, write: false },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    }),
+  );
+  renderKeys();
+  const bucket = await screen.findByRole("listitem", { name: "bkt-photos" });
+  expect(within(bucket).getByText("owner yes").textContent).toBe("owner yes");
+  expect(within(bucket).getByText("read yes").textContent).toBe("read yes");
+  expect(within(bucket).getByText("write no").textContent).toBe("write no");
+  expect(screen.getByRole("tab", { name: "Overview" }).textContent).toBe("Overview");
+  expect(screen.getByRole("tab", { name: "Buckets" }).textContent).toBe("Buckets");
+  expect(screen.getByRole("tab", { name: "Settings" }).textContent).toBe("Settings");
+  expect(calls).toContain("/api/keys/GK1");
+});
