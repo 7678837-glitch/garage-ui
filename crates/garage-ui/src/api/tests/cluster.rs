@@ -1746,3 +1746,84 @@ block_bytes_written 5
         assert_eq!(row.target, sent);
         assert_eq!(row.status, 403);
     }
+
+    #[tokio::test]
+    async fn sensitive_operations_require_a_second_confirmation() {
+        let upstream = json!({"success":{"n1":{"ok":true}},"error":{}}).to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(upstream)).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let sensitive = [
+            (
+                "PUT",
+                "/api/nodes/n1/worker-variables",
+                Some(r#"{"variable":"scrub_tranquility","value":"3"}"#),
+                "SetWorkerVariable",
+            ),
+            (
+                "POST",
+                "/api/nodes/n1/repair",
+                Some(r#"{"repairType":"tables"}"#),
+                "LaunchRepairOperation",
+            ),
+            (
+                "POST",
+                "/api/nodes/n1/blocks/purge",
+                Some(r#"["h1","h2"]"#),
+                "PurgeBlocks",
+            ),
+            (
+                "POST",
+                "/api/garage/v2/ClusterLayoutSkipDeadNodes",
+                Some("{}"),
+                "ClusterLayoutSkipDeadNodes",
+            ),
+        ];
+
+        assert_eq!(mock.hits(), 0);
+        for (method, path, body, endpoint) in sensitive {
+            let denied = exchange(&app, request(method, path, body, Some(&admin))).await;
+            assert_error(
+                &denied,
+                StatusCode::FORBIDDEN,
+                "confirmation_required",
+                "Confirmation required",
+            );
+            assert!(
+                cluster_calls(&mock, endpoint).is_empty(),
+                "{endpoint} reached upstream"
+            );
+        }
+        assert_eq!(mock.hits(), 0, "an unconfirmed call reached upstream");
+
+        let read = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/nodes/n1/worker-variables?variable=scrub_tranquility",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+        assert_ne!(code_of(&read.body), "confirmation_required");
+        assert_eq!(cluster_calls(&mock, "GetWorkerVariable").len(), 1);
+
+        for (method, path, body, endpoint) in sensitive {
+            let before = cluster_calls(&mock, endpoint).len();
+            let allowed = exchange(
+                &app,
+                with_confirm(request(method, path, body, Some(&admin))),
+            )
+            .await;
+            assert_eq!(allowed.status, StatusCode::OK, "{endpoint} {}", allowed.body);
+            assert_ne!(code_of(&allowed.body), "confirmation_required");
+            assert_eq!(
+                cluster_calls(&mock, endpoint).len(),
+                before + 1,
+                "{endpoint} did not proceed"
+            );
+        }
+    }
