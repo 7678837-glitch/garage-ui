@@ -166,10 +166,10 @@ test("a bucket, a key, and a node each open on the detail tab in the address", a
     }),
   ).toBeNull();
   expect(
-    within(screen.getByRole("navigation", { name: "Sections" })).queryByRole("link", {
-      name: "Audit",
-    }),
-  ).toBeNull();
+    within(screen.getByRole("navigation", { name: "Sections" }))
+      .getByRole("link", { name: "Audit" })
+      .getAttribute("href"),
+  ).toBe("#audit");
   expect(crumb().getByRole("link", { name: "Nodes and layout" }).getAttribute("href")).toBe(
     "#nodes",
   );
