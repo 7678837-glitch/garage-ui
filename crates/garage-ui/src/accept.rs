@@ -1594,7 +1594,7 @@ async fn bootstrap_admin_rejects_a_half_pair_or_a_bad_hash() {
         panic!("half pair must fail");
     };
     let text = format!("{err:#}");
-    assert!(text.contains("启动账号需要成对配置，拒绝启动"));
+    assert!(text.contains("bootstrap account must be configured as a pair; refusing to start"));
     assert!(!text.contains(username));
 
     let hash = "not-a-bcrypt-hash";
@@ -1611,7 +1611,7 @@ async fn bootstrap_admin_rejects_a_half_pair_or_a_bad_hash() {
         panic!("bad hash must fail");
     };
     let text = format!("{err:#}");
-    assert!(text.contains("启动账号无法导入，拒绝启动"));
+    assert!(text.contains("bootstrap account could not be imported; refusing to start"));
     assert!(!text.contains(username));
     assert!(!text.contains(hash));
 }

@@ -298,7 +298,7 @@ pub async fn presign_get(
     key: &str,
     ttl_secs: u64,
 ) -> Result<String, ApiError> {
-    // 发出去的链接必须签在公共地址上。内网端点不能出现在这个 URL 里。
+    // Sign the issued link for the public address. The internal endpoint must not appear in this URL.
     let endpoint = app
         .settings
         .public_s3_url
@@ -440,7 +440,7 @@ async fn put_whole(
     let bucket = bucket_id.to_string();
     let key = key.to_string();
     let length = i64::try_from(size).unwrap_or(i64::MAX);
-    // drive 在 403 时会再请求一次。请求体只能读一遍，按块落盘后两次都从文件建 ByteStream。
+    // drive retries once on 403. The body can be read only once, so spool it and build both ByteStreams from the file.
     let replay = ReplayBody::new(app.settings.data_dir.clone(), size, body);
     let etag = drive(app, bucket.clone(), {
         let bucket = bucket.clone();
@@ -472,7 +472,7 @@ async fn put_multipart(
 ) -> Result<PutResult, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
-    // Create 返回 403 时 drive 会重试，这时请求体还不能被读走。
+    // When Create returns 403, drive retries, so the request body must still be unread.
     let source = Arc::new(Mutex::new(Some(body)));
     let upload_buffer = Arc::clone(&app.upload_buffer);
     let etag = drive(app, bucket.clone(), {
@@ -512,7 +512,7 @@ pub async fn delete(app: &App, bucket_id: &str, key: &str) -> Result<(), ApiErro
         let bucket = bucket.clone();
         let key = key.clone();
         async move {
-            // 已不存在的 key 也算删完。drive 会把 404 转成接口 404。
+            // A missing key is already deleted. drive maps that 404 to the API 404.
             match remove_object(&client, &bucket, &key).await {
                 Err(S3Failure::NotFound) => Ok(()),
                 other => other,
@@ -571,7 +571,7 @@ pub async fn delete_prefix(
             deleted += batch.deleted.len() as u64;
             errors.extend(batch.failed);
         }
-        // 下一页只跟 IsTruncated 给出的续页令牌走。满 1000 条但未截断时不再列一次。
+        // The next page follows only the continuation token that comes with IsTruncated.
         let Some(next) = page.next else {
             break;
         };
@@ -767,7 +767,7 @@ async fn fetch_object(
     } else {
         StatusCode::OK
     };
-    // 不把对象读进 Vec。外层仍按块流出，提前丢弃才会取消上游读取。
+    // Keep the object out of a Vec. The caller streams it, and dropping the body cancels the upstream read.
     Ok(ObjectStream {
         content_type: output.content_type().unwrap_or("").to_string(),
         body: cancel_when_dropped(output.body.into_inner()),
@@ -778,7 +778,7 @@ async fn fetch_object(
 
 struct DownloadBody {
     inner: Pin<Box<SdkBody>>,
-    // 已知长度时，响应端读满字节后可能不再 poll 出结束帧。
+    // When the length is known, the response side may stop polling once those bytes have arrived.
     remaining: Option<u64>,
     finished: bool,
 }
@@ -893,7 +893,7 @@ async fn put_with(
         .set_content_type(content_type)
         .body(body)
         .customize();
-    // SDK 在没收到类型时会补 application/octet-stream。调用方没给类型时，签名前去掉这个默认头。
+    // The SDK inserts application/octet-stream when no type was given. Remove that default before signing.
     if omit_default_type {
         operation = operation.mutate_request(|request| {
             request.headers_mut().remove("content-type");
@@ -939,7 +939,7 @@ impl PartReader {
             let Some(next) =
                 std::future::poll_fn(|cx| HttpBody::poll_frame(self.body.as_mut(), cx)).await
             else {
-                // 客户端断开或体比 Content-Length 短时不能完成分片。
+                // A disconnect, or a body shorter than Content-Length, cannot finish the part.
                 return Err(S3Failure::Local);
             };
             let frame = next.map_err(|_| S3Failure::Local)?;
@@ -985,8 +985,8 @@ async fn send_parts(
             continue;
         }
         let want = usize::try_from(part_size.min(left)).unwrap_or(usize::MAX);
-        // 这一版 tokio 在申请数大于创建时的许可数时不会返回错误，只会一直等。
-        // 大于进程上限的分片永远排不上，先中止。
+        // This tokio build waits forever when acquire asks for more permits than the semaphore was created with.
+        // A part above the process cap can never run, so abort it.
         let permits = match u32::try_from(want) {
             Ok(permits) if want <= crate::state::UPLOAD_BUFFER_BYTES => permits,
             _ => {
@@ -1032,7 +1032,7 @@ async fn send_parts(
             let upload_id = upload_id.clone();
             async move {
                 let result = upload_one(&client, &bucket, &key, &upload_id, number, bytes).await;
-                // 许可跟着分片任务走。父任务停在 acquire 上时，占满额度的分片仍要能结束并归还。
+                // The permit stays with the part task, so a part can finish and release it while the parent is blocked on acquire.
                 drop(permit);
                 result.map(|etag| (number, etag))
             }
@@ -1078,7 +1078,7 @@ async fn stop_parts(
 }
 
 fn multipart_failure(error: S3Failure) -> S3Failure {
-    // 分片已经开始读请求体。再把 Forbidden 交回 drive 会重跑整段，第二次体是空的。
+    // The part has already read the request body. Returning Forbidden would make drive rerun the upload against an empty body.
     match error {
         S3Failure::Forbidden(message) => S3Failure::Upstream {
             status: 403,
@@ -1487,7 +1487,7 @@ async fn sources(app: &App, bucket_id: &str) -> CredentialSources {
     let project_key = app.settings.project_key.as_ref().map(|key| {
         BucketCredential::new(key.access_key_id.clone(), key.secret_access_key.clone())
     });
-    // 项目 key 优先。没有它时才看 explicit_key，不从任意读写 key 里挑。
+    // The project key wins. explicit_key is used only when the project key is absent.
     let explicit_key = if project_key.is_some() {
         None
     } else {
@@ -1501,7 +1501,7 @@ async fn sources(app: &App, bucket_id: &str) -> CredentialSources {
 }
 
 async fn explicit_credential(app: &App, bucket_id: &str) -> Option<BucketCredential> {
-    // 库里只留 access key id。密钥每次向 Garage 现取，避免把 secret 写进 sqlite。
+    // SQLite stores the access key id. The secret is fetched from Garage on each use.
     let access_key_id = db::bucket_key(&app.db, bucket_id).await.ok().flatten()?;
     let secret = key_secret(app, &access_key_id).await?;
     Some(BucketCredential::new(access_key_id, secret))
@@ -1537,8 +1537,8 @@ fn s3_client(
         None,
         "garage-ui",
     );
-    // latest 默认校验响应校验和。Garage 不回这些头，开启后正常列表会被判失败。
-    // 同一把密钥只打一次 HTTP。403 的第二次尝试由 CredentialCache::read 发起。
+    // latest validates response checksums by default. Garage omits those headers, so lists would fail.
+    // One key makes one HTTP call. CredentialCache::read starts the retry after 403.
     let mut config = aws_sdk_s3::Config::builder()
         .behavior_version(aws_config::BehaviorVersion::latest())
         .region(Region::new(region.to_string()))
@@ -2029,5 +2029,289 @@ server.serve_forever()
             !skipped.contains("certificate"),
             "tls_insecure must pass the handshake: {skipped}"
         );
+    }
+
+    struct GarageNode {
+        name: String,
+        volume: String,
+        config_dir: PathBuf,
+        port: u16,
+        access_key_id: String,
+        secret_key: String,
+    }
+
+    impl Drop for GarageNode {
+        fn drop(&mut self) {
+            let _ = Command::new("docker")
+                .args(["rm", "-f", &self.name])
+                .output();
+            let _ = Command::new("docker")
+                .args(["volume", "rm", &self.volume])
+                .output();
+            let _ = std::fs::remove_dir_all(&self.config_dir);
+        }
+    }
+
+    fn docker(args: &[String]) -> std::process::Output {
+        Command::new("docker").args(args).output().unwrap_or_else(|error| {
+            panic!("docker failed to start: {error}");
+        })
+    }
+
+    fn redact_secrets(text: &str) -> String {
+        let mut out = String::new();
+        for line in text.lines() {
+            if line.contains("Secret key") || line.contains("admin_token") || line.contains("rpc_secret") {
+                continue;
+            }
+            let mut hexed = String::new();
+            let mut run = String::new();
+            for ch in line.chars() {
+                if ch.is_ascii_hexdigit() {
+                    run.push(ch);
+                    continue;
+                }
+                if run.len() >= 16 {
+                    hexed.push_str("[hex]");
+                } else {
+                    hexed.push_str(&run);
+                }
+                run.clear();
+                hexed.push(ch);
+            }
+            if run.len() >= 16 {
+                hexed.push_str("[hex]");
+            } else {
+                hexed.push_str(&run);
+            }
+            out.push_str(&hexed);
+            out.push('\n');
+        }
+        out
+    }
+
+    fn docker_ok(args: &[String]) -> std::process::Output {
+        let output = docker(args);
+        if output.status.success() {
+            return output;
+        }
+        let stderr = redact_secrets(&String::from_utf8_lossy(&output.stderr));
+        panic!("docker {} exited {}\n{stderr}", args.join(" "), output.status);
+    }
+
+    fn garage_cli(name: &str, args: &[&str]) -> std::process::Output {
+        let mut command = vec![
+            "exec".to_string(),
+            "-e".to_string(),
+            "GARAGE_CONFIG_FILE=/config/garage.toml".to_string(),
+            name.to_string(),
+            "/garage".to_string(),
+        ];
+        command.extend(args.iter().map(|arg| (*arg).to_string()));
+        docker_ok(&command)
+    }
+
+    fn labeled<'a>(text: &'a str, label: &str) -> &'a str {
+        let prefix = format!("{label}:");
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix(&prefix).map(str::trim))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| panic!("garage output missing {label}"))
+    }
+
+    fn random_hex(nbytes: usize) -> String {
+        let mut bytes = vec![0_u8; nbytes];
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut file| file.read_exact(&mut bytes))
+            .expect("urandom");
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    impl GarageNode {
+        fn start() -> Self {
+            let name = format!("garage-w225-{}", std::process::id());
+            let volume = format!("{name}-data");
+            let _ = Command::new("docker").args(["rm", "-f", &name]).output();
+            let _ = Command::new("docker")
+                .args(["volume", "rm", &volume])
+                .output();
+            let config_dir = crate::util::temp_dir();
+            let config_path = config_dir.join("garage.toml");
+            let rpc = random_hex(32);
+            let admin = random_hex(32);
+            let metrics = random_hex(32);
+            std::fs::write(
+                &config_path,
+                format!(
+                    r#"metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "{rpc}"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "{admin}"
+metrics_token = "{metrics}"
+"#
+                ),
+            )
+            .expect("garage.toml");
+            let host_port = 20_000 + (std::process::id() % 10_000) as u16;
+            assert!(
+                !matches!(host_port, 3900 | 3901 | 3902 | 3903 | 3909),
+                "host port {host_port}"
+            );
+            docker_ok(&[
+                "volume".to_string(),
+                "create".to_string(),
+                volume.clone(),
+            ]);
+            docker_ok(&[
+                "run".to_string(),
+                "-d".to_string(),
+                "--name".to_string(),
+                name.clone(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "-e".to_string(),
+                "GARAGE_CONFIG_FILE=/config/garage.toml".to_string(),
+                "-v".to_string(),
+                format!("{}:/config/garage.toml:ro", config_path.display()),
+                "-v".to_string(),
+                format!("{volume}:/var/lib/garage"),
+                "-p".to_string(),
+                format!("127.0.0.1:{host_port}:3900"),
+                "dxflrs/garage:v2.4.1".to_string(),
+                "/garage".to_string(),
+                "server".to_string(),
+                "--single-node".to_string(),
+            ]);
+            let mut node = Self {
+                name,
+                volume,
+                config_dir,
+                port: host_port,
+                access_key_id: String::new(),
+                secret_key: String::new(),
+            };
+            node.wait_healthy();
+            garage_cli(&node.name, &["bucket", "create", "objects"]);
+            let created = garage_cli(&node.name, &["key", "create", "getobject"]);
+            let text = String::from_utf8_lossy(&created.stdout);
+            node.access_key_id = labeled(&text, "Key ID").to_string();
+            node.secret_key = labeled(&text, "Secret key").to_string();
+            garage_cli(
+                &node.name,
+                &["bucket", "allow", "--read", "--write", "objects", "--key", "getobject"],
+            );
+            node
+        }
+
+        fn wait_healthy(&self) {
+            let mut last = String::new();
+            for _ in 0..40 {
+                let output = docker(&[
+                    "exec".to_string(),
+                    "-e".to_string(),
+                    "GARAGE_CONFIG_FILE=/config/garage.toml".to_string(),
+                    self.name.clone(),
+                    "/garage".to_string(),
+                    "status".to_string(),
+                ]);
+                if output.status.success() {
+                    return;
+                }
+                last = redact_secrets(&String::from_utf8_lossy(&output.stderr));
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            panic!("garage did not become healthy: {last}");
+        }
+    }
+
+    fn garage_still_starting(error: &str) -> bool {
+        let lower = error.to_ascii_lowercase();
+        lower.contains("connection refused")
+            || lower.contains("error trying to connect")
+            || lower.contains("dns error")
+            || lower.contains("connect timeout")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn s3_client_reads_every_stored_byte() {
+        let node = GarageNode::start();
+        let credential = BucketCredential::new(&node.access_key_id, &node.secret_key);
+        let endpoint = format!("http://127.0.0.1:{}", node.port);
+        let payload = vec![0x5Au8; 1024 * 1024];
+        let client = s3_client("garage", &endpoint, &credential, false, None);
+        let mut last = String::new();
+        for _ in 0..40 {
+            match client
+                .put_object()
+                .bucket("objects")
+                .key("one-mib.bin")
+                .body(ByteStream::from(payload.clone()))
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    last.clear();
+                    break;
+                }
+                Err(error) => {
+                    last = error_chain(&error);
+                    if !garage_still_starting(&last) {
+                        panic!("put failed: {last}");
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        if !last.is_empty() {
+            panic!("put never reached garage: {last}");
+        }
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app_with(
+            &dir,
+            &[
+                ("S3_ENDPOINT_URL", endpoint.as_str()),
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", node.access_key_id.as_str()),
+                ("S3_SECRET_ACCESS_KEY", node.secret_key.as_str()),
+            ],
+            crate::limit::test_quota(),
+        )
+        .await;
+        let opened = open(&app, "objects", "one-mib.bin")
+            .await
+            .unwrap_or_else(|error| panic!("get failed: {error:?}"));
+        let mut body = std::pin::pin!(opened.body);
+        let mut bytes = Vec::new();
+        while let Some(next) =
+            std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
+        {
+            let frame = match next {
+                Ok(frame) => frame,
+                Err(error) => panic!("{}", error_chain(error.as_ref())),
+            };
+            let Ok(data) = frame.into_data() else {
+                continue;
+            };
+            bytes.extend_from_slice(&data);
+        }
+        assert_eq!(bytes.len(), 1_048_576);
+        assert_eq!(bytes, payload);
     }
 }
