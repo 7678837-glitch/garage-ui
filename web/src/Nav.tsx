@@ -7,6 +7,7 @@ const sections = [
   { id: "nodes", label: "Nodes and layout", adminOnly: true },
   { id: "workers", label: "Workers", adminOnly: true },
   { id: "block-errors", label: "Block errors", adminOnly: true },
+  { id: "audit", label: "Audit", adminOnly: true },
   { id: "tokens", label: "Admin tokens", adminOnly: true },
   { id: "users", label: "Users", adminOnly: true },
   { id: "settings", label: "Settings", adminOnly: false },

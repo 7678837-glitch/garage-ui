@@ -17,6 +17,7 @@ const adminEntries = [
   "Nodes and layout",
   "Workers",
   "Block errors",
+  "Audit",
   "Admin tokens",
   "Users",
   "Settings",
@@ -102,7 +103,6 @@ test("an admin sees Overview through Settings in order and no undelivered pages"
   expect(await screen.findByText("Ada · admin")).toBeTruthy();
   expect(linkNames()).toEqual(adminEntries);
   expect(sectionsNav().queryByRole("link", { name: "Operations" })).toBeNull();
-  expect(sectionsNav().queryByRole("link", { name: "Audit" })).toBeNull();
 });
 
 test("a viewer does not see Nodes and layout, Admin tokens, or Users", async () => {
