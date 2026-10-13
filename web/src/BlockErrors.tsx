@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
@@ -64,6 +64,13 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
     queryKey: ["nodes", nodeId, "block-errors"],
     queryFn: () => loadBlockErrors(nodeId),
   });
+  const retry = useMutation({
+    mutationFn: (blockHash: string) =>
+      api(`/api/nodes/${encodeURIComponent(nodeId)}/blocks/retry`, {
+        method: "POST",
+        body: JSON.stringify({ blockHashes: [blockHash] }),
+      }),
+  });
   const message = blockErrors.error instanceof Error ? blockErrors.error.message : UNAVAILABLE;
   const rows = blockErrors.data ?? [];
 
@@ -73,6 +80,9 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
         <div className="h-16 border border-line" aria-label="Loading block errors" />
       ) : null}
       {blockErrors.isError && !isGarageDown(blockErrors.error) ? <p>{message}</p> : null}
+      {retry.error instanceof Error && !isGarageDown(retry.error) ? (
+        <p>{retry.error.message}</p>
+      ) : null}
       {blockErrors.isSuccess && rows.length === 0 ? <p>There are no block errors.</p> : null}
       {rows.length > 0 ? (
         <div className="overflow-x-auto">
@@ -91,8 +101,11 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                 <th className="py-2 pr-3 font-medium" scope="col">
                   Last try seconds ago
                 </th>
-                <th className="py-2 font-medium" scope="col">
+                <th className="py-2 pr-3 font-medium" scope="col">
                   Next try in seconds
+                </th>
+                <th className="py-2 font-medium" scope="col">
+                  Retry
                 </th>
               </tr>
             </thead>
@@ -103,7 +116,16 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                   <td className="py-2 pr-3">{row.refcount}</td>
                   <td className="py-2 pr-3">{row.errorCount}</td>
                   <td className="py-2 pr-3">{row.lastTrySecsAgo}</td>
-                  <td className="py-2">{row.nextTryInSecs}</td>
+                  <td className="py-2 pr-3">{row.nextTryInSecs}</td>
+                  <td className="py-2">
+                    <button
+                      className="border border-ink px-3 py-1 text-left"
+                      type="button"
+                      onClick={() => retry.mutate(row.blockHash)}
+                    >
+                      Retry {row.blockHash}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

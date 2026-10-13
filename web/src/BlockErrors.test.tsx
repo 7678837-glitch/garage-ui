@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -72,5 +72,30 @@ test("an admin opening #block-errors/n1 sees that node's block aa11", async () =
   expect(screen.getByText("3")).toBeTruthy();
   expect(screen.getByText("4")).toBeTruthy();
   expect(screen.getByText("5")).toBeTruthy();
+  expect(window.location.hash).toBe("#block-errors/n1");
+});
+
+function retryPosts(): { url: string; body: unknown }[] {
+  return vi.mocked(fetch).mock.calls.flatMap(([input, init]) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method !== "POST" || url !== "/api/nodes/n1/blocks/retry") {
+      return [];
+    }
+    const raw = init?.body;
+    return [{ url, body: typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw }];
+  });
+}
+
+test("clicking Retry aa11 posts that one block hash", async () => {
+  window.location.hash = "#block-errors/n1";
+  stubAdminBlockErrors();
+  renderApp();
+  fireEvent.click(await screen.findByRole("button", { name: "Retry aa11" }));
+  await waitFor(() => {
+    expect(retryPosts()).toEqual([
+      { url: "/api/nodes/n1/blocks/retry", body: { blockHashes: ["aa11"] } },
+    ]);
+  });
   expect(window.location.hash).toBe("#block-errors/n1");
 });
