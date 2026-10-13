@@ -2701,6 +2701,160 @@
         assert_eq!(preview.body, "hello plain");
     }
 
+    fn one_pixel_png() -> &'static [u8] {
+        &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+            192, 0, 0, 3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]
+    }
+
+    fn png_object_http(head: bool) -> Vec<u8> {
+        let png = one_pixel_png();
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nETag: \"pixel\"\r\nLast-Modified: Sun, 11 Oct 2026 00:00:00 GMT\r\nConnection: close\r\n\r\n",
+            png.len()
+        )
+        .into_bytes();
+        if !head {
+            response.extend_from_slice(png);
+        }
+        response
+    }
+
+    #[tokio::test]
+    async fn object_viewer_download_and_thumbnail_succeed_after_download_is_granted() {
+        let mock = S3Mock::start_bytes(|line| {
+            if object_key_of(line) == "photo.png" {
+                return png_object_http(line.starts_with("HEAD "));
+            }
+            if line.starts_with("HEAD ") {
+                return head_ok().into_bytes();
+            }
+            object_bytes("text/plain", "hello plain").into_bytes()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Bea",
+                        "password": "viewer horse",
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let user_id = serde_json::from_str::<Value>(&created.body).unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let viewer = sign_in(&app, "Bea", "viewer horse").await;
+        let download_denied = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(
+            &download_denied,
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Not allowed",
+        );
+        assert!(
+            mock.requests().is_empty(),
+            "download called S3: {:?}",
+            mock.requests()
+        );
+
+        let thumbnail_denied = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(
+            &thumbnail_denied,
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Not allowed",
+        );
+        assert!(
+            mock.requests().is_empty(),
+            "thumbnail called S3: {:?}",
+            mock.requests()
+        );
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{user_id}"),
+                Some(&json!({ "can_download": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&patched.body).unwrap()["can_download"],
+            true
+        );
+
+        let download = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(download.status, StatusCode::OK, "{}", download.body);
+        assert_eq!(download.body, "hello plain");
+
+        let (thumb_status, thumb_bytes) = exchange_bytes(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(
+            thumb_status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&thumb_bytes)
+        );
+        assert!(
+            thumb_bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "{}",
+            String::from_utf8_lossy(&thumb_bytes[..thumb_bytes.len().min(180)])
+        );
+    }
+
     #[tokio::test]
     async fn object_search_rejects_a_short_query_and_stops_at_two_hundred() {
         let mock = S3Mock::start(|_| {

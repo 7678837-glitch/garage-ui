@@ -863,6 +863,10 @@
 
     impl S3Mock {
         async fn start(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Self {
+            Self::serve(move |line| reply(line).into_bytes(), None, None).await
+        }
+
+        async fn start_bytes(reply: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static) -> Self {
             Self::serve(reply, None, None).await
         }
 
@@ -873,14 +877,14 @@
                 released: AtomicBool::new(false),
                 notify: tokio::sync::Notify::new(),
             });
-            Self::serve(reply, Some(hold), None).await
+            Self::serve(move |line| reply(line).into_bytes(), Some(hold), None).await
         }
 
         async fn start_holding_get(
             reply: impl Fn(&str) -> String + Send + Sync + 'static,
             hold: Arc<GetHold>,
         ) -> Self {
-            Self::serve(reply, None, Some(hold)).await
+            Self::serve(move |line| reply(line).into_bytes(), None, Some(hold)).await
         }
 
         fn release_parts(&self) {
@@ -892,7 +896,7 @@
         }
 
         async fn serve(
-            reply: impl Fn(&str) -> String + Send + Sync + 'static,
+            reply: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static,
             hold: Option<Arc<PartHold>>,
             get_hold: Option<Arc<GetHold>>,
         ) -> Self {
@@ -998,7 +1002,7 @@
                             hold.early.store(true, Ordering::SeqCst);
                         }
                         let response = reply(&recorded);
-                        let _ = socket.write_all(response.as_bytes()).await;
+                        let _ = socket.write_all(&response).await;
                         let _ = socket.shutdown().await;
                     });
                 }
