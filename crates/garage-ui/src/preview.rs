@@ -95,4 +95,31 @@ mod tests {
         );
         assert!(!pdf.content_security_policy.contains("allow-same-origin"));
     }
+
+    #[test]
+    fn xml_and_javascript_are_attachments_and_common_images_stay_inline() {
+        for content_type in [
+            "text/xml",
+            "application/xml",
+            "text/javascript",
+            "application/javascript",
+        ] {
+            let policy = preview_policy(content_type, "page.html");
+            assert_eq!(policy.content_type, "application/octet-stream");
+            let disposition = policy.content_disposition.expect(content_type);
+            assert!(
+                disposition.starts_with("attachment;"),
+                "{content_type} {disposition}"
+            );
+            assert!(
+                disposition.contains("filename*=UTF-8''page.html"),
+                "{content_type} {disposition}"
+            );
+        }
+        for content_type in ["image/jpeg", "image/gif", "image/webp"] {
+            let policy = preview_policy(content_type, "photo.bin");
+            assert_eq!(policy.content_type, content_type);
+            assert!(policy.content_disposition.is_none(), "{content_type}");
+        }
+    }
 }
