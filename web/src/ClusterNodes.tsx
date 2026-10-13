@@ -524,7 +524,7 @@ function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => vo
   const [hash, setHash] = useState("");
   return (
     <>
-      <label className="block">
+      <label className="block break-all">
         <span className="text-sm">Block hash for {id}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
@@ -535,7 +535,7 @@ function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => vo
         />
       </label>
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="max-w-full break-all border border-ink px-3 py-1 text-left"
         type="button"
         onClick={() => {
           const next = hash.trim();
