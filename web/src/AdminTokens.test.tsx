@@ -789,3 +789,58 @@ test("scope_groups_cover_every_v24_admin_endpoint", async () => {
     scope: ["CreateAdminToken", "GetClusterStatus", "ListBuckets"],
   });
 });
+
+test("shows the API code and requests the admin token list again from Retry", async () => {
+  let listCalls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(init?.credentials).toBe("include");
+      if (url.pathname === "/api/admin-tokens/current") {
+        return json({
+          id: "tok-current",
+          name: "server-token",
+          scope: ["ListBuckets"],
+          expiration: "2026-12-01T00:00:00Z",
+          expired: false,
+          fromConfig: false,
+          created: "2026-02-01T00:00:00Z",
+        });
+      }
+      expect(url.pathname).toBe("/api/admin-tokens");
+      expect(url.searchParams.get("offset")).toBe("0");
+      expect(url.searchParams.get("limit")).toBe("100");
+      listCalls += 1;
+      if (listCalls === 1) {
+        return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
+      }
+      return json(
+        tokenPage([
+          {
+            id: "tok-issued",
+            name: "issued-reader",
+            scope: ["ListBuckets"],
+            expiration: "2026-12-01T00:00:00Z",
+            expired: false,
+            fromConfig: false,
+            created: "2026-03-01T00:00:00Z",
+          },
+        ]),
+      );
+    }),
+  );
+  renderTokens();
+  expect((await screen.findByText("Garage returned an error")).textContent).toBe(
+    "Garage returned an error",
+  );
+  expect(screen.getByText("upstream_failed").textContent).toBe("upstream_failed");
+  expect(screen.getByRole("button", { name: "Retry" }).textContent).toBe("Retry");
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect((await screen.findByText("issued-reader")).textContent).toBe("issued-reader");
+  expect(screen.queryByText("upstream_failed")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(listCalls).toBe(2);
+});

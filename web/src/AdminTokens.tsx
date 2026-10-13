@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 
@@ -159,14 +159,20 @@ async function loadCurrentAdminToken(): Promise<AdminToken> {
   return adminTokenFrom(await api<unknown>("/api/admin-tokens/current"));
 }
 
-function errorMessage(error: unknown): string | null {
+function tokenLoadFailure(error: unknown): { message: string; code: string | null } | null {
   if (error == null || isGarageDown(error)) {
     return null;
   }
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
+  if (error instanceof ApiError) {
+    return {
+      message: error.message.length > 0 ? error.message : "Admin tokens are unavailable",
+      code: error.code,
+    };
   }
-  return "Admin tokens are unavailable";
+  if (error instanceof Error && error.message.length > 0) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Admin tokens are unavailable", code: null };
 }
 
 function sourceLabel(token: AdminToken): string {
@@ -920,13 +926,8 @@ export function AdminTokens() {
     (list.data?.items ?? []).filter((token) => tokenMatches(token, query.filter)),
     query.sort,
   );
-  const failures = [
-    ...new Set(
-      [errorMessage(list.error), errorMessage(current.error)].filter(
-        (message): message is string => message !== null,
-      ),
-    ),
-  ];
+  const listFailure = tokenLoadFailure(list.error);
+  const currentFailure = tokenLoadFailure(current.error);
 
   return (
     <section
@@ -995,9 +996,36 @@ export function AdminTokens() {
       {list.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading admin tokens" />
       ) : null}
-      {failures.map((message) => (
-        <p key={message}>{message}</p>
-      ))}
+      {listFailure ? (
+        <>
+          <p>{listFailure.message}</p>
+          {listFailure.code ? <p>{listFailure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void list.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
+      {currentFailure ? (
+        <>
+          <p>{currentFailure.message}</p>
+          {currentFailure.code ? <p>{currentFailure.code}</p> : null}
+          <button
+            className="border border-neutral-900 px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void current.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
       {list.isSuccess && shown.length === 0 ? <p>No admin tokens</p> : null}
       {list.isSuccess && shown.length > 0 ? <TokenTable rows={shown} /> : null}
       {current.data ? <CurrentToken token={current.data} /> : null}
