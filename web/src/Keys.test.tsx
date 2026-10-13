@@ -5,6 +5,7 @@ import { Keys } from "./Keys";
 
 afterEach(() => {
   cleanup();
+  window.location.hash = "";
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -934,4 +935,58 @@ test("sorts loaded keys by created time and keeps the choice in the address", as
   expect(window.location.hash).toBe("#keys/stay");
   expect((screen.getByLabelText("Sort keys") as HTMLSelectElement).value).toBe("created");
   expect(calls).toBe(1);
+});
+
+test("lists the buckets a key can access with read, write, and owner", async () => {
+  window.location.hash = "#key/GK1/buckets";
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://ui.local");
+      calls.push(url.pathname);
+      if (url.pathname === "/api/keys") {
+        return json({ items: [{ id: "GK1", name: "photos" }], hasMore: false });
+      }
+      if (url.pathname === "/api/keys/GK1") {
+        return json({
+          accessKeyId: "GK1",
+          name: "photos",
+          secretAccessKey: "SECRETVALUE",
+          buckets: [
+            {
+              id: "bkt-photos",
+              globalAliases: ["photos"],
+              localAliases: ["roll"],
+              permissions: { owner: true, read: true, write: false },
+            },
+            {
+              id: "bkt-logs",
+              globalAliases: [],
+              localAliases: [],
+              permissions: { owner: false, read: false, write: true },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    }),
+  );
+  renderKeys();
+  const photos = await screen.findByRole("listitem", { name: "bkt-photos" });
+  const logs = screen.getByRole("listitem", { name: "bkt-logs" });
+  expect(within(photos).getByText("bkt-photos")).toBeTruthy();
+  expect(within(photos).getByText("photos")).toBeTruthy();
+  expect(within(photos).getByText("roll")).toBeTruthy();
+  expect(within(photos).getByText("read yes")).toBeTruthy();
+  expect(within(photos).getByText("write no")).toBeTruthy();
+  expect(within(photos).getByText("owner yes")).toBeTruthy();
+  expect(within(logs).getByText("bkt-logs")).toBeTruthy();
+  expect(within(logs).getByText("read no")).toBeTruthy();
+  expect(within(logs).getByText("write yes")).toBeTruthy();
+  expect(within(logs).getByText("owner no")).toBeTruthy();
+  expect(screen.queryByText("Buckets this key can access")).toBeNull();
+  expect(screen.queryByText("SECRETVALUE")).toBeNull();
+  expect(window.location.hash).toBe("#key/GK1/buckets");
+  expect(calls).toContain("/api/keys/GK1");
 });

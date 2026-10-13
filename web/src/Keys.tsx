@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -24,7 +24,7 @@ type SecretReveal = {
   secret: string;
 };
 
-// 服务端未传 limit 时窗口是 100。下一页 offset 用本页条数。
+// When the server omits limit, the window is 100. The next offset adds this page's row count.
 const PAGE_LIMIT = 100;
 
 function parseKey(value: unknown): AccessKey {
@@ -43,7 +43,7 @@ function parseKey(value: unknown): AccessKey {
   };
 }
 
-// 列表经常不带 permissions。null 是未知，不能显示成未授权。
+// The list often omits permissions. null means unknown, and must not be shown as denied.
 function parseCreateBucket(row: Record<string, unknown>): boolean | null {
   const permissions = row.permissions;
   if (typeof permissions === "object" && permissions !== null) {
@@ -78,6 +78,138 @@ function nextOffset(offset: number, page: KeyPage): number | undefined {
 
 function keyUrl(id: string): string {
   return `/api/keys/${encodeURIComponent(id)}`;
+}
+
+type KeyBucket = {
+  id: string;
+  globalAliases: string[];
+  localAliases: string[];
+  owner: boolean;
+  read: boolean;
+  write: boolean;
+};
+
+function granted(value: unknown): boolean {
+  return value === true;
+}
+
+function aliasList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.length > 0) {
+      names.push(item);
+    }
+  }
+  return names;
+}
+
+function parseKeyBucket(value: unknown): KeyBucket | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== "string" || row.id.length === 0) {
+    return null;
+  }
+  const permissions = row.permissions;
+  const bits =
+    typeof permissions === "object" && permissions !== null
+      ? (permissions as Record<string, unknown>)
+      : {};
+  return {
+    id: row.id,
+    globalAliases: aliasList(row.globalAliases),
+    localAliases: aliasList(row.localAliases),
+    owner: granted(bits.owner),
+    read: granted(bits.read),
+    write: granted(bits.write),
+  };
+}
+
+function parseKeyBuckets(payload: unknown): KeyBucket[] {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Key buckets are unavailable");
+  }
+  const buckets = (payload as Record<string, unknown>).buckets;
+  if (!Array.isArray(buckets)) {
+    throw new Error("Key buckets are unavailable");
+  }
+  const rows: KeyBucket[] = [];
+  for (const entry of buckets) {
+    const bucket = parseKeyBucket(entry);
+    if (bucket !== null) {
+      rows.push(bucket);
+    }
+  }
+  return rows;
+}
+
+function yesNo(flag: boolean): "yes" | "no" {
+  return flag ? "yes" : "no";
+}
+
+async function loadKeyBuckets(keyId: string): Promise<KeyBucket[]> {
+  const response = await fetch(keyUrl(keyId), { credentials: "include" });
+  const text = await response.text();
+  if (!response.ok) {
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new KeyListError(failure);
+  }
+  return parseKeyBuckets(text ? (JSON.parse(text) as unknown) : undefined);
+}
+
+function KeyBuckets({ keyId }: { keyId: string }) {
+  const buckets = useQuery({
+    queryKey: ["key-buckets", keyId],
+    queryFn: () => loadKeyBuckets(keyId),
+  });
+  const rows = buckets.data ?? [];
+  const failure = buckets.isError ? keyListFailure(buckets.error) : null;
+  return (
+    <div aria-label={`Buckets for ${keyId}`}>
+      {buckets.isPending ? (
+        <div className="h-16 border border-line" aria-label={`Loading buckets for ${keyId}`} />
+      ) : null}
+      {failure && !isGarageDown(failure) ? (
+        <>
+          <p>{failure.message}</p>
+          {failure.code ? <p>{failure.code}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void buckets.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
+      {buckets.data && rows.length === 0 ? <p>This key cannot access any buckets.</p> : null}
+      {rows.length > 0 ? (
+        <ul className="grid gap-2">
+          {rows.map((bucket, index) => (
+            <li key={`${bucket.id}-${index}`} aria-label={bucket.id}>
+              <p>{bucket.id}</p>
+              {bucket.globalAliases.map((alias, aliasIndex) => (
+                <p key={`global-${alias}-${aliasIndex}`}>{alias}</p>
+              ))}
+              {bucket.localAliases.map((alias, aliasIndex) => (
+                <p key={`local-${alias}-${aliasIndex}`}>{alias}</p>
+              ))}
+              <p>owner {yesNo(bucket.owner)}</p>
+              <p>read {yesNo(bucket.read)}</p>
+              <p>write {yesNo(bucket.write)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function secretFrom(body: unknown): string | null {
@@ -117,7 +249,7 @@ class KeyListError extends Error {
   }
 }
 
-// api() 只把 message 放进 Error。密钥列表还要显示 body 里的 code，所以这里自己读响应。
+// api() keeps only the message on Error. The key list also shows the code from the body, so this reads the response.
 function failureFrom(text: string, status: number): KeyListFailure {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
@@ -591,7 +723,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           }}
         >
           <p>{keyDetail.id}</p>
-          {keyDetail.tab === "buckets" ? <p>Buckets this key can access</p> : null}
+          {keyDetail.tab === "buckets" ? <KeyBuckets keyId={keyDetail.id} /> : null}
           {keyDetail.tab === "settings" && openedKey && canManage ? (
             <>
               <RenameKey id={openedKey.id} name={openedKey.name} />
