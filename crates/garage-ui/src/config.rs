@@ -987,7 +987,7 @@ mod tests {
         fn set(key: &'static str, value: &str) -> Self {
             let prev = std::env::var(key).ok();
             // SAFETY: this test owns `key` for the process and restores it on drop.
-            // The startup_config_ filter runs with --test-threads=1.
+            // lock_process_env keeps these tests from changing cwd and S3_REGION together.
             unsafe {
                 std::env::set_var(key, value);
             }
@@ -1007,8 +1007,14 @@ mod tests {
         }
     }
 
+    fn lock_process_env() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().expect("process env lock")
+    }
+
     #[test]
     fn startup_config_missing_dotenv_uses_process_environment() {
+        let _lock = lock_process_env();
         let dir = crate::util::temp_dir();
         assert!(!dir.join(".env").exists());
         let _cwd = CwdGuard::switch(&dir);
@@ -1025,6 +1031,7 @@ mod tests {
 
     #[test]
     fn startup_config_bad_line_keeps_valid_lines() {
+        let _lock = lock_process_env();
         let dir = crate::util::temp_dir();
         std::fs::write(
             dir.join(".env"),
