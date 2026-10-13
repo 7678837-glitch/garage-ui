@@ -7,7 +7,7 @@ use sqlx::error::DatabaseError;
 #[derive(Debug, Parser)]
 #[command(name = "garage-ui", version = crate::version())]
 pub struct Cli {
-    /// 检查本机 127.0.0.1:3909 的 /healthz，成功时退出码为 0。
+    /// Check /healthz on 127.0.0.1:3909. Exit 0 when the check succeeds.
     #[arg(long = "health")]
     pub health: bool,
     #[command(subcommand)]
@@ -74,9 +74,9 @@ pub async fn create(username: String) -> anyhow::Result<()> {
 async fn open_db() -> anyhow::Result<(SqlitePool, u32)> {
     let loaded = crate::config::load_process()?;
     let dir = loaded.settings.data_dir;
-    // sqlite 不会创建父目录。这里只建目录，不走 boot，也不听端口。
+    // SQLite does not create parent directories. Create the directory here without booting or listening.
     std::fs::create_dir_all(&dir)
-        .map_err(|_| anyhow::anyhow!("数据目录不可写: {}", dir.display()))?;
+        .map_err(|_| anyhow::anyhow!("data directory is not writable: {}", dir.display()))?;
     let pool = crate::db::open(&dir.join("garage-ui.sqlite")).await?;
     Ok((pool, loaded.settings.bcrypt_cost))
 }
@@ -84,7 +84,7 @@ async fn open_db() -> anyhow::Result<(SqlitePool, u32)> {
 async fn format_users(pool: &SqlitePool) -> anyhow::Result<String> {
     let users = crate::db::list_users(pool)
         .await
-        .map_err(|_| anyhow::anyhow!("读取用户失败"))?;
+        .map_err(|_| anyhow::anyhow!("failed to read users"))?;
     let mut text = String::new();
     for user in users {
         text.push_str(&user.username);
@@ -104,14 +104,15 @@ async fn reset_password(
     password: &str,
     cost: u32,
 ) -> anyhow::Result<()> {
-    crate::password::validate(password).map_err(|_| anyhow::anyhow!("密码不符合要求"))?;
+    crate::password::validate(password)
+        .map_err(|_| anyhow::anyhow!("password does not meet requirements"))?;
     let user = crate::db::find_user_by_name(pool, username)
         .await
-        .map_err(|_| anyhow::anyhow!("读取用户失败"))?
-        .ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
+        .map_err(|_| anyhow::anyhow!("failed to read users"))?
+        .ok_or_else(|| anyhow::anyhow!("user does not exist"))?;
     let hash = crate::password::hash_async(password.to_string(), cost)
         .await
-        .map_err(|_| anyhow::anyhow!("无法计算口令哈希"))?;
+        .map_err(|_| anyhow::anyhow!("failed to hash password"))?;
     crate::db::update_user(
         pool,
         user.id,
@@ -122,10 +123,10 @@ async fn reset_password(
         Some(&hash),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("写入用户失败"))?;
+    .map_err(|_| anyhow::anyhow!("failed to write user"))?;
     crate::db::delete_user_sessions(pool, user.id)
         .await
-        .map_err(|_| anyhow::anyhow!("清理会话失败"))?;
+        .map_err(|_| anyhow::anyhow!("failed to clear sessions"))?;
     Ok(())
 }
 
@@ -135,18 +136,19 @@ async fn create_admin(
     password: &str,
     cost: u32,
 ) -> anyhow::Result<()> {
-    crate::api::validate_username(username).map_err(|_| anyhow::anyhow!("用户名无效"))?;
-    crate::password::validate(password).map_err(|_| anyhow::anyhow!("密码不符合要求"))?;
+    crate::api::validate_username(username).map_err(|_| anyhow::anyhow!("username is invalid"))?;
+    crate::password::validate(password)
+        .map_err(|_| anyhow::anyhow!("password does not meet requirements"))?;
     let hash = crate::password::hash_async(password.to_string(), cost)
         .await
-        .map_err(|_| anyhow::anyhow!("无法计算口令哈希"))?;
+        .map_err(|_| anyhow::anyhow!("failed to hash password"))?;
     crate::db::insert_user(pool, username, &hash, "admin", false, false)
         .await
         .map_err(|error| {
             if duplicate_user(&error) {
-                anyhow::anyhow!("用户名已存在")
+                anyhow::anyhow!("username already exists")
             } else {
-                anyhow::anyhow!("写入用户失败")
+                anyhow::anyhow!("failed to write user")
             }
         })?;
     Ok(())
@@ -163,11 +165,11 @@ fn read_password() -> anyhow::Result<String> {
     std::io::stdin()
         .lock()
         .read_line(&mut line)
-        .map_err(|_| anyhow::anyhow!("读取密码失败"))?;
+        .map_err(|_| anyhow::anyhow!("failed to read password"))?;
     Ok(strip_password_line(&line).to_string())
 }
 
-// 只去掉 read_line 带来的行尾。密码里的空格是口令的一部分。
+// Strip only the line ending that read_line adds. Spaces in the password are part of it.
 fn strip_password_line(line: &str) -> &str {
     let Some(stripped) = line.strip_suffix('\n') else {
         return line;
@@ -181,6 +183,21 @@ mod tests {
 
     #[tokio::test]
     async fn offline_user_cli_lists_resets_and_creates_without_an_argv_password() {
+        let expected = format!("garage-ui {}\n", crate::version());
+        assert_ne!(expected, "garage-ui \n");
+        for flag in ["--version", "-V"] {
+            let err = Cli::try_parse_from(["garage-ui", flag]).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion, "{flag}");
+            assert_eq!(err.exit_code(), 0, "{flag}");
+            assert_eq!(err.render().to_string(), expected, "{flag}");
+        }
+        let version_command = Cli::try_parse_from(["garage-ui", "version"]).unwrap_err();
+        assert_eq!(
+            version_command.kind(),
+            clap::error::ErrorKind::InvalidSubcommand
+        );
+        assert_eq!(version_command.exit_code(), 2);
+
         let reset = Cli::try_parse_from(["garage-ui", "user", "reset-password", "ada"]).unwrap();
         assert!(matches!(
             reset.command,
