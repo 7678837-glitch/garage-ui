@@ -456,6 +456,12 @@ function purgeBlocks(id: string, hash: string): Promise<unknown> {
   });
 }
 
+function snapshotMetadata(id: string): Promise<unknown> {
+  return api(`/api/nodes/${encodeURIComponent(id)}/metadata-snapshot`, {
+    method: "POST",
+  });
+}
+
 function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => void }) {
   const [hash, setHash] = useState("");
   return (
@@ -640,6 +646,9 @@ export function ClusterNodes() {
   const purge = useMutation({
     mutationFn: (target: PendingBlockPurge) => purgeBlocks(target.id, target.hash),
   });
+  const snapshot = useMutation({
+    mutationFn: snapshotMetadata,
+  });
   const connect = useMutation({
     mutationFn: connectNode,
     onSuccess: async (next) => {
@@ -700,6 +709,18 @@ export function ClusterNodes() {
               {openedNode.garageVersion !== null ? <p>{openedNode.garageVersion}</p> : null}
               <p>{openedNode.isUp ? "Up" : "Down"}</p>
               {openedNode.draining ? <p>Draining</p> : null}
+              <button
+                className="border border-ink px-3 py-1 text-left"
+                type="button"
+                onClick={() => {
+                  snapshot.mutate(openedNode.id);
+                }}
+              >
+                Snapshot metadata
+              </button>
+              {snapshot.isSuccess && snapshot.variables === openedNode.id ? (
+                <p>Metadata snapshot started</p>
+              ) : null}
             </>
           ) : null}
           {openedNode && nodeDetail.tab === "statistics" && openedNode.capacity !== null ? (

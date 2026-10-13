@@ -110,6 +110,9 @@ function installFetch(
     if (url === "/api/layout/history") {
       return historyResponse ? historyResponse() : new Response("no", { status: 500 });
     }
+    if (url === "/api/nodes/n1/metadata-snapshot" && init?.method?.toUpperCase() === "POST") {
+      return new Response("", { status: 200 });
+    }
     return new Response("no", { status: 500 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1004,4 +1007,24 @@ test("history shows each version and its sync status", async () => {
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/layout/apply"))).toBe(
     false,
   );
+});
+
+test("snapshot metadata on n1 shows the notice", async () => {
+  window.location.hash = "#node/n1/information";
+  const fetchMock = installFetch("admin", () =>
+    json({ nodes: [{ id: "n1", isUp: true, draining: false }] }),
+  );
+  renderApp();
+  fireEvent.click(await screen.findByRole("button", { name: "Snapshot metadata" }));
+  expect(await screen.findByText("Metadata snapshot started")).toBeTruthy();
+  expect(window.location.hash).toBe("#node/n1/information");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const posts = fetchMock.mock.calls.filter(
+    (call) => String(call[0]) === "/api/nodes/n1/metadata-snapshot",
+  );
+  expect(posts).toHaveLength(1);
+  const init = posts[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("POST");
+  expect(init?.body ?? null).toBeNull();
+  expect(new Headers(init?.headers).get("x-confirm")).toBeNull();
 });
