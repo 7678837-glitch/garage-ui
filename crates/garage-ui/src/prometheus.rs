@@ -26,6 +26,7 @@ pub(crate) fn parse_garage_metrics(text: &str) -> GarageMetrics {
         match family {
             "api_s3_request_counter" => metrics.s3_requests += count,
             "api_s3_error_counter" => metrics.s3_errors += count,
+            "block_bytes_read" => metrics.block_read_bytes += count,
             "block_bytes_written" => metrics.block_write_bytes += count,
             _ => {}
         }
@@ -91,7 +92,7 @@ block_bytes_read 5
         );
         assert_eq!(metrics.s3_requests, 29);
         assert_eq!(metrics.s3_errors, 17);
-        assert_eq!(metrics.block_read_bytes, 0);
+        assert_eq!(metrics.block_read_bytes, 5);
         assert_eq!(metrics.block_write_bytes, 81);
     }
 
