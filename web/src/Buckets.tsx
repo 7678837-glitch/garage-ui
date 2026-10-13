@@ -59,6 +59,8 @@ const blankAliasDraft: AliasDraft = {
 // Without a limit the server window is 100. The next offset is this page's row count.
 const PAGE_LIMIT = 100;
 
+const wrap = "min-w-0 max-w-full break-all";
+
 function parseAlias(value: unknown, scope: "global" | "local"): Alias | null {
   if (typeof value === "string") {
     return scope === "global"
@@ -508,7 +510,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
   );
   return (
     <form
-      className="mt-3 grid max-w-sm gap-2"
+      className="mt-3 grid min-w-0 max-w-sm gap-2"
       onSubmit={(event) => {
         event.preventDefault();
         const size = fieldLiteral(maxSize);
@@ -521,7 +523,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         save.mutate(`{"maxSize":${size},"maxObjects":${objects}}`);
       }}
     >
-      <label className="block text-sm">
+      <label className={`${wrap} block text-sm`}>
         Max size for {bucketId}
         <input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
@@ -533,7 +535,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
           }}
         />
       </label>
-      <label className="block text-sm">
+      <label className={`${wrap} block text-sm`}>
         Max objects for {bucketId}
         <input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
@@ -548,7 +550,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       {quotaStatus ? <p>{quotaStatus}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className={`${wrap} border border-neutral-900 px-3 py-1 text-left`}
         type="submit"
         disabled={save.isPending}
       >
@@ -1489,15 +1491,15 @@ function AliasControls({ bucketId }: { bucketId: string }) {
   const error = add.error instanceof Error ? add.error.message : null;
   return (
     <form
-      className="mt-3 grid max-w-sm gap-2"
+      className="mt-3 grid min-w-0 max-w-sm gap-2"
       onSubmit={(event) => {
         event.preventDefault();
         add.mutate(draftBody(draft));
       }}
     >
-      <fieldset className="grid gap-1">
-        <legend className="text-sm">Add alias to {bucketId}</legend>
-        <label className="text-sm">
+      <fieldset className="grid min-w-0 gap-1">
+        <legend className={`${wrap} text-sm`}>Add alias to {bucketId}</legend>
+        <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
             type="radio"
@@ -1509,7 +1511,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
           />
           Global for {bucketId}
         </label>
-        <label className="text-sm">
+        <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
             type="radio"
@@ -1523,7 +1525,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         </label>
       </fieldset>
       {draft.scope === "global" ? (
-        <label className="block text-sm">
+        <label className={`${wrap} block text-sm`}>
           Global alias for {bucketId}
           <input
             className="mt-1 w-full border border-neutral-300 px-2 py-1"
@@ -1535,7 +1537,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         </label>
       ) : (
         <>
-          <label className="block text-sm">
+          <label className={`${wrap} block text-sm`}>
             Local alias for {bucketId}
             <input
               className="mt-1 w-full border border-neutral-300 px-2 py-1"
@@ -1545,7 +1547,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
               }}
             />
           </label>
-          <label className="block text-sm">
+          <label className={`${wrap} block text-sm`}>
             Access key for {bucketId}
             <input
               className="mt-1 w-full border border-neutral-300 px-2 py-1"
@@ -1560,7 +1562,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className={`${wrap} border border-neutral-900 px-3 py-1 text-left`}
         type="submit"
         disabled={add.isPending}
       >
@@ -1943,7 +1945,7 @@ export function Buckets({
         </p>
       ) : null}
       {listing && list.data && shown.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
@@ -1961,10 +1963,10 @@ export function Buckets({
             <tbody>
               {shown.map((bucket, index) => (
                 <tr key={`${bucket.id}-${index}`}>
-                  <td className="py-2 pr-3 align-top">
-                    <span>{bucket.id}</span>
+                  <td className={`${wrap} py-2 pr-3 align-top`}>
+                    <span className={wrap}>{bucket.id}</span>
                     <button
-                      className="ml-2 border border-neutral-900 px-2 py-1 text-left"
+                      className={`${wrap} ml-2 border border-neutral-900 px-2 py-1 text-left`}
                       type="button"
                       onClick={() => {
                         goHash(hashForObjects(bucket.id, ""));
@@ -1975,7 +1977,7 @@ export function Buckets({
                     <BucketPermissions bucketId={bucket.id} canManage={canManage} />
                     {canManage ? (
                       <button
-                        className="ml-2 border border-neutral-900 px-2 py-1 text-left"
+                        className={`${wrap} ml-2 border border-neutral-900 px-2 py-1 text-left`}
                         type="button"
                         onClick={() => {
                           removeBucket.reset();
@@ -1986,7 +1988,7 @@ export function Buckets({
                       </button>
                     ) : null}
                   </td>
-                  <td className="py-2 pr-3 align-top">
+                  <td className={`${wrap} py-2 pr-3 align-top`}>
                     <UsageText bucket={bucket} />
                     {canManage && bucket.quotas ? (
                       <QuotaEditor
@@ -2005,7 +2007,7 @@ export function Buckets({
                       <LifecycleSummary bucketId={bucket.id} />
                     )}
                   </td>
-                  <td className="py-2 align-top">
+                  <td className={`${wrap} py-2 align-top`}>
                     {bucket.aliases.map((alias, aliasIndex) => (
                       <Fragment key={`${bucket.id}-${aliasIndex}`}>
                         {aliasIndex > 0 ? ", " : null}

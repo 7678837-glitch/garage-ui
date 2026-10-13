@@ -1258,3 +1258,55 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
   expect(screen.queryByRole("button", { name: "Incomplete uploads" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Clean up" })).toBeNull();
 });
+
+test("wraps a long bucket id inside its column", async () => {
+  const bucketId = "b".repeat(64);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json({
+        items: [{ id: bucketId, quotas: { maxSize: 5000, maxObjects: 12 } }],
+        hasMore: false,
+      }),
+    ),
+  );
+  renderBuckets(true);
+  const id = await screen.findByText(bucketId);
+  const sizeLabel = screen.getByLabelText(`Max size for ${bucketId}`).closest("label");
+  const objectsLabel = screen.getByLabelText(`Max objects for ${bucketId}`).closest("label");
+  const save = screen.getByRole("button", { name: `Save quotas for ${bucketId}` });
+  const alias = screen.getByRole("button", { name: `Add alias to ${bucketId}` });
+  const legend = screen.getByText(`Add alias to ${bucketId}`, { selector: "legend" });
+  const globalChoice = screen.getByRole("radio", { name: `Global for ${bucketId}` }).closest("label");
+  const localChoice = screen.getByRole("radio", { name: `Local for ${bucketId}` }).closest("label");
+  const aliasField = screen.getByLabelText(`Global alias for ${bucketId}`).closest("label");
+  const idColumn = id.closest("td");
+  const quotaColumn = sizeLabel?.closest("td") ?? null;
+  const aliasColumn = alias.closest("td");
+  expect(idColumn).not.toBe(aliasColumn);
+  expect(quotaColumn).not.toBe(aliasColumn);
+  expect(legend.closest("td")).toBe(aliasColumn);
+  expect(id.className).toContain("break-all");
+  expect(id.className).toContain("min-w-0");
+  expect(id.className).toContain("max-w-full");
+  expect(sizeLabel?.className ?? "").toContain("break-all");
+  expect(sizeLabel?.className ?? "").toContain("min-w-0");
+  expect(sizeLabel?.className ?? "").toContain("max-w-full");
+  expect(objectsLabel?.className ?? "").toContain("break-all");
+  expect(objectsLabel?.className ?? "").toContain("min-w-0");
+  expect(save.className).toContain("break-all");
+  expect(save.className).toContain("min-w-0");
+  expect(idColumn?.className ?? "").toContain("break-all");
+  expect(idColumn?.className ?? "").toContain("min-w-0");
+  expect(quotaColumn?.className ?? "").toContain("break-all");
+  expect(quotaColumn?.className ?? "").toContain("min-w-0");
+  expect(legend.className).toContain("break-all");
+  expect(legend.className).toContain("min-w-0");
+  expect(globalChoice?.className ?? "").toContain("break-all");
+  expect(localChoice?.className ?? "").toContain("break-all");
+  expect(aliasField?.className ?? "").toContain("break-all");
+  expect(aliasField?.className ?? "").toContain("min-w-0");
+  expect(aliasColumn?.className ?? "").toContain("break-all");
+  expect(aliasColumn?.className ?? "").toContain("min-w-0");
+  expect(id.closest("table")?.parentElement?.className ?? "").toContain("min-w-0");
+});
