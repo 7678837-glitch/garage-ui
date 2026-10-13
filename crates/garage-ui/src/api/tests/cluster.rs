@@ -1573,6 +1573,61 @@
         assert!(cluster_calls(&mock, "ApplyClusterLayout").is_empty());
     }
 
+    #[tokio::test]
+    async fn layout_apply_revert_skip_and_repair_reject_a_viewer() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":{}},"error":{}}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let calls = [
+            (
+                "POST",
+                "/api/layout/apply",
+                None,
+                "ApplyClusterLayout",
+                false,
+            ),
+            (
+                "POST",
+                "/api/layout/revert",
+                None,
+                "RevertClusterLayout",
+                false,
+            ),
+            (
+                "POST",
+                "/api/layout/skip-dead-nodes",
+                Some(r#"{"allowMissingData":false,"version":9007199254740993}"#),
+                "ClusterLayoutSkipDeadNodes",
+                true,
+            ),
+            (
+                "POST",
+                "/api/nodes/n1/repair",
+                Some(r#"{"repairType":"tables"}"#),
+                "LaunchRepairOperation",
+                true,
+            ),
+        ];
+
+        let hits_before = mock.hits();
+        for (method, path, body, endpoint, confirm) in calls {
+            let call = request(method, path, body, Some(&viewer));
+            let call = if confirm { with_confirm(call) } else { call };
+            let response = exchange(&app, call).await;
+            assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+            assert!(
+                cluster_calls(&mock, endpoint).is_empty(),
+                "{endpoint} reached upstream"
+            );
+        }
+        assert_eq!(mock.hits(), hits_before, "a viewer call reached Garage");
+    }
+
     const METRICS_TOKEN: &str = "metrics-token-value1";
     const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
 
