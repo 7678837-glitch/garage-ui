@@ -3,7 +3,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
-import { savePhase, saveStatus, setFormDirty } from "./unsaved";
+import { DetailTabs } from "./DetailTabs";
+import { detailAddressFromHash, hashForDetail, keyTabs, useLocationHash } from "./Nav";
+import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type AccessKey = {
   id: string;
@@ -511,6 +513,13 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [hash, assignHash] = useLocationHash();
+  const goHash = (next: string) => {
+    if (!releaseHash(next)) {
+      return;
+    }
+    assignHash(next);
+  };
   const list = useInfiniteQuery({
     queryKey: ["keys"],
     initialPageParam: 0,
@@ -563,12 +572,38 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   };
   const deleteError = removeKey.error instanceof Error ? removeKey.error.message : null;
   const viewError = viewSecret.error instanceof Error ? viewSecret.error.message : null;
+  const detail = detailAddressFromHash(hash);
+  const keyDetail = detail?.resource === "key" ? detail : null;
+  const openedKey =
+    keyDetail === null ? null : (rows.find((accessKey) => accessKey.id === keyDetail.id) ?? null);
 
   return (
     <section className="grid min-w-0 gap-4" aria-label="Keys" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Keys</h2>
-      {canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
-      {view.busy ? <div className="h-16 border border-line" aria-label="Loading keys" /> : null}
+      {keyDetail ? (
+        <DetailTabs
+          label={`Key ${keyDetail.id}`}
+          tabs={keyTabs()}
+          selected={keyDetail.tab}
+          hrefFor={(tab) => hashForDetail({ resource: "key", id: keyDetail.id, tab })}
+          onSelect={(tab) => {
+            goHash(hashForDetail({ resource: "key", id: keyDetail.id, tab }));
+          }}
+        >
+          <p>{keyDetail.id}</p>
+          {keyDetail.tab === "buckets" ? <p>Buckets this key can access</p> : null}
+          {keyDetail.tab === "settings" && openedKey && canManage ? (
+            <>
+              <RenameKey id={openedKey.id} name={openedKey.name} />
+              <CreateBucketSwitch id={openedKey.id} allowed={openedKey.createBucket} />
+            </>
+          ) : null}
+        </DetailTabs>
+      ) : null}
+      {keyDetail === null && canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
+      {keyDetail === null && view.busy ? (
+        <div className="h-16 border border-line" aria-label="Loading keys" />
+      ) : null}
       {view.refreshing ? <p>Refreshing keys</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
@@ -586,6 +621,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
+      {keyDetail === null ? (
       <div className="grid max-w-sm gap-3">
         <label className="block text-sm">
           Filter keys
@@ -621,10 +657,11 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <p>Default order is Id.</p>
         <p>Only loaded rows</p>
       </div>
-      {view.empty ? (
+      ) : null}
+      {keyDetail === null && view.empty ? (
         <p>{canManage ? "There are no keys. Create the first key." : "There are no keys."}</p>
       ) : null}
-      {list.data && shown.length > 0 ? (
+      {keyDetail === null && list.data && shown.length > 0 ? (
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -685,7 +722,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           </table>
         </div>
       ) : null}
-      {view.partial ? (
+      {keyDetail === null && view.partial ? (
         <>
           <p>More keys are available.</p>
           <button

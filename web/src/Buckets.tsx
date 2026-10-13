@@ -3,7 +3,15 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
-import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
+import { DetailTabs } from "./DetailTabs";
+import {
+  bucketLocationFromHash,
+  bucketTabs,
+  detailAddressFromHash,
+  hashForDetail,
+  hashForObjects,
+  useLocationHash,
+} from "./Nav";
 import { Objects } from "./Objects";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
@@ -1761,7 +1769,10 @@ export function Buckets({
     assignHash(next);
   };
   const location = bucketLocationFromHash(hash);
-  const browsing = location.kind === "objects";
+  const detail = detailAddressFromHash(hash);
+  const bucketDetail = detail?.resource === "bucket" ? detail : null;
+  const browsing = bucketDetail === null && location.kind === "objects";
+  const listing = bucketDetail === null && !browsing;
   const list = useInfiniteQuery({
     queryKey: ["buckets"],
     initialPageParam: 0,
@@ -1801,16 +1812,51 @@ export function Buckets({
     partial: list.hasNextPage,
   };
   const deleteError = removeBucket.error instanceof Error ? removeBucket.error.message : null;
+  const openedBucket =
+    bucketDetail === null ? null : (rows.find((bucket) => bucket.id === bucketDetail.id) ?? null);
 
   return (
     <section className="grid gap-4" aria-label="Buckets" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Buckets</h2>
-      {canManage && !browsing ? <CreateBucketForm /> : null}
-      {view.loading ? (
+      {bucketDetail ? (
+        <DetailTabs
+          label={`Bucket ${bucketDetail.id}`}
+          tabs={bucketTabs()}
+          selected={bucketDetail.tab}
+          hrefFor={(tab) => hashForDetail({ resource: "bucket", id: bucketDetail.id, tab })}
+          onSelect={(tab) => {
+            goHash(hashForDetail({ resource: "bucket", id: bucketDetail.id, tab }));
+          }}
+        >
+          <p>{bucketDetail.id}</p>
+          {bucketDetail.tab === "objects" ? (
+            <Objects
+              bucketId={bucketDetail.id}
+              canWrite={canWrite}
+              canTransfer={canTransfer}
+              onBack={() => {
+                goHash("#buckets");
+              }}
+            />
+          ) : null}
+          {bucketDetail.tab === "permissions" ? (
+            <BucketPermissions bucketId={bucketDetail.id} canManage={canManage} expanded />
+          ) : null}
+          {bucketDetail.tab === "settings" && canManage && openedBucket?.quotas ? (
+            <QuotaEditor
+              key={`${openedBucket.id}:${fieldText(openedBucket.quotas.maxSize)}:${fieldText(openedBucket.quotas.maxObjects)}`}
+              bucketId={openedBucket.id}
+              quotas={openedBucket.quotas}
+            />
+          ) : null}
+        </DetailTabs>
+      ) : null}
+      {canManage && listing ? <CreateBucketForm /> : null}
+      {bucketDetail === null && view.loading ? (
         <div className="h-16 border border-line" aria-label="Loading buckets" />
       ) : null}
-      {view.refreshing ? <p>Refreshing buckets</p> : null}
-      {view.failure && !isGarageDown(view.failure) ? (
+      {bucketDetail === null && view.refreshing ? <p>Refreshing buckets</p> : null}
+      {bucketDetail === null && view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
@@ -1826,7 +1872,7 @@ export function Buckets({
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
-      {!browsing ? (
+      {listing ? (
         <div className="grid max-w-sm gap-3">
           <label className="block text-sm">
             Filter buckets
@@ -1863,7 +1909,7 @@ export function Buckets({
           <p>Only loaded rows</p>
         </div>
       ) : null}
-      {browsing ? (
+      {location.kind === "objects" && bucketDetail === null ? (
         <Objects
           key={location.bucketId}
           bucketId={location.bucketId}
@@ -1874,14 +1920,14 @@ export function Buckets({
           }}
         />
       ) : null}
-      {view.empty ? (
+      {bucketDetail === null && view.empty ? (
         <p>
           {canManage && !browsing
             ? "There are no buckets. Create the first bucket."
             : "There are no buckets."}
         </p>
       ) : null}
-      {!browsing && list.data && shown.length > 0 ? (
+      {listing && list.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
@@ -1960,7 +2006,7 @@ export function Buckets({
           </table>
         </div>
       ) : null}
-      {!browsing && view.partial ? (
+      {listing && view.partial ? (
         <>
           <p>More buckets are available.</p>
           <button

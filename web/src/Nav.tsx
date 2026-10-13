@@ -34,8 +34,15 @@ function decodeHashSegment(segment: string): string {
   }
 }
 
+const detailSectionByRoot: Record<string, SectionId | undefined> = {
+  bucket: "buckets",
+  key: "keys",
+  node: "nodes",
+};
+
 export function sectionFromHash(hash: string, role: string): SectionId {
-  const id = hashBody(hash).split("/")[0];
+  const root = hashBody(hash).split("/")[0];
+  const id = detailSectionByRoot[root] ?? root;
   const match = sections.find((section) => section.id === id);
   if (!match || (match.adminOnly && role !== "admin")) {
     return "overview";
@@ -69,6 +76,109 @@ export function hashForObjects(bucketId: string, prefix: string): string {
     .map((segment) => (segment === "" ? "" : encodeURIComponent(segment)))
     .join("/");
   return `#buckets/${id}/${encoded}`;
+}
+
+const bucketDetailTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "objects", label: "Objects" },
+  { id: "permissions", label: "Permissions" },
+  { id: "settings", label: "Settings" },
+] as const;
+
+const keyDetailTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "buckets", label: "Buckets" },
+  { id: "settings", label: "Settings" },
+] as const;
+
+const nodeDetailTabs = [
+  { id: "information", label: "Information" },
+  { id: "statistics", label: "Statistics" },
+  { id: "maintenance", label: "Maintenance" },
+] as const;
+
+export type BucketDetailTab = (typeof bucketDetailTabs)[number]["id"];
+export type KeyDetailTab = (typeof keyDetailTabs)[number]["id"];
+export type NodeDetailTab = (typeof nodeDetailTabs)[number]["id"];
+
+export type DetailAddress =
+  | { resource: "bucket"; id: string; tab: BucketDetailTab }
+  | { resource: "key"; id: string; tab: KeyDetailTab }
+  | { resource: "node"; id: string; tab: NodeDetailTab };
+
+export function bucketTabs(): typeof bucketDetailTabs {
+  return bucketDetailTabs;
+}
+
+export function keyTabs(): typeof keyDetailTabs {
+  return keyDetailTabs;
+}
+
+export function nodeTabs(): typeof nodeDetailTabs {
+  return nodeDetailTabs;
+}
+
+export function sectionForDetail(resource: DetailAddress["resource"]): SectionId {
+  switch (resource) {
+    case "bucket":
+      return "buckets";
+    case "key":
+      return "keys";
+    case "node":
+      return "nodes";
+  }
+}
+
+function labelOf<T extends string>(tabs: readonly { id: T; label: string }[], id: T): string {
+  const found = tabs.find((tab) => tab.id === id);
+  return found ? found.label : id;
+}
+
+export function detailTabLabel(address: DetailAddress): string {
+  switch (address.resource) {
+    case "bucket":
+      return labelOf(bucketDetailTabs, address.tab);
+    case "key":
+      return labelOf(keyDetailTabs, address.tab);
+    case "node":
+      return labelOf(nodeDetailTabs, address.tab);
+  }
+}
+
+function listedTab<T extends string>(
+  tabs: readonly { id: T; label: string }[],
+  value: string,
+): T | null {
+  const found = tabs.find((tab) => tab.id === value);
+  return found ? found.id : null;
+}
+
+export function detailAddressFromHash(hash: string): DetailAddress | null {
+  const parts = hashBody(hash).split("/");
+  if (parts.length !== 3 || parts[1] === "" || parts[2] === "") {
+    return null;
+  }
+  const id = decodeHashSegment(parts[1]);
+  if (id.length === 0) {
+    return null;
+  }
+  if (parts[0] === "bucket") {
+    const tab = listedTab(bucketDetailTabs, parts[2]);
+    return tab === null ? null : { resource: "bucket", id, tab };
+  }
+  if (parts[0] === "key") {
+    const tab = listedTab(keyDetailTabs, parts[2]);
+    return tab === null ? null : { resource: "key", id, tab };
+  }
+  if (parts[0] === "node") {
+    const tab = listedTab(nodeDetailTabs, parts[2]);
+    return tab === null ? null : { resource: "node", id, tab };
+  }
+  return null;
+}
+
+export function hashForDetail(address: DetailAddress): string {
+  return `#${address.resource}/${encodeURIComponent(address.id)}/${address.tab}`;
 }
 
 export function useLocationHash(): [string, (next: string) => void] {

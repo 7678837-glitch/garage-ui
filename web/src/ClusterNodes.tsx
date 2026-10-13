@@ -3,7 +3,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { CapacityField } from "./CapacityField";
 import { ConfirmDialog } from "./confirm";
+import { DetailTabs } from "./DetailTabs";
 import { isGarageDown } from "./garageDown";
+import { detailAddressFromHash, hashForDetail, nodeTabs, useLocationHash } from "./Nav";
+import { releaseHash } from "./unsaved";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -617,6 +620,13 @@ function orderedNodes(rows: NodeLine[], sort: NodeSort): NodeLine[] {
 
 export function ClusterNodes() {
   const client = useQueryClient();
+  const [hash, assignHash] = useLocationHash();
+  const goHash = (next: string) => {
+    if (!releaseHash(next)) {
+      return;
+    }
+    assignHash(next);
+  };
   const [address, setAddress] = useState("");
   const [lines, setLines] = useState<string[] | null>(null);
   const nodes = useQuery({
@@ -663,9 +673,50 @@ export function ClusterNodes() {
   const message = nodes.error instanceof Error ? nodes.error.message : UNAVAILABLE;
   const code = shownCode(nodes.error);
   const connectFailure = connect.error instanceof Error ? connect.error.message : CONNECT_FAILED;
+  const detail = detailAddressFromHash(hash);
+  const nodeDetail = detail?.resource === "node" ? detail : null;
+  const openedNode =
+    nodeDetail === null || !nodes.isSuccess
+      ? null
+      : (nodes.data.find((node) => node.id === nodeDetail.id) ?? null);
   return (
     <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
       <h2 className="text-lg font-semibold">Nodes</h2>
+      {nodeDetail ? (
+        <DetailTabs
+          label={`Node ${nodeDetail.id}`}
+          tabs={nodeTabs()}
+          selected={nodeDetail.tab}
+          hrefFor={(tab) => hashForDetail({ resource: "node", id: nodeDetail.id, tab })}
+          onSelect={(tab) => {
+            goHash(hashForDetail({ resource: "node", id: nodeDetail.id, tab }));
+          }}
+        >
+          <p>{nodeDetail.id}</p>
+          {openedNode && nodeDetail.tab === "information" ? (
+            <>
+              {openedNode.hostname !== null ? <p>{openedNode.hostname}</p> : null}
+              {openedNode.addr !== null ? <p>{openedNode.addr}</p> : null}
+              {openedNode.garageVersion !== null ? <p>{openedNode.garageVersion}</p> : null}
+              <p>{openedNode.isUp ? "Up" : "Down"}</p>
+              {openedNode.draining ? <p>Draining</p> : null}
+            </>
+          ) : null}
+          {openedNode && nodeDetail.tab === "statistics" && openedNode.capacity !== null ? (
+            <p>{openedNode.capacity}</p>
+          ) : null}
+          {openedNode && nodeDetail.tab === "maintenance" && openedNode.capacity !== null ? (
+            <CapacityField
+              bytes={openedNode.capacity}
+              submit={(capacity) => {
+                stage.mutate({ id: openedNode.id, capacity });
+              }}
+            />
+          ) : null}
+        </DetailTabs>
+      ) : null}
+      {nodeDetail === null ? (
+        <>
       <div className="grid gap-2">
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -778,6 +829,8 @@ export function ClusterNodes() {
         </label>
         <p>Default order is Id.</p>
       </div>
+        </>
+      ) : null}
       {nodes.isPending ? (
         <div className="h-16 border border-line" aria-label="Loading nodes" />
       ) : null}
@@ -796,10 +849,10 @@ export function ClusterNodes() {
           </button>
         </>
       ) : null}
-      {nodes.isSuccess && nodes.data.length === 0 ? (
+      {nodeDetail === null && nodes.isSuccess && nodes.data.length === 0 ? (
         <p>There are no nodes. Connect the first node.</p>
       ) : null}
-      {nodes.isSuccess && shown.length > 0 ? (
+      {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
         <ul className="grid min-w-0 gap-3 text-sm">
           {shown.map((node) => (
             <li key={node.id} className="min-w-0">

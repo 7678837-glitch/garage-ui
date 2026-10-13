@@ -361,11 +361,16 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
 export function BucketPermissions({
   bucketId,
   canManage,
+  expanded = false,
 }: {
   bucketId: string;
   canManage: boolean;
+  expanded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(expanded);
+  if (expanded) {
+    return <PermissionPanel bucketId={bucketId} canManage={canManage} />;
+  }
   return (
     <>
       <button

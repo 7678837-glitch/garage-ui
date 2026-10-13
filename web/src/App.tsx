@@ -22,6 +22,9 @@ import { Keys } from "./Keys";
 import {
   Nav,
   bucketLocationFromHash,
+  detailAddressFromHash,
+  detailTabLabel,
+  sectionForDetail,
   sectionFromHash,
   sectionTitle,
   useLocationHash,
@@ -202,6 +205,15 @@ type Crumb =
   | { kind: "current"; label: string };
 
 function breadcrumbCrumbs(section: SectionId, hash: string): Crumb[] {
+  const detail = detailAddressFromHash(hash);
+  if (detail && section === sectionForDetail(detail.resource)) {
+    const parent = sectionForDetail(detail.resource);
+    return [
+      { kind: "link", id: "overview", label: sectionTitle("overview") },
+      { kind: "link", id: parent, label: sectionTitle(parent) },
+      { kind: "current", label: detailTabLabel(detail) },
+    ];
+  }
   const objects = section === "buckets" && bucketLocationFromHash(hash).kind === "objects";
   if (objects) {
     return [
