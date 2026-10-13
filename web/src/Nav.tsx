@@ -4,11 +4,18 @@ const sections = [
   { id: "overview", label: "Overview", adminOnly: false },
   { id: "buckets", label: "Buckets", adminOnly: false },
   { id: "keys", label: "Keys", adminOnly: false },
-  { id: "users", label: "Users", adminOnly: true },
+  { id: "nodes", label: "Nodes and layout", adminOnly: true },
   { id: "tokens", label: "Admin tokens", adminOnly: true },
+  { id: "users", label: "Users", adminOnly: true },
+  { id: "settings", label: "Settings", adminOnly: false },
 ] as const;
 
 export type SectionId = (typeof sections)[number]["id"];
+
+export function sectionTitle(id: SectionId): string {
+  const match = sections.find((section) => section.id === id);
+  return match ? match.label : id;
+}
 
 export type BucketLocation =
   | { kind: "list" }
@@ -18,7 +25,7 @@ function hashBody(hash: string): string {
   return hash.startsWith("#") ? hash.slice(1) : hash;
 }
 
-// 地址来自浏览器。坏的百分号转义留在原段里，避免整页被 decodeURIComponent 打崩。
+// The hash comes from the browser. A bad percent-escape stays in that segment so one broken segment cannot blank the page.
 function decodeHashSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);

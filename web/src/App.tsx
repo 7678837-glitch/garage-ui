@@ -23,6 +23,7 @@ import {
   Nav,
   bucketLocationFromHash,
   sectionFromHash,
+  sectionTitle,
   useLocationHash,
   type SectionId,
 } from "./Nav";
@@ -196,14 +197,6 @@ function useHashSection(role: string) {
   return { hash, section: sectionFromHash(hash, role), select };
 }
 
-const sectionLabel: Record<SectionId, string> = {
-  overview: "Overview",
-  buckets: "Buckets",
-  keys: "Keys",
-  users: "Users",
-  tokens: "Admin tokens",
-};
-
 type Crumb =
   | { kind: "link"; id: SectionId; label: string }
   | { kind: "current"; label: string };
@@ -212,17 +205,17 @@ function breadcrumbCrumbs(section: SectionId, hash: string): Crumb[] {
   const objects = section === "buckets" && bucketLocationFromHash(hash).kind === "objects";
   if (objects) {
     return [
-      { kind: "link", id: "overview", label: sectionLabel.overview },
-      { kind: "link", id: "buckets", label: sectionLabel.buckets },
+      { kind: "link", id: "overview", label: sectionTitle("overview") },
+      { kind: "link", id: "buckets", label: sectionTitle("buckets") },
       { kind: "current", label: "Objects" },
     ];
   }
   if (section === "overview") {
-    return [{ kind: "current", label: sectionLabel.overview }];
+    return [{ kind: "current", label: sectionTitle("overview") }];
   }
   return [
-    { kind: "link", id: "overview", label: sectionLabel.overview },
-    { kind: "current", label: sectionLabel[section] },
+    { kind: "link", id: "overview", label: sectionTitle("overview") },
+    { kind: "current", label: sectionTitle(section) },
   ];
 }
 
