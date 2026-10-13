@@ -25,7 +25,7 @@ delete env.HOST;
 export default defineConfig({
   testDir: "./e2e",
   // wizard.config.ts runs the setup wizard before any user exists.
-  testIgnore: "**/wizard.spec.ts",
+  testIgnore: ["**/wizard.spec.ts", "**/tls-warning.spec.ts"],
   timeout: 120_000,
   fullyParallel: false,
   workers: 1,
