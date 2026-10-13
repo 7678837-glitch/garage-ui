@@ -3618,3 +3618,164 @@
         assert_eq!(row.target, "bkt-1");
         assert_eq!(row.status, 400);
     }
+
+    #[tokio::test]
+    async fn object_reject_not_found_is_audited() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            head_missing()
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::NOT_FOUND, "not_found", "Not found");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "not_found");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 404);
+        assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn object_reject_garage_unavailable_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", "project-secret-value"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_GATEWAY,
+            "garage_unavailable",
+            "Garage is unavailable",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "garage_unavailable");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 502);
+        assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn object_reject_s3_error_is_audited() {
+        let mock = S3Mock::start(|line| {
+            assert!(line.starts_with("PUT "), "{line}");
+            let body = r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message>service error</Message></Error>"#;
+            format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_eq!(
+            response.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{}",
+            response.body
+        );
+        assert_eq!(code_of(&response.body), "s3_error");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "upstream_error");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 500);
+        assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn object_reject_no_usable_key_is_audited() {
+        let mock = S3Mock::start(|_| put_ok("abc")).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, false).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("5"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PRECONDITION_FAILED,
+            "no_usable_key",
+            "This bucket has no usable read-write key",
+        );
+        assert!(mock.requests().is_empty());
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "no_usable_key");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 412);
+        assert!(!audit_text(row).contains("hello"));
+    }
