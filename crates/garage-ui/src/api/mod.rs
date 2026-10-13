@@ -74,9 +74,37 @@ pub fn routes(app: App) -> Router<App> {
     let upload = Router::new()
         .route("/api/objects", post(upload_object))
         .route("/api/buckets/{id}/objects/{*key}", put(put_bucket_object))
-        .layer(middleware::from_fn_with_state(app, csrf))
+        .layer(middleware::from_fn_with_state(app.clone(), csrf))
         .layer(DefaultBodyLimit::max(upload_limit));
-    json_routes.merge(upload)
+    json_routes
+        .merge(upload)
+        .layer(middleware::from_fn_with_state(app, closed_until_setup))
+}
+
+const OPEN_BEFORE_SETUP: &[(&str, &str)] = &[("POST", "/api/setup"), ("GET", "/api/auth/status")];
+
+fn open_before_setup(method: &Method, path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    OPEN_BEFORE_SETUP.iter().any(|(allowed_method, route)| {
+        *allowed_method == method.as_str() && (path == *route || path.ends_with(route))
+    })
+}
+
+async fn closed_until_setup(
+    State(app): State<App>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    if open_before_setup(request.method(), request.uri().path()) {
+        return Ok(next.run(request).await);
+    }
+    let users = db::count_users(&app.db)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    if users == 0 {
+        return Err(ApiError::unauthorized());
+    }
+    Ok(next.run(request).await)
 }
 
 async fn csrf(State(app): State<App>, request: Request, next: Next) -> Result<Response, ApiError> {
@@ -294,4 +322,5 @@ mod tests {
     include!("tests/cluster.rs");
     include!("tests/workers.rs");
     include!("tests/audit.rs");
+    include!("tests/uninitialized.rs");
 }
