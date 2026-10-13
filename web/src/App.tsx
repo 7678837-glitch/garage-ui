@@ -33,6 +33,7 @@ import {
 import { ThemeChooser } from "./theme";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
+import { Workers } from "./Workers";
 
 const passwordBounds = "Password must be 10 to 72 characters";
 
@@ -439,6 +440,7 @@ function Home({ status }: { status: SessionStatus }) {
           </>
         ) : null}
         {section === "nodes" && admin ? <ClusterNodes /> : null}
+        {section === "workers" && admin ? <Workers /> : null}
         {section === "settings" ? (
           <>
             <form

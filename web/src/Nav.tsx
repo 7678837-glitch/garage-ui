@@ -5,6 +5,7 @@ const sections = [
   { id: "buckets", label: "Buckets", adminOnly: false },
   { id: "keys", label: "Keys", adminOnly: false },
   { id: "nodes", label: "Nodes and layout", adminOnly: true },
+  { id: "workers", label: "Workers", adminOnly: true },
   { id: "tokens", label: "Admin tokens", adminOnly: true },
   { id: "users", label: "Users", adminOnly: true },
   { id: "settings", label: "Settings", adminOnly: false },
@@ -48,6 +49,18 @@ export function sectionFromHash(hash: string, role: string): SectionId {
     return "overview";
   }
   return match.id;
+}
+
+export function workersNodeId(hash: string): string | null {
+  const parts = hashBody(hash).split("/");
+  if (parts.length !== 2 || parts[0] !== "workers" || parts[1] === "") {
+    return null;
+  }
+  const id = decodeHashSegment(parts[1]);
+  if (id.length === 0) {
+    return null;
+  }
+  return id;
 }
 
 export function bucketLocationFromHash(hash: string): BucketLocation {

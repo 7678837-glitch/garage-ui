@@ -1,0 +1,155 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "./api/client";
+import { isGarageDown } from "./garageDown";
+import { useLocationHash, workersNodeId } from "./Nav";
+
+const UNAVAILABLE = "Workers are unavailable";
+
+type WorkerRow = {
+  id: number;
+  name: string;
+  state: string;
+  errors: number;
+  progress: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function integerAtLeastZero(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
+function stateText(value: unknown): string | null {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  if (!isRecord(value) || !isRecord(value.throttled)) {
+    return null;
+  }
+  const duration = value.throttled.durationSecs;
+  if (typeof duration !== "number" || !Number.isFinite(duration)) {
+    return null;
+  }
+  return "throttled";
+}
+
+function workerRow(value: unknown): WorkerRow {
+  if (!isRecord(value)) {
+    throw new Error(UNAVAILABLE);
+  }
+  const id = integerAtLeastZero(value.id);
+  const errors = integerAtLeastZero(value.errors);
+  const state = stateText(value.state);
+  const name = value.name;
+  const progress = value.progress;
+  if (
+    id === null ||
+    errors === null ||
+    state === null ||
+    typeof name !== "string" ||
+    name.length === 0
+  ) {
+    throw new Error(UNAVAILABLE);
+  }
+  if (progress !== undefined && progress !== null && typeof progress !== "string") {
+    throw new Error(UNAVAILABLE);
+  }
+  return {
+    id,
+    name,
+    state,
+    errors,
+    progress: typeof progress === "string" ? progress : "",
+  };
+}
+
+function workersFrom(body: unknown): WorkerRow[] {
+  if (!Array.isArray(body)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return body.map(workerRow);
+}
+
+async function loadWorkers(nodeId: string): Promise<WorkerRow[]> {
+  return workersFrom(await api<unknown>(`/api/nodes/${encodeURIComponent(nodeId)}/workers`));
+}
+
+function WorkersList({ nodeId }: { nodeId: string }) {
+  const workers = useQuery({
+    queryKey: ["nodes", nodeId, "workers"],
+    queryFn: () => loadWorkers(nodeId),
+  });
+  const message = workers.error instanceof Error ? workers.error.message : UNAVAILABLE;
+  const rows = workers.data ?? [];
+
+  return (
+    <>
+      {workers.isPending ? (
+        <div className="h-16 border border-line" aria-label="Loading workers" />
+      ) : null}
+      {workers.isError && !isGarageDown(workers.error) ? (
+        <>
+          <p>{message}</p>
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void workers.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
+      {workers.isSuccess && rows.length === 0 ? <p>There are no workers.</p> : null}
+      {rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr>
+                <th className="py-2 pr-3 font-medium" scope="col">
+                  Name
+                </th>
+                <th className="py-2 pr-3 font-medium" scope="col">
+                  State
+                </th>
+                <th className="py-2 pr-3 font-medium" scope="col">
+                  Errors
+                </th>
+                <th className="py-2 font-medium" scope="col">
+                  Progress
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((worker) => (
+                <tr key={worker.id}>
+                  <td className="py-2 pr-3">{worker.name}</td>
+                  <td className="py-2 pr-3">{worker.state}</td>
+                  <td className="py-2 pr-3">{worker.errors}</td>
+                  <td className="py-2">{worker.progress}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+export function Workers() {
+  const [hash] = useLocationHash();
+  const nodeId = workersNodeId(hash);
+  return (
+    <section className="grid gap-4" aria-label="Workers">
+      <h2 className="text-lg font-semibold">Workers</h2>
+      {nodeId === null ? <p>No node is selected.</p> : <WorkersList nodeId={nodeId} />}
+    </section>
+  );
+}
