@@ -118,3 +118,11 @@ On 2026-10-10 the maintainer confirmed this. The maintainer's words were: "This 
 - Port 3909. When `HOST` is not set inside the image, listen on `0.0.0.0`. The compose example writes the host port as `127.0.0.1:3909`. The data volume is `/data`. The health check uses the binary's `-health`. The acceptance text for listening and for the port mapping is 3.1 of [security.md](security.md).
 - CI builds `linux/amd64` and `linux/arm64`. Base images are pinned by digest.
 - The compose example may also start Garage v2.4.1, only for local evaluation. This project does not install, upgrade, or edit the configuration of a Garage node.
+
+## Version numbers are YYYYMMDD.N
+
+On 2026-10-13 the maintainer replaced semantic versions with `YYYYMMDD.N`. The maintainer uses that scheme for this project's versions.
+
+The first release on a calendar day is `.1`. Another release on the same day increments `N`. A new day starts again at `.1`. The only source is the `VERSION` file at the repository root. The Cargo workspace version and `web/package.json` `version` are `YYYYMMDD.N.0`, and the trailing `.0` exists only to satisfy the manifest format. Git tags and GitHub release names match `VERSION` exactly, with no `v` prefix. Before a release commit, run `date +%Y%m%d`, then `git tag -l '<that date>.*'` and `gh release list`. Do not increment from the previous version's date. Change `VERSION` only in a release commit. Ordinary commits on the dev branch do not change it.
+
+This rule is the application version. Helm's `Chart.yaml` `version` stays valid SemVer because Helm rejects other versions. The image tag follows `VERSION`.
