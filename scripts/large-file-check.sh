@@ -1,7 +1,11 @@
 #!/bin/bash
 # Rerun the p3-large-file gate against a fresh Garage v2.4.1 volume and garage-ui:release-arm64.
 set -euo pipefail
-export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+if [[ -x /opt/homebrew/bin/magick ]]; then
+  MAGICK=/opt/homebrew/bin/magick
+else
+  MAGICK=magick
+fi
 
 WORK=/tmp/p3-large-file
 LOG="${WORK}/run.log"
@@ -882,9 +886,9 @@ oom_before="$(docker inspect -f '{{.State.OOMKilled}} {{.State.Status}}' "$UI")"
 log "before_thumbs ${oom_before}"
 rm -f "${WORK}/outcome.json"
 if [[ ! -f "${WORK}/thumb.jpg" ]]; then
-  magick -size 4096x4096 xc:white -strip -quality 80 "${WORK}/thumb.jpg"
+  "$MAGICK" -size 4096x4096 xc:white -strip -quality 80 "${WORK}/thumb.jpg"
 fi
-read -r thumb_w thumb_h < <(magick identify -format '%w %h' "${WORK}/thumb.jpg")
+read -r thumb_w thumb_h < <("$MAGICK" identify -format '%w %h' "${WORK}/thumb.jpg")
 thumb_bytes="$(python3 -c 'import os; print(os.path.getsize("'"${WORK}/thumb.jpg"'"))')"
 log "thumbnail_source width=${thumb_w} height=${thumb_h} bytes=${thumb_bytes}"
 thumb_code=0
