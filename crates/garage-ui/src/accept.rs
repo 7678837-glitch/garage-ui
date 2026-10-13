@@ -720,6 +720,29 @@ async fn csrf_rejects_a_session_without_a_token_and_logout_clears_it() {
 }
 
 #[tokio::test]
+async fn csrf_rejects_a_token_that_does_not_match_the_session() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let session = setup_admin(&app).await;
+    let mut mismatched = request("POST", "/api/auth/logout", None, Some(&session));
+    mismatched
+        .headers_mut()
+        .insert("x-csrf-token", "not-the-session-token".parse().unwrap());
+    let rejected = exchange(&app, mismatched).await;
+    assert_eq!(rejected.status, StatusCode::FORBIDDEN);
+    assert_eq!(code_of(&rejected.body), "csrf_rejected");
+    let still = exchange(
+        &app,
+        request("GET", "/api/auth/status", None, Some(&session)),
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&still.body).unwrap()["authenticated"],
+        true
+    );
+}
+
+#[tokio::test]
 async fn login_presenting_a_session_returns_a_new_id_and_retires_the_old_one() {
     let dir = crate::util::temp_dir();
     let app = state::test_app(&dir).await;
