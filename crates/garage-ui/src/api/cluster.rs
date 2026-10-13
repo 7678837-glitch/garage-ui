@@ -20,6 +20,8 @@ use super::post_garage;
 use super::record;
 use super::require;
 use super::status;
+use axum::Router;
+use axum::routing::{any, get, post, put};
 
 pub(crate) async fn cluster_health(
     State(app): State<App>,
@@ -847,4 +849,23 @@ pub(crate) async fn garage(
         &headers,
     )
     .await
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/cluster/health", get(cluster_health))
+        .route("/api/cluster/status", get(cluster_status))
+        .route("/api/cluster/statistics", get(cluster_statistics))
+        .route("/api/nodes/{id}/statistics", get(node_statistics))
+        .route(
+            "/api/nodes/{id}/worker-variables",
+            get(get_worker_variable).put(put_worker_variable),
+        )
+        .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
+        .route("/api/nodes/{id}/repair", post(post_repair))
+        .route("/api/cluster/connect", post(connect_cluster))
+        .route("/api/layout/history", get(layout_history))
+        .route("/api/layout/preview", post(preview_layout))
+        .route("/api/layout/stage", post(stage_layout))
+        .route("/api/garage/{*path}", any(garage))
 }

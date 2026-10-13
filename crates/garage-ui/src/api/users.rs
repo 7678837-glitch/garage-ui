@@ -19,6 +19,8 @@ use super::require;
 use super::share;
 use super::validate_password;
 use super::validate_username;
+use axum::Router;
+use axum::routing::{get, patch, post};
 
 #[derive(Deserialize)]
 pub(crate) struct NewUser {
@@ -617,4 +619,11 @@ fn normalize_bits(role: &str, download: bool, share: bool) -> Result<(bool, bool
 
 fn is_unique(error: &sqlx::Error) -> bool {
     error.to_string().contains("UNIQUE")
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/users", get(list_users).post(create_user))
+        .route("/api/users/{id}", patch(patch_user).delete(remove_user))
+        .route("/api/users/{id}/reset-password", post(reset_password))
 }

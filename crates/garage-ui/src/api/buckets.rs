@@ -24,6 +24,8 @@ use super::percent_encode;
 use super::post_garage;
 use super::record;
 use super::require;
+use axum::Router;
+use axum::routing::{get, post, put};
 
 pub(crate) async fn list_buckets(
     State(app): State<App>,
@@ -963,4 +965,36 @@ impl<'a> Scan<'a> {
 
 fn is_literal_end(byte: u8) -> bool {
     matches!(byte, b',' | b'}' | b' ' | b'\n' | b'\r' | b'\t')
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/buckets", get(list_buckets).post(create_bucket))
+        .route("/api/buckets/{id}", get(get_bucket).delete(delete_bucket))
+        .route(
+            "/api/buckets/{id}/aliases",
+            post(add_bucket_alias).delete(remove_bucket_alias),
+        )
+        .route("/api/buckets/{id}/quotas", put(put_bucket_quotas))
+        .route(
+            "/api/buckets/{id}/cors",
+            get(get_bucket_cors).put(put_bucket_cors),
+        )
+        .route(
+            "/api/buckets/{id}/lifecycle",
+            get(get_bucket_lifecycle).put(put_bucket_lifecycle),
+        )
+        .route(
+            "/api/buckets/{id}/multipart",
+            get(list_multipart_uploads).delete(abort_multipart_uploads),
+        )
+        .route(
+            "/api/buckets/{id}/cleanup-uploads",
+            post(cleanup_uploads),
+        )
+        .route("/api/buckets/{id}/credential", put(put_bucket_credential))
+        .route(
+            "/api/buckets/{id}/permissions",
+            post(grant_bucket_permissions).delete(revoke_bucket_permissions),
+        )
 }

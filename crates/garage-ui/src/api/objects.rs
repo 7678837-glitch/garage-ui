@@ -30,6 +30,7 @@ use axum::routing::{any, get, patch, post, put};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
+use axum::Router;
 
 #[derive(Deserialize)]
 pub(crate) struct NameQuery {
@@ -1100,6 +1101,29 @@ fn delete_keys(body: &[u8]) -> Result<Vec<String>, ApiError> {
     Ok(out)
 }
 
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/buckets/{id}/objects", get(list_bucket_objects))
+        .route(
+            "/api/buckets/{id}/objects:delete",
+            post(delete_bucket_objects),
+        )
+        .route(
+            "/api/buckets/{id}/objects/{*key}",
+            get(object_metadata).delete(delete_bucket_object),
+        )
+        .route("/api/buckets/{id}/search", get(search_bucket_objects))
+        .route("/api/buckets/{id}/inspect/{*key}", get(inspect_object))
+        .route("/api/objects/preview", get(preview_object))
+        .route("/api/objects/download", get(download_object))
+        .route("/api/objects/thumbnail", get(thumbnail_object))
+        .route(
+            "/api/buckets/{id}/archive-token",
+            post(create_archive_token),
+        )
+        .route("/api/buckets/{id}/archive", get(download_archive))
+        .route("/api/share", post(share))
+}
 #[cfg(test)]
 mod tests {
     use axum::body::Bytes;

@@ -22,6 +22,7 @@ use super::post_garage;
 use super::record;
 use super::require;
 use super::status;
+use axum::Router;
 
 pub(crate) async fn list_keys(
     State(app): State<App>,
@@ -294,4 +295,11 @@ fn created_key_id(bytes: &[u8]) -> Option<String> {
         let id = value.get(field)?.as_str()?;
         (!id.is_empty()).then(|| id.to_string())
     })
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/keys", get(list_keys).post(create_key))
+        .route("/api/keys/{id}", patch(patch_key).delete(delete_key))
+        .route("/api/keys/{id}/secret", post(key_secret))
 }

@@ -21,6 +21,8 @@ use super::hash_password;
 use super::record;
 use super::validate_password;
 use super::validate_username;
+use axum::Router;
+use axum::routing::{get, post};
 
 #[derive(Deserialize)]
 pub(crate) struct Credentials {
@@ -386,4 +388,15 @@ async fn login_response(
 
 fn effective_share(user: &User) -> bool {
     user.role == "admin" || (user.can_share && user.can_download)
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route("/api/setup", post(setup))
+        .route("/api/auth/status", get(status))
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/logout", post(logout))
+        .route("/api/auth/change-password", post(change_password))
+        .route("/api/config", get(public_config))
+        .route("/api/capabilities", get(capabilities))
 }

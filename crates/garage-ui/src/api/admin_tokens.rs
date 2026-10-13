@@ -21,6 +21,8 @@ use super::percent_encode;
 use super::post_garage;
 use super::record;
 use super::status;
+use axum::Router;
+use axum::routing::{get, patch, post};
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -385,4 +387,19 @@ pub(crate) async fn list_admin_tokens(
     .into_response();
     *out.status_mut() = status;
     Ok(out)
+}
+
+pub(crate) fn routes() -> Router<App> {
+    Router::new()
+        .route(
+            "/api/admin-tokens",
+            get(list_admin_tokens).post(create_admin_token),
+        )
+        .route("/api/admin-tokens/current", get(current_admin_token))
+        .route(
+            "/api/admin-tokens/{id}",
+            get(get_admin_token)
+                .patch(update_admin_token)
+                .delete(delete_admin_token),
+        )
 }
