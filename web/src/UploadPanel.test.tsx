@@ -14,6 +14,7 @@ class FakeRequest {
   withCredentials = false;
   aborted = false;
   status = 0;
+  responseText = "";
   headers = new Map<string, string>();
   body: Document | XMLHttpRequestBodyInit | null = null;
   upload: { onprogress: ((event: Progress) => void) | null } = { onprogress: null };
