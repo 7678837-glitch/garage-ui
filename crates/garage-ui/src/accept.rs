@@ -830,6 +830,54 @@ async fn sessions_survive_reopen_until_the_key_or_password_changes() {
 }
 
 #[tokio::test]
+async fn authenticate_rejects_a_disabled_account_and_a_missing_account() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    let first = setup_admin(&app).await;
+    let second = login_ok(&app, "Ada", PASSWORD).await;
+    assert_ne!(first.id, second.id);
+    sqlx::query("UPDATE users SET disabled = 1 WHERE username = 'Ada'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_closed(&app, &first).await;
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id IN (?, ?)")
+        .bind(&first.id)
+        .bind(&second.id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+
+    let orphan = state::test_app(&dir.join("orphan")).await;
+    let session = setup_admin(&orphan).await;
+    let mut conn = orphan.db.acquire().await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let deleted = sqlx::query("DELETE FROM users WHERE username = 'Ada'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(deleted.rows_affected(), 1);
+    drop(conn);
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id = ?")
+        .bind(&session.id)
+        .fetch_one(&orphan.db)
+        .await
+        .unwrap();
+    assert_eq!(before, 1);
+    assert_closed(&orphan, &session).await;
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id = ?")
+        .bind(&session.id)
+        .fetch_one(&orphan.db)
+        .await
+        .unwrap();
+    assert_eq!(after, 1);
+}
+
+#[tokio::test]
 async fn user_admin_locks_self_resets_others_and_hides_hashes() {
     let dir = crate::util::temp_dir();
     let app = state::test_app(&dir).await;
