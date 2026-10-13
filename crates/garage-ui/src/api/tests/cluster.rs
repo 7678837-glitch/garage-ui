@@ -1523,6 +1523,56 @@
         assert!(cluster_calls(&mock, "UpdateClusterLayout").is_empty());
     }
 
+    #[tokio::test]
+    async fn skip_dead_nodes_passes_the_current_version() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"version":9007199254740993}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let bodies = [
+            r#"{"allowMissingData":false,"version":9007199254740993}"#,
+            r#"{"allowMissingData":true,"version":9007199254740993}"#,
+        ];
+        for body in bodies {
+            let response = exchange(
+                &app,
+                with_confirm(request(
+                    "POST",
+                    "/api/layout/skip-dead-nodes",
+                    Some(body),
+                    Some(&admin),
+                )),
+            )
+            .await;
+            assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        }
+        let calls = cluster_calls(&mock, "ClusterLayoutSkipDeadNodes");
+        assert_eq!(
+            calls.len(),
+            bodies.len(),
+            "{:?}",
+            calls.iter().map(|call| call.line.clone()).collect::<Vec<_>>()
+        );
+        for (call, body) in calls.iter().zip(bodies) {
+            assert!(
+                call.line
+                    .starts_with("POST /v2/ClusterLayoutSkipDeadNodes "),
+                "{}",
+                call.line
+            );
+            assert_eq!(call.body, body);
+            assert!(
+                !call.body.contains("9007199254740994"),
+                "{}",
+                call.body
+            );
+        }
+        assert!(cluster_calls(&mock, "ApplyClusterLayout").is_empty());
+    }
+
     const METRICS_TOKEN: &str = "metrics-token-value1";
     const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
 
