@@ -446,3 +446,361 @@
             exchange(&app, request("GET", "/api/config", None, Some(&replacement))).await;
         assert_eq!(current.status, StatusCode::OK, "{}", current.body);
     }
+
+    #[tokio::test]
+    async fn setup_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "setup");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/setup");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn setup_rate_limit_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::OK, "{}", created.body);
+        for _ in 0..9 {
+            let conflict = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/setup",
+                    Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(conflict.status, StatusCode::CONFLICT, "{}", conflict.body);
+            assert_eq!(code_of(&conflict.body), "already_initialized");
+        }
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let blocked = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS, "{}", blocked.body);
+        assert_eq!(code_of(&blocked.body), "rate_limited");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "rate_limited");
+        assert_eq!(row.reason, "rate_limited");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/setup");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 429);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn login_failure_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let submitted = "wrong horse";
+        let failed = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": "Ada", "password": submitted }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "{}", failed.body);
+        assert_eq!(code_of(&failed.body), "invalid_credentials");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "failure");
+        assert_eq!(row.reason, "invalid_credentials");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/login");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 401);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn login_rate_limit_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        login(&app).await;
+        let submitted = "wrong horse";
+        for _ in 0..10 {
+            let failed = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/auth/login",
+                    Some(&json!({ "username": "Ada", "password": submitted }).to_string()),
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "{}", failed.body);
+            assert_eq!(code_of(&failed.body), "invalid_credentials");
+        }
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let blocked = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": "Ada", "password": submitted }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS, "{}", blocked.body);
+        assert_eq!(code_of(&blocked.body), "rate_limited");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "rate_limited");
+        assert_eq!(row.reason, "rate_limited");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/login");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 429);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn login_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let logged_in = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(logged_in.status, StatusCode::OK, "{}", logged_in.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "login");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/login");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn logout_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let logged_out = exchange(
+            &app,
+            request("POST", "/api/auth/logout", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(logged_out.status, StatusCode::NO_CONTENT, "{}", logged_out.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "logout");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/logout");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 204);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn change_password_invalid_credentials_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let submitted = "wrong horse";
+        let replacement = "updated horse";
+        let failed = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/change-password",
+                Some(
+                    &json!({
+                        "current_password": submitted,
+                        "new_password": replacement
+                    })
+                    .to_string(),
+                ),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "{}", failed.body);
+        assert_eq!(code_of(&failed.body), "invalid_credentials");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "failure");
+        assert_eq!(row.reason, "invalid_credentials");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/change-password");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 401);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(row).contains(replacement));
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn change_password_rate_limit_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let submitted = "wrong horse";
+        let replacement = "updated horse";
+        for _ in 0..10 {
+            let failed = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/auth/change-password",
+                    Some(
+                        &json!({
+                            "current_password": submitted,
+                            "new_password": replacement
+                        })
+                        .to_string(),
+                    ),
+                    Some(&session),
+                ),
+            )
+            .await;
+            assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "{}", failed.body);
+            assert_eq!(code_of(&failed.body), "invalid_credentials");
+        }
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let blocked = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/change-password",
+                Some(
+                    &json!({
+                        "current_password": submitted,
+                        "new_password": replacement
+                    })
+                    .to_string(),
+                ),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS, "{}", blocked.body);
+        assert_eq!(code_of(&blocked.body), "rate_limited");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "rate_limited");
+        assert_eq!(row.reason, "rate_limited");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/change-password");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 429);
+        assert!(!audit_text(row).contains(submitted));
+        assert!(!audit_text(row).contains(replacement));
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn change_password_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (session, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let replacement = "updated horse";
+        let changed = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/change-password",
+                Some(
+                    &json!({
+                        "current_password": PASSWORD,
+                        "new_password": replacement
+                    })
+                    .to_string(),
+                ),
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "password_changed");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/change-password");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(PASSWORD));
+        assert!(!audit_text(row).contains(replacement));
+    }
