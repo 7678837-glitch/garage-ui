@@ -2204,3 +2204,126 @@
         assert_eq!(code_of(&refused_response.body), "garage_unavailable");
         assert!(!refused_response.body.contains(TOKEN));
     }
+
+    #[tokio::test]
+    async fn bucket_cors_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/cors",
+                Some(r#"{"corsRules":[]}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/cors");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn bucket_cors_rejection_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request("PUT", "/api/buckets/bkt-1/cors", Some("{}"), Some(&admin)),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_cors",
+            "corsRules must be an array",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_cors");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/cors");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+    }
+
+    #[tokio::test]
+    async fn bucket_lifecycle_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some(r#"{"lifecycleRules":[]}"#),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/lifecycle");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn bucket_lifecycle_rejection_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/lifecycle",
+                Some("{}"),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_lifecycle",
+            "lifecycleRules must be an array",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_lifecycle");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/lifecycle");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+    }
