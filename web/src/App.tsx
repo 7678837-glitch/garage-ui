@@ -15,6 +15,7 @@ import { api, bindUnauthenticated, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { About, garageLine } from "./About";
 import { AdminTokens } from "./AdminTokens";
+import { BlockErrors } from "./BlockErrors";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
@@ -441,6 +442,7 @@ function Home({ status }: { status: SessionStatus }) {
         ) : null}
         {section === "nodes" && admin ? <ClusterNodes /> : null}
         {section === "workers" && admin ? <Workers /> : null}
+        {section === "block-errors" && admin ? <BlockErrors /> : null}
         {section === "settings" ? (
           <>
             <form

@@ -6,6 +6,7 @@ const sections = [
   { id: "keys", label: "Keys", adminOnly: false },
   { id: "nodes", label: "Nodes and layout", adminOnly: true },
   { id: "workers", label: "Workers", adminOnly: true },
+  { id: "block-errors", label: "Block errors", adminOnly: true },
   { id: "tokens", label: "Admin tokens", adminOnly: true },
   { id: "users", label: "Users", adminOnly: true },
   { id: "settings", label: "Settings", adminOnly: false },
@@ -51,9 +52,9 @@ export function sectionFromHash(hash: string, role: string): SectionId {
   return match.id;
 }
 
-export function workersNodeId(hash: string): string | null {
+function nodeIdUnder(hash: string, root: string): string | null {
   const parts = hashBody(hash).split("/");
-  if (parts.length !== 2 || parts[0] !== "workers" || parts[1] === "") {
+  if (parts.length !== 2 || parts[0] !== root || parts[1] === "") {
     return null;
   }
   const id = decodeHashSegment(parts[1]);
@@ -61,6 +62,14 @@ export function workersNodeId(hash: string): string | null {
     return null;
   }
   return id;
+}
+
+export function workersNodeId(hash: string): string | null {
+  return nodeIdUnder(hash, "workers");
+}
+
+export function blockErrorsNodeId(hash: string): string | null {
+  return nodeIdUnder(hash, "block-errors");
 }
 
 export function bucketLocationFromHash(hash: string): BucketLocation {
