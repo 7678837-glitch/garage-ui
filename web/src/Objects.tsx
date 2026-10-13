@@ -461,6 +461,41 @@ function isSortChoice(value: string): value is SortChoice {
   return value === "key" || value === "size" || value === "time";
 }
 
+function sortFromAddress(value: string | null): SortChoice {
+  if (value === "size" || value === "time") {
+    return value;
+  }
+  return "key";
+}
+
+function readObjectQuery(): { filter: string; sort: SortChoice } {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    filter: params.get("objects") ?? "",
+    sort: sortFromAddress(params.get("objectsSort")),
+  };
+}
+
+function writeObjectQuery(filter: string, sort: SortChoice) {
+  const params = new URLSearchParams(window.location.search);
+  if (filter.length > 0) {
+    params.set("objects", filter);
+  } else {
+    params.delete("objects");
+  }
+  if (sort === "key") {
+    params.delete("objectsSort");
+  } else {
+    params.set("objectsSort", sort);
+  }
+  const search = params.toString();
+  const next = `${window.location.pathname}${search.length > 0 ? `?${search}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) {
+    window.history.replaceState(window.history.state, "", next);
+  }
+}
+
 function prefixSegments(prefix: string): { label: string; prefix: string }[] {
   const parts = prefix.split("/").filter((part) => part.length > 0);
   const segments: { label: string; prefix: string }[] = [];
@@ -593,8 +628,15 @@ export function Objects({
   const location = bucketLocationFromHash(hash);
   const prefix =
     location.kind === "objects" && location.bucketId === bucketId ? location.prefix : "";
-  const [browse, setBrowse] = useState(initialBrowse);
-  const [draft, setDraft] = useState("");
+  const [browse, setBrowse] = useState<BrowseState>(() => {
+    const address = readObjectQuery();
+    return {
+      ...initialBrowse,
+      sort: address.sort,
+      search: address.filter.length >= 2 ? address.filter : null,
+    };
+  });
+  const [draft, setDraft] = useState(() => readObjectQuery().filter);
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
   const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
@@ -622,6 +664,7 @@ export function Objects({
     picked = [];
     setTrackedPrefix(prefix);
     setDraft("");
+    writeObjectQuery("", browse.sort);
     setBrowse((current) => ({
       ...current,
       next: null,
@@ -910,6 +953,7 @@ export function Objects({
             next: null,
             selected: null,
           }));
+          writeObjectQuery(q, browse.sort);
         }}
       >
         <label className="block text-sm">
@@ -938,6 +982,7 @@ export function Objects({
               return;
             }
             setBrowse((current) => ({ ...current, sort: value }));
+            writeObjectQuery(browse.search ?? "", value);
           }}
         >
           <option value="key">Key</option>
