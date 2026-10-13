@@ -844,3 +844,76 @@ test("shows the API code and requests the admin token list again from Retry", as
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(listCalls).toBe(2);
 });
+
+const currentToken = {
+  id: "tok-current",
+  name: "server-token",
+  scope: ["ListBuckets"],
+  expiration: "2026-12-01T00:00:00Z",
+  expired: false,
+  fromConfig: false,
+  created: "2026-02-01T00:00:00Z",
+};
+
+function tokenResponse(path: string) {
+  if (path === "/api/admin-tokens/current") {
+    return json(currentToken);
+  }
+  return json(tokenPage([]));
+}
+
+test("shows Loading admin tokens and marks the admin tokens section busy on the first load", async () => {
+  const pending: { path: string; resolve: (response: Response) => void }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://ui.local").pathname;
+      return new Promise<Response>((resolve) => {
+        pending.push({ path, resolve });
+      });
+    }),
+  );
+  renderTokens();
+  const section = screen.getByRole("region", { name: "Admin tokens" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByLabelText("Loading admin tokens").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading admin tokens")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("No admin tokens")).toBeNull();
+  expect(screen.getByRole("button", { name: "Create token" })).toBeTruthy();
+  for (const item of pending) {
+    item.resolve(tokenResponse(item.path));
+  }
+  expect((await screen.findByText("No admin tokens")).textContent).toBe("No admin tokens");
+  expect(screen.getByRole("region", { name: "Admin tokens" }).getAttribute("aria-busy")).toBe(
+    "false",
+  );
+  expect(screen.queryByLabelText("Loading admin tokens")).toBeNull();
+  expect(screen.queryByText("Loading admin tokens")).toBeNull();
+});
+
+test("shows No admin tokens when the list is empty", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(init?.credentials).toBe("include");
+      if (url.pathname === "/api/admin-tokens") {
+        expect(url.searchParams.get("offset")).toBe("0");
+        expect(url.searchParams.get("limit")).toBe("100");
+      }
+      return tokenResponse(url.pathname);
+    }),
+  );
+  renderTokens();
+  expect((await screen.findByText("No admin tokens")).textContent).toBe("No admin tokens");
+  expect(screen.getByText("No admin tokens").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Create token" })).toBeTruthy();
+  expect(screen.queryByText("issued-reader")).toBeNull();
+  expect(screen.queryByLabelText("Loading admin tokens")).toBeNull();
+  expect(screen.queryByText("Loading admin tokens")).toBeNull();
+  expect(screen.getByRole("region", { name: "Admin tokens" }).getAttribute("aria-busy")).toBe(
+    "false",
+  );
+});
