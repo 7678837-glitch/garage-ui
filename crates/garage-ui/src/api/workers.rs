@@ -1,29 +1,77 @@
-use axum::Json;
-use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use serde_json::{Value, json};
+use axum::Json;
+use axum::Router;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::access::Op;
 use crate::error::ApiError;
 use crate::state::App;
 
-use super::Authed;
 use super::percent_encode;
 use super::post_garage;
 use super::require;
+use super::Authed;
+
+#[derive(Deserialize)]
+struct WorkerListQuery {
+    busy: Option<String>,
+    errors: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ListWorkersBody {
+    #[serde(rename = "busyOnly", skip_serializing_if = "is_false")]
+    busy_only: bool,
+    #[serde(rename = "errorOnly", skip_serializing_if = "is_false")]
+    error_only: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn flag_enabled(value: Option<&str>) -> Result<bool, ApiError> {
+    match value {
+        None => Ok(false),
+        Some("1") => Ok(true),
+        Some(_) => Err(ApiError::bad_request(
+            "invalid_filter",
+            "busy and errors must be 1",
+        )),
+    }
+}
+
+fn list_workers_body(query: &WorkerListQuery) -> Result<Vec<u8>, ApiError> {
+    let body = ListWorkersBody {
+        busy_only: flag_enabled(query.busy.as_deref())?,
+        error_only: flag_enabled(query.errors.as_deref())?,
+    };
+    serde_json::to_vec(&body).map_err(|_| ApiError::internal())
+}
 
 pub(crate) async fn list_workers(
     State(app): State<App>,
     Authed(current): Authed,
     Path(id): Path<String>,
+    Query(query): Query<WorkerListQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ViewOps)?;
-    let query = format!("node={}", percent_encode(&id));
-    let posted = post_garage(&app, &current, &headers, "ListWorkers", Some(&query), b"{}").await?;
+    let payload = list_workers_body(&query)?;
+    let node = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "ListWorkers",
+        Some(&node),
+        &payload,
+    )
+    .await?;
     node_body(&app, posted, &id).await
 }
 
