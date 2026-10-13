@@ -178,4 +178,15 @@ test.describe.serial("accounts", () => {
     await expect(users.getByText("There are no users. Create the first user.")).toHaveCount(0);
     await expect(users.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
   });
+
+  test("restores the administrator password", async ({ page }) => {
+    test.setTimeout(120_000);
+    await logIn(page, administrator.username, nextPassword);
+    await sections(page).getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
+    await page.getByLabel("Current password").fill(nextPassword);
+    await page.getByLabel("New password").fill(administrator.password);
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByText("Password updated", { exact: true })).toBeVisible();
+  });
 });
