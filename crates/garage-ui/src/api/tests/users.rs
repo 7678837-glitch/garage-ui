@@ -1328,3 +1328,96 @@
         .await;
         assert_error(&archive, StatusCode::NOT_FOUND, "not_found", "Not found");
     }
+
+    #[tokio::test]
+    async fn viewer_zip_token_is_forbidden_until_download_is_granted() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Eve",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let created_body: Value = serde_json::from_str(&created.body).unwrap();
+        assert_eq!(created_body["can_download"], false);
+        assert_eq!(created_body["can_share"], false);
+        let user_id = created_body["id"].as_i64().expect("id");
+        let viewer = sign_in(&app, "Eve", PASSWORD).await;
+
+        let denied = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(&json!({ "keys": ["a.txt"] }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM zip_tokens WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(stored, 0);
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{user_id}"),
+                Some(&json!({ "can_download": true }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&patched.body).unwrap()["can_download"],
+            true
+        );
+
+        let issued = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(&json!({ "keys": ["a.txt"] }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(issued.status, StatusCode::OK);
+        let issued_body = match serde_json::from_str::<Value>(&issued.body) {
+            Ok(value) => value,
+            Err(_) => panic!("archive token response was not json"),
+        };
+        let token = match issued_body.get("token").and_then(Value::as_str) {
+            Some(token) if !token.is_empty() => token.to_string(),
+            _ => panic!("archive token response had no token"),
+        };
+        let row = crate::db::load_zip(&app.db, &token)
+            .await
+            .unwrap()
+            .expect("zip row");
+        assert_eq!(row.user_id, user_id);
+        assert_eq!(row.bucket_id, "bkt-1");
+        assert_eq!(row.keys_json, r#"["a.txt"]"#);
+    }
