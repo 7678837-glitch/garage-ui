@@ -227,3 +227,69 @@ test("an admin on #workers/n1 starts a tables repair after typing n1", async () 
   });
   expect(window.location.hash).toBe("#workers/n1");
 });
+
+test("clicking Details 7 shows rpc timeout", async () => {
+  window.location.hash = "#workers/n1";
+  const details: { url: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/nodes/n1/workers/7")) {
+        details.push({ url, method: (init?.method ?? "GET").toUpperCase() });
+        return new Response(
+          JSON.stringify({
+            id: 7,
+            name: "block_resync",
+            state: "busy",
+            errors: 1,
+            progress: "1/4",
+            lastError: { message: "rpc timeout", secsAgo: 4 },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/nodes/n1/workers")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 7,
+              name: "block_resync",
+              state: "busy",
+              errors: 3,
+              progress: "1/4",
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("block_resync")).toBeTruthy();
+  expect(details).toEqual([]);
+  expect(screen.queryByText("rpc timeout")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Details 7" }));
+  expect(await screen.findByText("rpc timeout")).toBeTruthy();
+  expect(details).toEqual([{ url: "/api/nodes/n1/workers/7", method: "GET" }]);
+  expect(window.location.hash).toBe("#workers/n1");
+});

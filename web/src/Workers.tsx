@@ -82,6 +82,24 @@ function workersFrom(body: unknown): WorkerRow[] {
   return body.map(workerRow);
 }
 
+function lastErrorMessage(body: unknown): string {
+  if (!isRecord(body) || !isRecord(body.lastError)) {
+    throw new Error(UNAVAILABLE);
+  }
+  const message = body.lastError.message;
+  if (typeof message !== "string" || message.length === 0) {
+    throw new Error(UNAVAILABLE);
+  }
+  return message;
+}
+
+async function loadWorkerMessage(nodeId: string, workerId: number): Promise<string> {
+  const body = await api<unknown>(
+    `/api/nodes/${encodeURIComponent(nodeId)}/workers/${workerId}`,
+  );
+  return lastErrorMessage(body);
+}
+
 function workersPath(nodeId: string, filter: WorkerFilter): string {
   const params = new URLSearchParams();
   if (filter.busyOnly) {
@@ -213,8 +231,20 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
   );
 }
 
+function WorkerDetail({ nodeId, workerId }: { nodeId: string; workerId: number }) {
+  const detail = useQuery({
+    queryKey: ["nodes", nodeId, "worker", workerId],
+    queryFn: () => loadWorkerMessage(nodeId, workerId),
+  });
+  if (detail.data === undefined) {
+    return null;
+  }
+  return <p>{detail.data}</p>;
+}
+
 function WorkersList({ nodeId }: { nodeId: string }) {
   const [filter, setFilter] = useState<WorkerFilter>({ busyOnly: false, errorOnly: false });
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const workers = useQuery({
     queryKey: ["nodes", nodeId, "workers", filter.busyOnly, filter.errorOnly],
     queryFn: () => loadWorkers(nodeId, filter),
@@ -278,8 +308,11 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                 <th className="py-2 pr-3 font-medium" scope="col">
                   Errors
                 </th>
-                <th className="py-2 font-medium" scope="col">
+                <th className="py-2 pr-3 font-medium" scope="col">
                   Progress
+                </th>
+                <th className="py-2 font-medium" scope="col">
+                  <span className="sr-only">Details</span>
                 </th>
               </tr>
             </thead>
@@ -289,13 +322,25 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                   <td className="py-2 pr-3">{worker.name}</td>
                   <td className="py-2 pr-3">{worker.state}</td>
                   <td className="py-2 pr-3">{worker.errors}</td>
-                  <td className="py-2">{worker.progress}</td>
+                  <td className="py-2 pr-3">{worker.progress}</td>
+                  <td className="py-2">
+                    <button
+                      className="border border-ink px-3 py-1 text-left"
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(worker.id);
+                      }}
+                    >
+                      Details {worker.id}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : null}
+      {selectedId !== null ? <WorkerDetail nodeId={nodeId} workerId={selectedId} /> : null}
     </>
   );
 }
