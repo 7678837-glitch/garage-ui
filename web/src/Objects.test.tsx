@@ -288,7 +288,11 @@ test("opens the prefix from the address and follows hashchange", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
-      const prefix = new URL(String(input), "http://ui.local").searchParams.get("prefix") ?? "";
+      const url = new URL(String(input), "http://ui.local");
+      if (url.pathname === "/api/auth/status") {
+        return json({ can_share: false });
+      }
+      const prefix = url.searchParams.get("prefix") ?? "";
       prefixes.push(prefix);
       return json(page([objectRow(`${prefix}a.txt`, 1, "2026-10-11T00:00:00Z")], null, prefix));
     }),
@@ -489,7 +493,10 @@ test("shows the error message and loads again from Retry", async () => {
   let calls = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/auth/status")) {
+        return json({ can_share: false });
+      }
       calls += 1;
       if (calls === 1) {
         return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
