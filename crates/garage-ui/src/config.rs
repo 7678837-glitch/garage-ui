@@ -761,6 +761,30 @@ mod tests {
     }
 
     #[test]
+    fn provided_session_key_is_redacted_only_when_it_is_text() {
+        let dir = crate::util::temp_dir();
+        let text_path = dir.join("session.key");
+        let secret = "session-key-material-0123456789ab";
+        std::fs::write(&text_path, secret.as_bytes()).unwrap();
+        let loaded = load_map(&map(&[("SESSION_KEY_FILE", text_path.to_str().unwrap())])).unwrap();
+        match loaded.key {
+            KeyMaterial::Provided(bytes) => assert_eq!(bytes, secret.as_bytes()),
+            KeyMaterial::Generate => panic!("text session key was not loaded"),
+        }
+        assert_eq!(loaded.settings.redact_secrets, vec![secret.to_string()]);
+
+        let raw_path = dir.join("session.raw");
+        let raw = vec![0xff_u8; 32];
+        std::fs::write(&raw_path, &raw).unwrap();
+        let opaque = load_map(&map(&[("SESSION_KEY_FILE", raw_path.to_str().unwrap())])).unwrap();
+        match opaque.key {
+            KeyMaterial::Provided(bytes) => assert_eq!(bytes, raw),
+            KeyMaterial::Generate => panic!("opaque session key was not loaded"),
+        }
+        assert_eq!(opaque.settings.redact_secrets, Vec::<String>::new());
+    }
+
+    #[test]
     fn half_project_key_refuses_startup_without_the_value() {
         let planted = "only-access-key-value";
         let Err(err) = load_map(&map(&[("S3_ACCESS_KEY_ID", planted)])) else {
