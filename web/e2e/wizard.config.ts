@@ -26,6 +26,7 @@ env.S3_ENDPOINT_URL = target.s3Url;
 
 export default defineConfig({
   testDir: fileURLToPath(new URL(".", import.meta.url)),
+  testMatch: "**/wizard.spec.ts",
   timeout: 120_000,
   fullyParallel: false,
   workers: 1,
