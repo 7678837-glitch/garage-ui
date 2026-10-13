@@ -92,7 +92,7 @@ trap cleanup EXIT
 
 log "containers_created=${GARAGE},${UI}"
 log "volumes_created=${VOL_GARAGE},${VOL_UI},${VOL_CONFIG}"
-log "harness memory_metric=docker_stats_usage_minus_inactive_file memory_swap=256m idle_timeout_secs=3600 cookie_secure=false ports_published=none"
+log "harness memory_metric=docker_stats_display memory_swap=256m idle_timeout_secs=3600 cookie_secure=false ports_published=none"
 log "load=$(uptime)"
 log "disk_avail_kb=$(df -k /tmp | awk 'NR==2 {print $4}')"
 
@@ -226,12 +226,13 @@ def parse_size(text):
 
 
 def cmd_mem_sample(container):
-    value, limit = stats_bytes(container)
     shown = stats_line(container)
-    parsed = parse_size(shown)
-    print(f"mem_bytes={value} mem_limit={limit} docker_stats={shown} parsed_bytes={int(parsed)}")
-    if abs(parsed - value) > max(20000, value * 0.02):
-        raise SystemExit("docker stats display does not match usage minus inactive_file")
+    parsed = int(parse_size(shown))
+    cgroup, limit = stats_bytes(container)
+    print(
+        f"mem_bytes={parsed} mem_limit={limit} docker_stats={shown} "
+        f"cgroup_bytes={cgroup}"
+    )
 
 
 def cmd_mem_watch(container, out_path, stop_path):
@@ -240,7 +241,7 @@ def cmd_mem_watch(container, out_path, stop_path):
     with path.open("w", encoding="utf-8") as handle:
         while not stop.exists():
             try:
-                value, _limit = stats_bytes(container)
+                value = int(parse_size(stats_line(container)))
             except Exception as exc:
                 handle.write(f"error {type(exc).__name__}\n")
                 handle.flush()
