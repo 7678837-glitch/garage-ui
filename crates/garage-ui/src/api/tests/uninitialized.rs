@@ -203,3 +203,39 @@
             expect_closed(&method, &path, &response);
         }
     }
+
+    #[tokio::test]
+    async fn deleted_data_directory_replaces_the_session_key_and_rejects_the_old_session() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let first_key = std::fs::read(dir.join("session.key")).expect("session.key");
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/setup",
+                Some(&json!({ "username": "Ada", "password": PASSWORD }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::OK, "{}", created.body);
+        let session = session_from(&created.headers);
+        app.db.close().await;
+        drop(app);
+        std::fs::remove_dir_all(&dir).expect("delete data directory");
+        std::fs::create_dir(&dir).expect("empty data directory");
+        let restarted = crate::state::test_app(&dir).await;
+        let second_key = std::fs::read(dir.join("session.key")).expect("new session.key");
+        assert_ne!(first_key, second_key);
+        let stale = exchange(
+            &restarted,
+            request("GET", "/api/keys", None, Some(&session)),
+        )
+        .await;
+        assert_eq!(stale.status, StatusCode::UNAUTHORIZED, "{}", stale.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&stale.body).unwrap(),
+            json!({ "code": "unauthenticated", "message": "Login required" })
+        );
+    }
