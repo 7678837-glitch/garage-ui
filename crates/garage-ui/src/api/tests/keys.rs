@@ -502,3 +502,78 @@
         assert_eq!(viewed_body["buckets"], buckets);
         assert!(viewed_body.get("secretAccessKey").is_none(), "{}", viewed.body);
     }
+
+    #[tokio::test]
+    async fn create_key_success_is_audited() {
+        let secret = "wJalrXUtnFEMI";
+        let created = json!({
+            "accessKeyId": "GK1",
+            "name": "photo_roll-1",
+            "secretAccessKey": secret
+        })
+        .to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(created)).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/keys",
+                Some(&json!({ "name": "photo_roll-1" }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 2, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/keys");
+        assert_eq!(row.target, "GK1");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(secret));
+    }
+
+    #[tokio::test]
+    async fn key_secret_view_is_audited() {
+        let secret = "wJalrXUtnFEMI";
+        let body = json!({
+            "accessKeyId": "GK1",
+            "secretAccessKey": secret
+        })
+        .to_string();
+        let mock = Upstream::start(UpstreamReply::Ok(body)).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/keys/GK1/secret",
+                None,
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "secret_view");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/keys/secret");
+        assert_eq!(row.target, "GK1");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(secret));
+    }
