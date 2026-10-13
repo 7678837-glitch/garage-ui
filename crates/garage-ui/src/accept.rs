@@ -544,6 +544,8 @@ async fn trusted_proxy_uses_the_last_forwarded_hop() {
 async fn login_rate_limit_is_per_username_and_writes_audit() {
     let dir = crate::util::temp_dir();
     let app = state::test_app(&dir).await;
+    // Login is closed until the first user exists, so the limiter runs only after setup.
+    setup_admin(&app).await;
     for _ in 0..10 {
         let response = login(&app, "Ada", "wrong horse", None, Some([198, 51, 100, 7])).await;
         assert_eq!(response.status, StatusCode::UNAUTHORIZED);
