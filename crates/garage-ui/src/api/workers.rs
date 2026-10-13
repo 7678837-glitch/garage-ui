@@ -27,6 +27,37 @@ pub(crate) async fn list_workers(
     node_body(&app, posted, &id).await
 }
 
+pub(crate) async fn get_worker(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path((id, wid)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewOps)?;
+    let worker_id = match wid.parse::<i64>() {
+        Ok(worker_id) if worker_id >= 0 => worker_id,
+        _ => {
+            return Err(ApiError::bad_request(
+                "invalid_worker",
+                "Worker id must be a non-negative integer",
+            ));
+        }
+    };
+    let payload =
+        serde_json::to_vec(&json!({ "id": worker_id })).map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "GetWorkerInfo",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    node_body(&app, posted, &id).await
+}
+
 async fn node_body(app: &App, response: Response, id: &str) -> Result<Response, ApiError> {
     if !response.status().is_success() {
         return Ok(response);
@@ -58,5 +89,7 @@ async fn node_body(app: &App, response: Response, id: &str) -> Result<Response, 
 }
 
 pub(crate) fn routes() -> Router<App> {
-    Router::new().route("/api/nodes/{id}/workers", get(list_workers))
+    Router::new()
+        .route("/api/nodes/{id}/workers", get(list_workers))
+        .route("/api/nodes/{id}/workers/{wid}", get(get_worker))
 }
