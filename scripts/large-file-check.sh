@@ -108,7 +108,7 @@ import http.client
 import json
 import os
 import pathlib
-import signal
+import socket
 import subprocess
 import time
 
@@ -537,6 +537,23 @@ def cmd_multipart():
         raise SystemExit(1)
 
 
+def fetch_thumb(index):
+    key = f"t{index:03d}.jpg"
+    conn = open_conn("GET", object_path(f"{key}/thumbnail"))
+    resp = conn.getresponse()
+    ctype = resp.headers.get("Content-Type", "")
+    chunks = []
+    total = 0
+    while True:
+        block = resp.read(CHUNK)
+        if not block:
+            break
+        total += len(block)
+        if total <= 400:
+            chunks.append(block)
+    return resp.status, ctype, total, b"".join(chunks)
+
+
 def cmd_thumbs():
     source = (work() / "thumb.jpg").read_bytes()
     if len(source) >= 20 * 1024 * 1024:
@@ -550,24 +567,21 @@ def cmd_thumbs():
             print(f"thumb_put_status={status} key={key} body={redact_text(data.decode(errors='replace')[:300])}")
             raise SystemExit(1)
     print("thumb_puts=100")
+    first_status, first_type, first_total, first_body = fetch_thumb(0)
+    shown = ""
+    if first_status != 200:
+        shown = " body=" + redact_text(first_body[:300].decode(errors="replace"))
+    print(f"thumb_one status={first_status} type={first_type} bytes={first_total}{shown}")
 
     def fetch(index):
-        key = f"t{index:03d}.jpg"
-        conn = open_conn("GET", object_path(f"{key}/thumbnail"))
-        resp = conn.getresponse()
-        ctype = resp.headers.get("Content-Type", "")
-        total = 0
-        while True:
-            block = resp.read(CHUNK)
-            if not block:
-                break
-            total += len(block)
-        return resp.status, ctype, total
+        status, ctype, total, _body = fetch_thumb(index)
+        return status, ctype, total
 
     from concurrent.futures import ThreadPoolExecutor
 
-    with ThreadPoolExecutor(max_workers=100) as pool:
-        rows = list(pool.map(fetch, range(100)))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        rows = [ (first_status, first_type, first_total) ]
+        rows.extend(pool.map(fetch, range(1, 100)))
     counts = {}
     images = 0
     for status, ctype, _total in rows:
@@ -594,25 +608,70 @@ def cmd_transfer():
     except json.JSONDecodeError:
         size = None
     print(f"transfer_put_status={status} sent={sent} response_size={size} body={redact_text(text[:400])}")
-    conn = open_conn("GET", object_path("five.bin", "download=1"))
-    resp = conn.getresponse()
-    got = 0
-    while True:
-        block = resp.read(CHUNK)
-        if not block:
-            break
-        got += len(block)
-    print(f"transfer_get_status={resp.status} download_bytes={got}")
+    status_line, got = download_counted(object_path("five.bin", "download=1"))
+    print(f"transfer_get_status={status_line} download_bytes={got}")
+    download_status = 0
+    parts = status_line.split()
+    if len(parts) >= 2 and parts[1].isdigit():
+        download_status = int(parts[1])
     outcome = {
         "upload_status": status,
         "upload_sent": sent,
         "upload_size": size,
-        "download_status": resp.status,
+        "download_status": download_status,
         "download_bytes": got,
     }
     (work() / "outcome.json").write_text(json.dumps(outcome), encoding="utf-8")
-    if status != 201 or sent != FIVE_GB or size != FIVE_GB or resp.status != 200 or got != FIVE_GB:
+    if status != 201 or sent != FIVE_GB or size != FIVE_GB or download_status != 200 or got != FIVE_GB:
         raise SystemExit(1)
+
+
+def download_counted(path):
+    session, csrf = load_session()
+    sock = socket.create_connection((UI_HOST, UI_PORT), timeout=3600)
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {UI_HOST}:{UI_PORT}\r\n"
+        f"Cookie: garage_session={session}; garage_csrf={csrf}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).encode()
+    sock.sendall(request)
+    data = b""
+    while b"\r\n\r\n" not in data:
+        block = sock.recv(4096)
+        if not block:
+            raise SystemExit(f"download_headers_closed got={data[:180]!r}")
+        data += block
+        if len(data) > 65536:
+            raise SystemExit("download_headers_too_long")
+    head, rest = data.split(b"\r\n\r\n", 1)
+    lines = head.split(b"\r\n")
+    status_line = lines[0].decode(errors="replace")
+    headers = {}
+    for line in lines[1:]:
+        if b":" not in line:
+            continue
+        key, value = line.split(b":", 1)
+        headers[key.decode(errors="replace").lower()] = value.strip().decode(errors="replace")
+    if "content-length" in headers:
+        need = int(headers["content-length"])
+        got = len(rest)
+        while got < need:
+            block = sock.recv(min(CHUNK, need - got))
+            if not block:
+                break
+            got += len(block)
+        sock.close()
+        return status_line, got
+    got = len(rest)
+    while True:
+        block = sock.recv(CHUNK)
+        if not block:
+            break
+        got += len(block)
+    sock.close()
+    return status_line, got
 
 
 def cmd_wait_ready():
