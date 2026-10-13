@@ -852,6 +852,70 @@
     }
 
     #[tokio::test]
+    async fn retry_blocks_forwards_one_hash_or_all() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":{"count":1}},"error":{}}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let posted = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/nodes/n1/blocks/retry",
+                Some(r#"{"blockHashes":["abc"]}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&posted.body).unwrap(),
+            json!({ "count": 1 })
+        );
+        assert_worker_post(
+            &cluster_calls(&mock, "RetryBlockResync"),
+            "/v2/RetryBlockResync?node=n1",
+            json!({ "blockHashes": ["abc"] }),
+        );
+
+        let all = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/nodes/n1/blocks/retry",
+                Some(r#"{"all": true}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(all.status, StatusCode::OK, "{}", all.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&all.body).unwrap(),
+            json!({ "count": 1 })
+        );
+        let calls = cluster_calls(&mock, "RetryBlockResync");
+        assert_eq!(
+            calls.len(),
+            2,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(calls[1].line.starts_with("POST "), "{}", calls[1].line);
+        let target = calls[1].line.split_whitespace().nth(1).unwrap_or("");
+        assert_eq!(target, "/v2/RetryBlockResync?node=n1", "{}", calls[1].line);
+        assert_eq!(
+            serde_json::from_str::<Value>(&calls[1].body).unwrap(),
+            json!({ "all": true })
+        );
+    }
+
+    #[tokio::test]
     async fn admin_connect_forwards_the_node_list_unchanged() {
         let upstream = br#"[ "joined" , "abcd@127.0.0.1:3901" ]"#;
         let capture = ConnectCapture::start(upstream).await;

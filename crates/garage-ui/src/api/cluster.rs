@@ -387,6 +387,71 @@ pub(crate) async fn post_purge_blocks(
     worker_node(&app, posted, &id).await
 }
 
+enum RetryBlocks {
+    Hashes(Vec<String>),
+    All,
+}
+
+fn retry_blocks(body: &[u8]) -> Result<RetryBlocks, ApiError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid_blocks())?;
+    let Some(object) = value.as_object() else {
+        return Err(invalid_blocks());
+    };
+    if object.len() != 1 {
+        return Err(invalid_blocks());
+    }
+    if let Some(hashes) = object.get("blockHashes") {
+        let Some(list) = hashes.as_array() else {
+            return Err(invalid_blocks());
+        };
+        if list.is_empty() {
+            return Err(invalid_blocks());
+        }
+        let mut block_hashes = Vec::with_capacity(list.len());
+        for hash in list {
+            let Some(text) = hash.as_str() else {
+                return Err(invalid_blocks());
+            };
+            if text.is_empty() {
+                return Err(invalid_blocks());
+            }
+            block_hashes.push(text.to_string());
+        }
+        return Ok(RetryBlocks::Hashes(block_hashes));
+    }
+    if matches!(object.get("all"), Some(Value::Bool(true))) {
+        return Ok(RetryBlocks::All);
+    }
+    Err(invalid_blocks())
+}
+
+pub(crate) async fn post_retry_blocks(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::RunOps)?;
+    let accepted = retry_blocks(&body)?;
+    let forwarded = match &accepted {
+        RetryBlocks::Hashes(hashes) => json!({ "blockHashes": hashes }),
+        RetryBlocks::All => json!({ "all": true }),
+    };
+    let payload = serde_json::to_vec(&forwarded).map_err(|_| ApiError::internal())?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "RetryBlockResync",
+        Some(&query),
+        &payload,
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
 async fn worker_node(app: &App, response: Response, id: &str) -> Result<Response, ApiError> {
     if !response.status().is_success() {
         return Ok(response);
@@ -967,6 +1032,7 @@ pub(crate) fn routes() -> Router<App> {
             get(get_worker_variable).put(put_worker_variable),
         )
         .route("/api/nodes/{id}/blocks/purge", post(post_purge_blocks))
+        .route("/api/nodes/{id}/blocks/retry", post(post_retry_blocks))
         .route("/api/nodes/{id}/repair", post(post_repair))
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/history", get(layout_history))
