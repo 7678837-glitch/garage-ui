@@ -131,7 +131,10 @@ impl App {
         self.credentials.lock().await.clear(mutation);
     }
 
-    // CredentialCache::read 是同步的。请求线程里 block_on 会 panic，所以 S3 放到独立 runtime。
+    // CredentialCache::read is synchronous. block_on on the request thread panics,
+    // so the S3 call runs on a runtime that outlives the call. A runtime created
+    // inside this function would be dropped when the headers return, and that
+    // aborts the HTTP connection before the caller reads the body.
     pub(crate) async fn read_credential<T, F, Fut>(
         &self,
         bucket_id: &str,
@@ -150,17 +153,16 @@ impl App {
             .map(|elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
             .unwrap_or(0);
         tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("s3 runtime");
+            let runtime = s3_runtime();
             let mut guard = cache.blocking_lock();
-            guard.read(
-                &bucket_id,
-                now,
-                || load.clone(),
-                |credential| runtime.block_on(operation(credential.clone())),
-            )
+            guard.read(&bucket_id, now, || load.clone(), |credential| {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let pending = operation(credential.clone());
+                runtime.spawn(async move {
+                    let _ = sender.send(pending.await);
+                });
+                receiver.recv().expect("s3 runtime")
+            })
         })
         .await
         .expect("credential read")
@@ -210,7 +212,22 @@ impl App {
     }
 }
 
-// 进程内只有这一份计数。各请求 fetch_add，抓取时再读。
+fn s3_runtime() -> &'static tokio::runtime::Handle {
+    static HANDLE: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
+    HANDLE.get_or_init(|| {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("s3")
+            .build()
+            .expect("s3 runtime");
+        let handle = runtime.handle().clone();
+        // The HTTP connection task has to outlive GetObject's headers. Dropping
+        // this runtime at process exit from a destructor can panic, so it stays.
+        std::mem::forget(runtime);
+        handle
+    })
+}
+
 struct Metrics {
     http_requests: AtomicU64,
     http_buckets: [AtomicU64; 11],
@@ -342,10 +359,10 @@ pub async fn boot() -> anyhow::Result<App> {
 
 pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result<App> {
     std::fs::create_dir_all(&loaded.settings.data_dir)
-        .map_err(|_| anyhow::anyhow!("数据目录不可写: {}", loaded.settings.data_dir.display()))?;
+        .map_err(|_| anyhow::anyhow!("data directory is not writable: {}", loaded.settings.data_dir.display()))?;
     let probe = loaded.settings.data_dir.join(".write-probe");
     std::fs::write(&probe, b"")
-        .map_err(|_| anyhow::anyhow!("数据目录不可写: {}", loaded.settings.data_dir.display()))?;
+        .map_err(|_| anyhow::anyhow!("data directory is not writable: {}", loaded.settings.data_dir.display()))?;
     let _ = std::fs::remove_file(&probe);
     let key_bytes = load_session_key(&loaded.settings.data_dir, loaded.key)?;
     let key_id = hex_encode(&key_bytes[..16]);
@@ -355,7 +372,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
     let dummy_password = util::random_bytes(32)?;
     let dummy_hash = password::hash_async(hex_encode(&dummy_password), cost)
         .await
-        .map_err(|_| anyhow::anyhow!("无法初始化口令校验"))?;
+        .map_err(|_| anyhow::anyhow!("could not initialize password verification"))?;
     let mut http = reqwest::Client::builder()
         .connect_timeout(loaded.settings.garage_admin_connect_timeout)
         .timeout(loaded.settings.garage_admin_timeout)
@@ -377,7 +394,7 @@ pub async fn boot_with(loaded: Loaded, quota: governor::Quota) -> anyhow::Result
         http,
         fixtures: Arc::new(std::sync::Mutex::new(HashMap::new())),
         write: Arc::new(Mutex::new(())),
-        // 超出 64 MiB 时在这个信号量上等待。不再另做一条队列。
+        // Uploads above 64 MiB wait on this semaphore. There is no second queue.
         upload_buffer: Arc::new(Semaphore::new(UPLOAD_BUFFER_BYTES)),
         metrics: Arc::new(Metrics::new()),
         garage_link: Arc::new(Mutex::new(None)),
@@ -395,7 +412,7 @@ async fn import_bootstrap(
 ) -> anyhow::Result<()> {
     match bootstrap {
         config::Bootstrap::Unset => Ok(()),
-        config::Bootstrap::Half => anyhow::bail!("启动账号需要成对配置，拒绝启动"),
+        config::Bootstrap::Half => anyhow::bail!("bootstrap account must be configured as a pair; refusing to start"),
         config::Bootstrap::Ready {
             username,
             password_hash,
@@ -404,11 +421,11 @@ async fn import_bootstrap(
                 return Ok(());
             }
             if crate::api::validate_username(username).is_err() || !is_bcrypt_hash(password_hash) {
-                anyhow::bail!("启动账号无法导入，拒绝启动");
+                anyhow::bail!("bootstrap account could not be imported; refusing to start");
             }
             db::insert_user(pool, username, password_hash, "admin", false, false)
                 .await
-                .map_err(|_| anyhow::anyhow!("启动账号无法导入，拒绝启动"))?;
+                .map_err(|_| anyhow::anyhow!("bootstrap account could not be imported; refusing to start"))?;
             Ok(())
         }
     }
@@ -431,7 +448,7 @@ fn load_session_key(dir: &Path, material: KeyMaterial) -> anyhow::Result<Vec<u8>
 fn read_or_create_key(path: &Path) -> anyhow::Result<Vec<u8>> {
     if path.exists() {
         let bytes = std::fs::read(path).map_err(|error| {
-            anyhow::anyhow!("读取密钥文件失败: {}: {}", path.display(), error.kind())
+            anyhow::anyhow!("failed to read key file: {}: {}", path.display(), error.kind())
         })?;
         let bytes = if bytes.len() == 48 {
             bytes
@@ -464,7 +481,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .mode(0o600)
         .open(path)
         .map_err(|error| {
-            anyhow::anyhow!("写入密钥文件失败: {}: {}", path.display(), error.kind())
+            anyhow::anyhow!("failed to write key file: {}: {}", path.display(), error.kind())
         })?;
     file.write_all(bytes)?;
     file.sync_all()?;
@@ -478,7 +495,7 @@ trait ClientError<T> {
 
 impl<T, E: std::fmt::Display> ClientError<T> for Result<T, E> {
     fn context_client(self) -> anyhow::Result<T> {
-        self.map_err(|_| anyhow::anyhow!("创建 Garage HTTP 客户端失败"))
+        self.map_err(|_| anyhow::anyhow!("failed to create the Garage HTTP client"))
     }
 }
 
@@ -789,7 +806,7 @@ server.serve_forever()
     }
 }
 
-// read_write_keys 不参与选择。非测试构建里没有人读这个字段。
+// read_write_keys is not used for selection. Non-test builds do not read the field.
 #[allow(dead_code)]
 pub mod credentials {
     use std::collections::HashMap;
