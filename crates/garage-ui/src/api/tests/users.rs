@@ -1034,3 +1034,205 @@
             .collect();
         assert_eq!(names, vec!["Ada", "Bea"]);
     }
+
+    #[tokio::test]
+    async fn create_user_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "viewer"
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "user_created");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 201);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn patch_user_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let cara_id = serde_json::from_str::<Value>(&created.body).unwrap()["id"]
+            .as_i64()
+            .expect("id");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let patched = exchange(
+            &app,
+            request(
+                "PATCH",
+                &format!("/api/users/{cara_id}"),
+                Some(&json!({ "can_download": true, "can_share": false }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "user_updated");
+        assert_eq!(row.method, "PATCH");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn delete_user_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let cara_id = serde_json::from_str::<Value>(&created.body).unwrap()["id"]
+            .as_i64()
+            .expect("id");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+
+        let deleted = exchange(
+            &app,
+            request(
+                "DELETE",
+                &format!("/api/users/{cara_id}"),
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "user_deleted");
+        assert_eq!(row.method, "DELETE");
+        assert_eq!(row.path, "/api/users");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 204);
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
+
+    #[tokio::test]
+    async fn reset_password_success_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let created = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/users",
+                Some(
+                    &json!({
+                        "username": "Cara",
+                        "password": PASSWORD,
+                        "role": "viewer",
+                        "can_download": false,
+                        "can_share": false
+                    })
+                    .to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let cara_id = serde_json::from_str::<Value>(&created.body).unwrap()["id"]
+            .as_i64()
+            .expect("id");
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let replacement = "replacement horse";
+
+        let reset = exchange(
+            &app,
+            request(
+                "POST",
+                &format!("/api/users/{cara_id}/reset-password"),
+                Some(&json!({ "password": replacement }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(reset.status, StatusCode::NO_CONTENT, "{}", reset.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "password_reset");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/users/reset-password");
+        assert_eq!(row.target, "Cara");
+        assert_eq!(row.status, 204);
+        assert!(!audit_text(row).contains(replacement));
+        assert!(!audit_text(row).contains(PASSWORD));
+    }
