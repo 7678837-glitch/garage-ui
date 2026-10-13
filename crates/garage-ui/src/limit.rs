@@ -113,6 +113,21 @@ mod tests {
         assert!(limits.login("127.0.0.1", "other").is_ok());
     }
 
+    #[test]
+    fn login_limit_gives_each_client_address_its_own_bucket() {
+        let limits = Limits::new(production_quota());
+        for _ in 0..10 {
+            assert!(limits.login("10.0.0.1", "Ada").is_ok());
+        }
+        assert!(limits.login("10.0.0.1", "ada").is_err());
+        assert!(limits.login("10.0.0.2", "Ada").is_ok());
+        for _ in 0..9 {
+            assert!(limits.login("10.0.0.2", "ADA").is_ok());
+        }
+        assert!(limits.login("10.0.0.2", "ada").is_err());
+        assert!(limits.login("10.0.0.3", "Ada").is_ok());
+    }
+
     #[tokio::test]
     async fn one_thousand_calls_stay_at_or_under_eight() {
         let (high, got) = wave(DEFAULT_FANOUT_IN_FLIGHT, 1000).await;
