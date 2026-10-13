@@ -1019,6 +1019,49 @@
     }
 
     #[tokio::test]
+    async fn block_errors_info_and_retry_reject_a_viewer() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":{}},"error":{}}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let calls = [
+            (
+                "GET",
+                "/api/nodes/n1/block-errors",
+                None,
+                "ListBlockErrors",
+            ),
+            (
+                "GET",
+                "/api/nodes/n1/blocks/aa11",
+                None,
+                "GetBlockInfo",
+            ),
+            (
+                "POST",
+                "/api/nodes/n1/blocks/retry",
+                Some(r#"{"blockHashes":["abc"]}"#),
+                "RetryBlockResync",
+            ),
+        ];
+
+        let hits_before = mock.hits();
+        for (method, path, body, endpoint) in calls {
+            let response = exchange(&app, request(method, path, body, Some(&viewer))).await;
+            assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+            assert!(
+                cluster_calls(&mock, endpoint).is_empty(),
+                "{endpoint} reached upstream"
+            );
+        }
+        assert_eq!(mock.hits(), hits_before, "a viewer call reached Garage");
+    }
+
+    #[tokio::test]
     async fn metadata_snapshot_forwards_one_node() {
         let success = json!({ "n1": Value::Null });
         let mock = Upstream::start(UpstreamReply::Ok(
