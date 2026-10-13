@@ -45,7 +45,7 @@ cleanup() {
       docker logs --tail 80 "$GARAGE" 2>&1 || true
     } | GATE_WORK="$WORK" python3 "${WORK}/gate.py" redact >>"$LOG" 2>/dev/null || true
   fi
-  docker rm -f "$UI" "$GARAGE" >/dev/null 2>&1 || true
+  docker rm -f "$UI" "$GARAGE" p3-large-file-client >/dev/null 2>&1 || true
   docker volume rm "$VOL_GARAGE" "$VOL_UI" "$VOL_CONFIG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   rm -rf "${WORK}/secrets" "${WORK}/garage.toml" "${WORK}/env.ui" "${WORK}/session" \
@@ -99,7 +99,7 @@ require_image "$UI_IMAGE" b08773e0b712
 docker image inspect "$PY_IMAGE" >/dev/null
 docker image inspect "$ALPINE_IMAGE" >/dev/null
 
-docker rm -f "$UI" "$GARAGE" >/dev/null 2>&1 || true
+docker rm -f "$UI" "$GARAGE" p3-large-file-client >/dev/null 2>&1 || true
 docker volume rm "$VOL_GARAGE" "$VOL_UI" "$VOL_CONFIG" >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
 
@@ -136,6 +136,7 @@ def secret_names():
         "secret_access_key",
         "password",
         "password_hash",
+        "access_key_id",
     )
 
 
@@ -245,7 +246,6 @@ def cmd_mem_watch(container, out_path, stop_path):
                 continue
             handle.write(f"{value}\n")
             handle.flush()
-            time.sleep(0.25)
 
 
 def cmd_assert_ports(container):
@@ -522,7 +522,9 @@ def cmd_disconnect():
         os.fsync(handle.fileno())
     os.chmod(marker, 0o600)
     print(f"disconnect_sent={sent}", flush=True)
-    os.kill(os.getpid(), signal.SIGKILL)
+    # qemu user-mode emulation ignores SIGKILL from inside the process.
+    # The host kills this container after the byte count is on disk.
+    time.sleep(300)
 
 
 def cmd_multipart():
@@ -845,7 +847,31 @@ PY
 mem_pass="$(tr -d '\n' <"${WORK}/check.memory")"
 
 disc_code=0
-run_client disconnect || disc_code=$?
+rm -f "${WORK}/disconnect.sent" "${WORK}/client.out"
+docker rm -f p3-large-file-client >/dev/null 2>&1 || true
+docker run --name p3-large-file-client --rm --pull never \
+  --network "container:${UI}" \
+  -e GATE_WORK=/work \
+  -v "${WORK}:/work" \
+  "$PY_IMAGE" \
+  python -u /work/gate.py disconnect >"${WORK}/client.out" &
+client_pid=$!
+for _ in $(seq 1 150); do
+  if [[ -s "${WORK}/disconnect.sent" ]]; then
+    break
+  fi
+  if ! kill -0 "$client_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.2
+done
+docker kill --signal=KILL p3-large-file-client >/dev/null 2>&1 || true
+set +e
+wait "$client_pid"
+disc_code=$?
+set -e
+GATE_WORK="$WORK" python3 "${WORK}/gate.py" redact <"${WORK}/client.out" | tee -a "$LOG" || true
+rm -f "${WORK}/client.out"
 sent="missing"
 if [[ -f "${WORK}/disconnect.sent" ]]; then
   sent="$(tr -d '\n' <"${WORK}/disconnect.sent")"
@@ -888,7 +914,7 @@ rm -f "${WORK}/outcome.json"
 if [[ ! -f "${WORK}/thumb.jpg" ]]; then
   "$MAGICK" -size 4096x4096 xc:white -strip -quality 80 "${WORK}/thumb.jpg"
 fi
-read -r thumb_w thumb_h < <("$MAGICK" identify -format '%w %h' "${WORK}/thumb.jpg")
+read -r thumb_w thumb_h < <("$MAGICK" identify -format '%w %h\n' "${WORK}/thumb.jpg")
 thumb_bytes="$(python3 -c 'import os; print(os.path.getsize("'"${WORK}/thumb.jpg"'"))')"
 log "thumbnail_source width=${thumb_w} height=${thumb_h} bytes=${thumb_bytes}"
 thumb_code=0
