@@ -831,7 +831,7 @@
         threshold: u64,
         part_bytes: u64,
     ) -> Result<(StatusCode, objects::PutResult), ApiError> {
-        let (status, stored) = super::put_object(
+        let (status, stored) = super::objects::put_object(
             app,
             "bkt-1",
             "photos/a.txt",
@@ -986,7 +986,7 @@
         let left = app.clone();
         let right = app.clone();
         let first = tokio::spawn(async move {
-            super::put_object(
+            super::objects::put_object(
                 &left,
                 "bkt-1",
                 "a.bin",
@@ -1001,7 +1001,7 @@
             .await
         });
         let second = tokio::spawn(async move {
-            super::put_object(
+            super::objects::put_object(
                 &right,
                 "bkt-1",
                 "b.bin",

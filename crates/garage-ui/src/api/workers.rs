@@ -17,7 +17,7 @@ use super::require;
 use super::Authed;
 
 #[derive(Deserialize)]
-struct WorkerListQuery {
+pub(crate) struct WorkerListQuery {
     busy: Option<String>,
     errors: Option<String>,
 }

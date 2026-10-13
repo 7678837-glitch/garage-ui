@@ -8,25 +8,22 @@ use super::Authed;
 use super::percent_encode;
 use super::record;
 use super::require;
-use super::status;
 use super::thumb;
 use crate::access::{self, Op};
-use crate::db::{self, AuditEvent, User};
+use crate::db;
 use crate::error::ApiError;
 use crate::objects;
 use crate::preview::preview_policy;
-use crate::proxy::{self, confirmed};
-use crate::session::{
-    self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
-};
-use crate::state::{self, App};
+use crate::proxy;
+use crate::session::Current;
+use crate::state::App;
 use crate::util::{self, hex_encode, random_bytes};
 use axum::Json;
 use axum::body::{Body, Bytes, HttpBody};
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, patch, post, put};
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -348,6 +345,7 @@ impl ArchiveTx {
         queue.queued.saturating_add(queue.accepted)
     }
 
+    #[cfg(test)]
     fn try_push(&self, bytes: Bytes) -> Result<(), ArchivePush> {
         if bytes.is_empty() {
             return Ok(());
@@ -428,6 +426,7 @@ impl ArchiveRx {
         Poll::Pending
     }
 
+    #[cfg(test)]
     async fn recv(&mut self) -> Option<Bytes> {
         std::future::poll_fn(|cx| self.poll_recv(cx)).await
     }

@@ -219,20 +219,22 @@ pub(crate) struct Server {
 
 impl Server {
     pub(crate) fn from_env() -> Self {
-        let header_read_timeout =
-            timeout_from_env("GARAGE_HEADER_READ_TIMEOUT_SECS", DEFAULT_HEADER_READ_SECS);
-        let idle_timeout = timeout_from_env("GARAGE_IDLE_TIMEOUT_SECS", DEFAULT_IDLE_SECS);
-        let mut builder = Builder::new(TokioExecutor::new());
+        let mut server = Self {
+            header_read_timeout: timeout_from_env(
+                "GARAGE_HEADER_READ_TIMEOUT_SECS",
+                DEFAULT_HEADER_READ_SECS,
+            ),
+            idle_timeout: timeout_from_env("GARAGE_IDLE_TIMEOUT_SECS", DEFAULT_IDLE_SECS),
+            builder: Builder::new(TokioExecutor::new()),
+        };
+        let header_read_timeout = server.header_read_timeout;
         // A total request timeout would abort an upload or download that is still moving bytes.
-        builder
+        server
+            .builder
             .http1()
             .timer(TokioTimer::new())
             .header_read_timeout(Some(header_read_timeout));
-        Self {
-            header_read_timeout,
-            idle_timeout,
-            builder,
-        }
+        server
     }
 }
 

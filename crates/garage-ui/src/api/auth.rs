@@ -1,22 +1,21 @@
 use axum::Json;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
-use crate::db::{self, AuditEvent, User};
+use crate::db::{self, User};
 use crate::error::ApiError;
 use crate::password;
-use crate::proxy::{self, confirmed};
+use crate::proxy;
 use crate::session::{
-    self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
+    self, apply_login_cookies, clear_cookies, cookie,
 };
-use crate::state::{self, App};
+use crate::state::App;
 use crate::version;
 use super::Authed;
 use super::ClientIp;
-use super::csrf;
 use super::hash_password;
 use super::record;
 use super::validate_password;

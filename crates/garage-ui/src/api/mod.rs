@@ -2,12 +2,12 @@ use std::convert::Infallible;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderMap, Method};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, patch, post, put};
+use axum::response::Response;
+use axum::routing::{post, put};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -15,11 +15,11 @@ use crate::access::{self, Op};
 use crate::db::{self, AuditEvent, User};
 use crate::error::ApiError;
 use crate::password;
-use crate::proxy::{self, confirmed};
+use crate::proxy;
 use crate::session::{
-    self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
+    self, Current, client_ip, csrf_exempt, csrf_matches,
 };
-use crate::state::{self, App};
+use crate::state::App;
 
 mod auth;
 mod users;
@@ -30,78 +30,12 @@ mod admin_tokens;
 mod cluster;
 mod workers;
 mod audit;
-pub(crate) use admin_tokens::create_admin_token;
-pub(crate) use admin_tokens::current_admin_token;
-pub(crate) use admin_tokens::delete_admin_token;
-pub(crate) use admin_tokens::get_admin_token;
-pub(crate) use admin_tokens::list_admin_tokens;
-pub(crate) use admin_tokens::update_admin_token;
-pub(crate) use auth::capabilities;
-pub(crate) use auth::change_password;
-pub(crate) use auth::login;
-pub(crate) use auth::logout;
-pub(crate) use auth::public_config;
-pub(crate) use auth::setup;
-pub(crate) use auth::status;
-pub(crate) use buckets::abort_multipart_uploads;
-pub(crate) use buckets::add_bucket_alias;
-pub(crate) use buckets::cleanup_uploads;
-pub(crate) use buckets::create_bucket;
-pub(crate) use buckets::delete_bucket;
-pub(crate) use buckets::get_bucket;
-pub(crate) use buckets::get_bucket_cors;
-pub(crate) use buckets::get_bucket_lifecycle;
-pub(crate) use buckets::grant_bucket_permissions;
-pub(crate) use buckets::list_buckets;
-pub(crate) use buckets::list_multipart_uploads;
-pub(crate) use buckets::put_bucket_cors;
-pub(crate) use buckets::put_bucket_lifecycle;
-pub(crate) use buckets::put_bucket_credential;
-pub(crate) use buckets::put_bucket_quotas;
-pub(crate) use buckets::remove_bucket_alias;
-pub(crate) use buckets::revoke_bucket_permissions;
-pub(crate) use cluster::cluster_health;
-pub(crate) use cluster::cluster_statistics;
-pub(crate) use cluster::cluster_status;
-pub(crate) use cluster::connect_cluster;
-pub(crate) use cluster::garage;
-pub(crate) use cluster::get_worker_variable;
-pub(crate) use cluster::node_statistics;
-pub(crate) use cluster::post_purge_blocks;
-pub(crate) use cluster::post_repair;
-pub(crate) use cluster::put_worker_variable;
-pub(crate) use cluster::layout_history;
-pub(crate) use cluster::preview_layout;
-pub(crate) use cluster::stage_layout;
-pub(crate) use keys::create_key;
-pub(crate) use keys::delete_key;
-pub(crate) use keys::key_secret;
-pub(crate) use keys::list_keys;
-pub(crate) use keys::patch_key;
-pub(crate) use objects::create_archive_token;
-pub(crate) use objects::download_archive;
-pub(crate) use objects::delete_bucket_object;
-pub(crate) use objects::delete_bucket_objects;
-pub(crate) use objects::download_object;
-pub(crate) use objects::inspect_object;
-pub(crate) use objects::list_bucket_objects;
-pub(crate) use objects::object_metadata;
-pub(crate) use objects::preview_object;
 pub(crate) use objects::put_bucket_object;
-pub(crate) use objects::put_object;
-pub(crate) use objects::search_bucket_objects;
-pub(crate) use objects::share;
-pub(crate) use objects::thumbnail_object;
 pub(crate) use objects::upload_object;
-pub(crate) use users::create_user;
-pub(crate) use users::list_users;
-pub(crate) use users::patch_user;
-pub(crate) use users::remove_user;
-pub(crate) use users::reset_password;
 #[path = "../thumb.rs"]
 mod thumb;
 
-struct Authed(Current);
+pub(crate) struct Authed(Current);
 
 impl FromRequestParts<App> for Authed {
     type Rejection = ApiError;
@@ -114,7 +48,7 @@ impl FromRequestParts<App> for Authed {
     }
 }
 
-struct ClientIp(String);
+pub(crate) struct ClientIp(String);
 
 impl FromRequestParts<App> for ClientIp {
     type Rejection = Infallible;
@@ -205,7 +139,7 @@ fn request_ip(app: &App, request: &Request) -> String {
 }
 
 #[derive(Deserialize)]
-struct PageQuery {
+pub(crate) struct PageQuery {
     offset: Option<String>,
     limit: Option<String>,
 }

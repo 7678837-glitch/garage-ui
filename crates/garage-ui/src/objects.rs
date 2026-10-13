@@ -368,22 +368,6 @@ async fn sign_get(
     Ok(signed.uri().to_string())
 }
 
-pub async fn read_all(app: &App, bucket_id: &str, key: &str) -> Result<Vec<u8>, ApiError> {
-    let opened = open(app, bucket_id, key).await?;
-    let mut body = std::pin::pin!(opened.body);
-    let mut data = Vec::new();
-    while let Some(next) =
-        std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
-    {
-        let frame = next.map_err(|_| ApiError::internal())?;
-        let Ok(chunk) = frame.into_data() else {
-            continue;
-        };
-        data.extend_from_slice(&chunk);
-    }
-    Ok(data)
-}
-
 pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
     open_ranged(app, bucket_id, key, None).await
 }
@@ -1550,10 +1534,8 @@ fn s3_client(
         .response_checksum_validation(ResponseChecksumValidation::WhenRequired);
     if tls_insecure && endpoint.starts_with("https://") {
         config = config.http_client(skip_verify_client());
-    } else if !tls_insecure {
-        if let Some(pem) = tls_ca_pem {
-            config = config.http_client(ca_trust_client(pem));
-        }
+    } else if !tls_insecure && let Some(pem) = tls_ca_pem {
+        config = config.http_client(ca_trust_client(pem));
     }
     Client::from_conf(config.build())
 }
@@ -1709,7 +1691,7 @@ async fn send_https(
         let io = hyper_util::rt::TokioIo::new(stream);
         hyper::client::conn::http1::handshake(io)
             .await
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))
+            .map_err(std::io::Error::other)
     })
     .await?;
     // The response body is still streaming after this function returns.

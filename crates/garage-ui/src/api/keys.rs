@@ -1,18 +1,16 @@
 use axum::Json;
-use axum::body::{Body, Bytes};
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, RawQuery, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, patch, post, put};
+use axum::body::Body;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, Method};
+use axum::response::Response;
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use crate::access::{self, Op};
+use crate::access::Op;
 use crate::error::ApiError;
 use crate::proxy::{self, confirmed};
-use crate::session::{
-    self, Current, apply_login_cookies, clear_cookies, client_ip, cookie, csrf_exempt, csrf_matches,
-};
-use crate::state::{self, App};
+use crate::session::Current;
+use crate::state::App;
 use super::Authed;
 use super::PageQuery;
 use super::page_bounds;
@@ -21,7 +19,6 @@ use super::percent_encode;
 use super::post_garage;
 use super::record;
 use super::require;
-use super::status;
 use axum::Router;
 
 pub(crate) async fn list_keys(

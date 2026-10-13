@@ -114,7 +114,7 @@ impl ApiError {
     // Upstream bodies can contain object bytes. The audit reason uses the fixed code and does not copy those bytes.
     pub(crate) fn code(&self) -> &'static str {
         match &self.kind {
-            Kind::Local { code, .. } => *code,
+            Kind::Local { code, .. } => code,
             Kind::Upstream { .. } => "upstream_error",
         }
     }
