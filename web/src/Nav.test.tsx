@@ -161,3 +161,25 @@ test("settings shows About and the password form, and overview does not", async 
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
 });
+
+test("nodes and layout is its own admin page and is absent from overview", async () => {
+  const fetchMock = stubSignedIn("admin");
+  renderApp();
+  expect(await screen.findByText("Ada · admin")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Cluster health" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
+    false,
+  );
+
+  fireEvent.click(sectionsNav().getByRole("link", { name: "Nodes and layout" }));
+  expect(window.location.hash).toBe("#nodes");
+  expect(await screen.findByRole("heading", { name: "Nodes" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Nodes and layout" }).getAttribute("aria-current")).toBe(
+    "page",
+  );
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
+    true,
+  );
+});

@@ -8,10 +8,14 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.cookie = "garage_csrf=; Max-Age=0";
+  window.location.hash = "";
   window.history.replaceState(null, "", "/");
 });
 
 function renderApp() {
+  if (window.location.hash === "") {
+    window.location.hash = "#nodes";
+  }
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -487,7 +491,7 @@ const recoveredNode = {
 };
 
 test("filters loaded nodes from the query string and keeps that choice in the address", async () => {
-  window.history.replaceState(null, "", "/?nodes=APPLE&keep=1#stay");
+  window.history.replaceState(null, "", "/?nodes=APPLE&keep=1#nodes/stay");
   const fetchMock = installFetch("admin", () =>
     json({
       nodes: [
@@ -541,7 +545,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(screen.queryByText("Nodes are unavailable")).toBeNull();
   expect((screen.getByLabelText("Node address") as HTMLInputElement).value).toBe("");
   expect(screen.getByRole("button", { name: "Connect node" }).textContent).toBe("Connect node");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(window.location.search).toContain("nodes=APPLE");
   expect(window.location.search).toContain("keep=1");
   const statusCalls = () =>
@@ -557,7 +561,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
     nodeCard("n-m", "n-mmango10.0.0.4:3901v2.4.1Up"),
   ]);
   expect(window.location.search).toBe("?keep=1");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
   fireEvent.change(screen.getByLabelText("Sort nodes"), { target: { value: "hostname" } });
@@ -571,7 +575,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(new URLSearchParams(window.location.search).get("nodesSort")).toBe("hostname");
   expect(new URLSearchParams(window.location.search).has("nodes")).toBe(false);
   expect(new URLSearchParams(window.location.search).get("keep")).toBe("1");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
   fireEvent.change(screen.getByLabelText("Filter nodes"), { target: { value: "N-Z" } });
@@ -581,11 +585,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(window.location.search).toContain("nodes=N-Z");
   expect(window.location.search).toContain("nodesSort=hostname");
   expect(window.location.search).toContain("keep=1");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
   act(() => {
-    window.history.pushState(null, "", "/?nodes=missing&keep=1#stay");
+    window.history.pushState(null, "", "/?nodes=missing&keep=1#nodes/stay");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
   expect(nodeCardText()).toEqual([]);
@@ -598,11 +602,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(screen.queryByText("Nodes are unavailable")).toBeNull();
   expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("missing");
   expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
   act(() => {
-    window.history.pushState(null, "", "/?nodesSort=capacity&keep=1#stay");
+    window.history.pushState(null, "", "/?nodesSort=capacity&keep=1#nodes/stay");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
   expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
@@ -615,7 +619,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   ]);
   expect(window.location.search).toContain("nodesSort=capacity");
   expect(window.location.search).toContain("keep=1");
-  expect(window.location.hash).toBe("#stay");
+  expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 });
 

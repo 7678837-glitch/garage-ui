@@ -1491,7 +1491,7 @@ test("returns to the login form when a signed-in request is unauthenticated", as
           { status: 200 },
         );
       }
-      if (url.includes("/api/cluster/status")) {
+      if (url.includes("/api/cluster/health")) {
         return new Response(
           JSON.stringify({ code: "unauthenticated", message: "Login required" }),
           { status: 401 },

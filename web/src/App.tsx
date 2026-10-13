@@ -418,9 +418,9 @@ function Home({ status }: { status: SessionStatus }) {
               </button>
             </div>
             {admin ? <ClusterHealth /> : null}
-            {admin ? <ClusterNodes /> : null}
           </>
         ) : null}
+        {section === "nodes" && admin ? <ClusterNodes /> : null}
         {section === "settings" ? (
           <>
             <form
