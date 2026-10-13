@@ -116,8 +116,26 @@ function workersPath(nodeId: string, filter: WorkerFilter): string {
   return `${path}?${query}`;
 }
 
-async function loadWorkers(nodeId: string, filter: WorkerFilter): Promise<WorkerRow[]> {
-  return workersFrom(await api<unknown>(workersPath(nodeId, filter)));
+type WorkerGroup = {
+  nodeId: string;
+  rows: WorkerRow[];
+};
+
+function workerGroups(nodeId: string, body: unknown): WorkerGroup[] {
+  if (nodeId !== "*") {
+    return [{ nodeId, rows: workersFrom(body) }];
+  }
+  if (!isRecord(body)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return Object.entries(body).map(([id, rows]) => ({
+    nodeId: id,
+    rows: workersFrom(rows),
+  }));
+}
+
+async function loadWorkers(nodeId: string, filter: WorkerFilter): Promise<WorkerGroup[]> {
+  return workerGroups(nodeId, await api<unknown>(workersPath(nodeId, filter)));
 }
 
 type VariableAssignment = {
@@ -341,13 +359,14 @@ function WorkerDetail({ nodeId, workerId }: { nodeId: string; workerId: number }
 
 function WorkersList({ nodeId }: { nodeId: string }) {
   const [filter, setFilter] = useState<WorkerFilter>({ busyOnly: false, errorOnly: false });
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<{ nodeId: string; workerId: number } | null>(null);
   const workers = useQuery({
     queryKey: ["nodes", nodeId, "workers", filter.busyOnly, filter.errorOnly],
     queryFn: () => loadWorkers(nodeId, filter),
   });
   const message = workers.error instanceof Error ? workers.error.message : UNAVAILABLE;
-  const rows = workers.data ?? [];
+  const groups = workers.data ?? [];
+  const rowCount = groups.reduce((count, group) => count + group.rows.length, 0);
 
   return (
     <>
@@ -390,54 +409,61 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           </button>
         </>
       ) : null}
-      {workers.isSuccess && rows.length === 0 ? <p>There are no workers.</p> : null}
-      {rows.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  Name
-                </th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  State
-                </th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  Errors
-                </th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  Progress
-                </th>
-                <th className="py-2 font-medium" scope="col">
-                  <span className="sr-only">Details</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((worker) => (
-                <tr key={worker.id}>
-                  <td className="py-2 pr-3">{worker.name}</td>
-                  <td className="py-2 pr-3">{worker.state}</td>
-                  <td className="py-2 pr-3">{worker.errors}</td>
-                  <td className="py-2 pr-3">{worker.progress}</td>
-                  <td className="py-2">
-                    <button
-                      className="border border-ink px-3 py-1 text-left"
-                      type="button"
-                      onClick={() => {
-                        setSelectedId(worker.id);
-                      }}
-                    >
-                      Details {worker.id}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {workers.isSuccess && rowCount === 0 ? <p>There are no workers.</p> : null}
+      {groups.map((group) =>
+        group.rows.length === 0 ? null : (
+          <div key={group.nodeId} className="grid gap-2">
+            {nodeId === "*" ? <p>{group.nodeId}</p> : null}
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr>
+                    <th className="py-2 pr-3 font-medium" scope="col">
+                      Name
+                    </th>
+                    <th className="py-2 pr-3 font-medium" scope="col">
+                      State
+                    </th>
+                    <th className="py-2 pr-3 font-medium" scope="col">
+                      Errors
+                    </th>
+                    <th className="py-2 pr-3 font-medium" scope="col">
+                      Progress
+                    </th>
+                    <th className="py-2 font-medium" scope="col">
+                      <span className="sr-only">Details</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((worker) => (
+                    <tr key={worker.id}>
+                      <td className="py-2 pr-3">{worker.name}</td>
+                      <td className="py-2 pr-3">{worker.state}</td>
+                      <td className="py-2 pr-3">{worker.errors}</td>
+                      <td className="py-2 pr-3">{worker.progress}</td>
+                      <td className="py-2">
+                        <button
+                          className="border border-ink px-3 py-1 text-left"
+                          type="button"
+                          onClick={() => {
+                            setSelected({ nodeId: group.nodeId, workerId: worker.id });
+                          }}
+                        >
+                          Details {worker.id}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ),
+      )}
+      {selected !== null ? (
+        <WorkerDetail nodeId={selected.nodeId} workerId={selected.workerId} />
       ) : null}
-      {selectedId !== null ? <WorkerDetail nodeId={nodeId} workerId={selectedId} /> : null}
     </>
   );
 }

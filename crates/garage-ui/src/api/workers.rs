@@ -114,6 +114,12 @@ async fn node_body(app: &App, response: Response, id: &str) -> Result<Response, 
         .await
         .map_err(|_| ApiError::internal())?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| ApiError::internal())?;
+    if id == "*" {
+        let Some(success) = value.get("success") else {
+            return Err(ApiError::internal());
+        };
+        return Ok(Json(success.clone()).into_response());
+    }
     if let Some(node) = value
         .get("success")
         .and_then(Value::as_object)

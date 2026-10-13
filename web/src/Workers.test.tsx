@@ -390,3 +390,63 @@ test("saving scrub_tranquility sends the new value after typing its name", async
   expect(screen.getAllByText("3").map((node) => node.textContent)).toEqual(["3"]);
   expect(window.location.hash).toBe("#workers/n1");
 });
+
+test("an admin on #workers/* sees both nodes", async () => {
+  window.location.hash = "#workers/*";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url.includes("/api/nodes/*/workers")) {
+        return new Response(
+          JSON.stringify({
+            n1: [
+              {
+                id: 7,
+                name: "block_resync",
+                state: "busy",
+                errors: 1,
+                progress: "1/4",
+              },
+            ],
+            n2: [
+              {
+                id: 8,
+                name: "block_rc",
+                state: "done",
+                errors: 0,
+                progress: "",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("n1")).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.getByText("n2")).toBeTruthy();
+  expect(screen.getByText("block_rc")).toBeTruthy();
+  expect(window.location.hash).toBe("#workers/*");
+});
