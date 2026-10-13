@@ -2615,6 +2615,18 @@
         )
         .await;
         assert_error(&download, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+
+        let thumbnail = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/note.txt/thumbnail",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&thumbnail, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
         assert_eq!(mock.requests().len(), calls_before_transfer);
     }
 
