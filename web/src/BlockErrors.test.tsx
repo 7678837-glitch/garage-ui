@@ -99,3 +99,16 @@ test("clicking Retry aa11 posts that one block hash", async () => {
   });
   expect(window.location.hash).toBe("#block-errors/n1");
 });
+
+test("clicking Retry all posts all true for that node", async () => {
+  window.location.hash = "#block-errors/n1";
+  stubAdminBlockErrors();
+  renderApp();
+  fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+  await waitFor(() => {
+    expect(retryPosts()).toEqual([
+      { url: "/api/nodes/n1/blocks/retry", body: { all: true } },
+    ]);
+  });
+  expect(window.location.hash).toBe("#block-errors/n1");
+});
