@@ -67,6 +67,14 @@ spec:
             - name: S3_SECRET_ACCESS_KEY
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.tls.insecure }}
+            - name: GARAGE_TLS_INSECURE
+              value: "1"
+            {{- end }}
+            {{- with .Values.tls.caSecret }}
+            - name: GARAGE_TLS_CA_FILE
+              value: /etc/garage-ui/ca.crt
+            {{- end }}
           readinessProbe:
             exec:
               command: ["/garage-ui", "-health"]
@@ -92,9 +100,22 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- with .Values.tls.caSecret }}
+            - name: tls-ca
+              mountPath: /etc/garage-ui
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-data
         - name: tmp
           emptyDir: {}
+        {{- with .Values.tls.caSecret }}
+        - name: tls-ca
+          secret:
+            secretName: {{ . | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

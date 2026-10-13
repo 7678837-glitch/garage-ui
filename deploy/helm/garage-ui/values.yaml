@@ -25,3 +25,12 @@ secrets:
   metricsToken: ""
   s3AccessKeyId: ""
   s3SecretAccessKey: ""
+
+# TLS for the Garage API this chart does not install.
+# insecure stays false unless the operator sets it. Only true sets GARAGE_TLS_INSECURE to 1.
+# An empty caSecret omits the CA. A name mounts that Secret key ca.crt read-only
+# at /etc/garage-ui/ca.crt and sets GARAGE_TLS_CA_FILE to that path.
+# This chart contains no certificate.
+tls:
+  insecure: false
+  caSecret: ""
