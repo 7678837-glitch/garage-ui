@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { BlockErrors } from "./BlockErrors";
 
 afterEach(() => {
   cleanup();
@@ -193,4 +194,171 @@ test("clicking Info aa11 shows version v1 for that node", async () => {
   ).toEqual(["v1", "no", "no", "yes"]);
   expect(infoGets()).toEqual(["/api/nodes/n1/blocks/aa11"]);
   expect(window.location.hash).toBe("#block-errors/n1");
+});
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status });
+}
+
+const blockRow = {
+  blockHash: "aa11",
+  refcount: 2,
+  errorCount: 3,
+  lastTrySecsAgo: 4,
+  nextTryInSecs: 5,
+};
+
+function renderBlockErrors() {
+  window.location.hash = "#block-errors/n1";
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <BlockErrors />
+    </QueryClientProvider>,
+  );
+  return client;
+}
+
+test("shows Loading block errors and marks the block errors section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderBlockErrors();
+  const section = screen.getByRole("region", { name: "Block errors" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByLabelText("Loading block errors").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading block errors")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no block errors.")).toBeNull();
+  expect(screen.queryByText("Refreshing block errors")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry all" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry aa11" })).toBeNull();
+  release(json([blockRow]));
+  expect(await screen.findByRole("button", { name: "Retry aa11" })).toBeTruthy();
+  expect(screen.getByText("aa11")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Block errors" }).getAttribute("aria-busy")).toBe(
+    "false",
+  );
+  expect(screen.queryByLabelText("Loading block errors")).toBeNull();
+  expect(screen.queryByText("Loading block errors")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
+test("says there are no block errors", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/block-errors");
+      expect(init?.credentials).toBe("include");
+      return json([]);
+    }),
+  );
+  renderBlockErrors();
+  expect((await screen.findByText("There are no block errors.")).textContent).toBe(
+    "There are no block errors.",
+  );
+  expect(screen.getByText("There are no block errors.").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry aa11" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry all" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Purge aa11" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Info aa11" })).toBeNull();
+  expect(screen.queryByLabelText("Loading block errors")).toBeNull();
+  expect(screen.queryByText("Loading block errors")).toBeNull();
+  expect(screen.getByRole("region", { name: "Block errors" }).getAttribute("aria-busy")).toBe(
+    "false",
+  );
+});
+
+test("shows the API code and requests the block error list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/block-errors");
+      expect((init?.method ?? "GET").toUpperCase()).toBe("GET");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
+      }
+      return json([blockRow]);
+    }),
+  );
+  renderBlockErrors();
+  expect((await screen.findByText("Garage returned an error")).textContent).toBe(
+    "Garage returned an error",
+  );
+  expect(screen.getByText("upstream_failed").textContent).toBe("upstream_failed");
+  expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no block errors.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry all" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry aa11" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Retry aa11" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry all" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Purge aa11" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Info aa11" })).toBeTruthy();
+  expect(screen.queryByText("upstream_failed")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
+});
+
+test("keeps one visible block error while a later fetch refreshes", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/nodes/n1/block-errors");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(json([blockRow]));
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderBlockErrors();
+  expect(await screen.findByRole("button", { name: "Retry aa11" })).toBeTruthy();
+  expect(screen.getByText("aa11")).toBeTruthy();
+  expect(screen.queryByText("Refreshing block errors")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["nodes", "n1", "block-errors"] });
+  expect(await screen.findByText("Refreshing block errors")).toBeTruthy();
+  expect(screen.getByText("aa11")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry aa11" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Retry all" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Purge aa11" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Info aa11" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.queryByLabelText("Loading block errors")).toBeNull();
+  expect(screen.queryByText("Loading block errors")).toBeNull();
+  expect(screen.getByRole("region", { name: "Block errors" }).getAttribute("aria-busy")).toBe(
+    "false",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  releaseNext(json([blockRow]));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing block errors")).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "Retry aa11" })).toBeTruthy();
+  expect(calls).toBe(2);
 });

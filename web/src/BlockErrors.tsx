@@ -1,11 +1,21 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
 
 const UNAVAILABLE = "Block errors are unavailable";
+
+function failureOf(error: unknown): { message: string; code: string | null } {
+  if (error instanceof ApiError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return { message: error.message, code: null };
+  }
+  return { message: UNAVAILABLE, code: null };
+}
 
 type BlockError = {
   blockHash: string;
@@ -187,22 +197,43 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
         body: JSON.stringify([hash]),
       }),
   });
-  const message = blockErrors.error instanceof Error ? blockErrors.error.message : UNAVAILABLE;
   const rows = blockErrors.data ?? [];
+  const view = {
+    busy: blockErrors.isPending,
+    refreshing: rows.length > 0 && blockErrors.isFetching && !blockErrors.isPending,
+    empty: Boolean(blockErrors.data) && rows.length === 0,
+    failure: blockErrors.isError ? failureOf(blockErrors.error) : null,
+  };
 
   return (
-    <>
-      {blockErrors.isPending ? (
+    <section className="grid gap-4" aria-label="Block errors" aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">Block errors</h2>
+      {view.busy ? (
         <div className="h-16 border border-line" aria-label="Loading block errors" />
       ) : null}
-      {blockErrors.isError && !isGarageDown(blockErrors.error) ? <p>{message}</p> : null}
+      {view.refreshing ? <p>Refreshing block errors</p> : null}
+      {view.failure && !isGarageDown(view.failure) ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void blockErrors.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
       {retry.error instanceof Error && !isGarageDown(retry.error) ? (
         <p>{retry.error.message}</p>
       ) : null}
       {purge.error instanceof Error && !isGarageDown(purge.error) ? (
         <p>{purge.error.message}</p>
       ) : null}
-      {blockErrors.isSuccess && rows.length === 0 ? <p>There are no block errors.</p> : null}
+      {view.empty ? <p>There are no block errors.</p> : null}
       {rows.length > 0 ? (
         <>
           <button
@@ -305,17 +336,20 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
           }}
         />
       ) : null}
-    </>
+    </section>
   );
 }
 
 export function BlockErrors() {
   const [hash] = useLocationHash();
   const nodeId = blockErrorsNodeId(hash);
-  return (
-    <section className="grid gap-4" aria-label="Block errors">
-      <h2 className="text-lg font-semibold">Block errors</h2>
-      {nodeId === null ? <p>No node is selected.</p> : <BlockErrorList nodeId={nodeId} />}
-    </section>
-  );
+  if (nodeId === null) {
+    return (
+      <section className="grid gap-4" aria-label="Block errors" aria-busy={false}>
+        <h2 className="text-lg font-semibold">Block errors</h2>
+        <p>No node is selected.</p>
+      </section>
+    );
+  }
+  return <BlockErrorList nodeId={nodeId} />;
 }
