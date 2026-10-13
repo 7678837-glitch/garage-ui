@@ -79,6 +79,28 @@ pub(crate) async fn node_statistics(
     .await
 }
 
+pub(crate) async fn node_block_errors(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewOps)?;
+    let query = format!("node={}", percent_encode(&id));
+    let listed = proxy::dispatch(
+        &app,
+        &current.user,
+        &current.ip,
+        &Method::GET,
+        "v2/ListBlockErrors",
+        Some(&query),
+        &[],
+        &headers,
+    )
+    .await?;
+    worker_node(&app, listed, &id).await
+}
+
 const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
 
 #[derive(Serialize)]
@@ -1027,6 +1049,7 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/cluster/statistics", get(cluster_statistics))
         .route("/api/metrics", get(cluster_metrics))
         .route("/api/nodes/{id}/statistics", get(node_statistics))
+        .route("/api/nodes/{id}/block-errors", get(node_block_errors))
         .route(
             "/api/nodes/{id}/worker-variables",
             get(get_worker_variable).put(put_worker_variable),

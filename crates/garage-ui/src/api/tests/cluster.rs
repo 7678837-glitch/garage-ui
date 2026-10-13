@@ -477,6 +477,52 @@
         );
     }
 
+    #[tokio::test]
+    async fn node_block_errors_returns_that_nodes_array() {
+        let expected = json!([{
+            "blockHash": "aa11",
+            "refcount": 2,
+            "errorCount": 3,
+            "lastTrySecsAgo": 4,
+            "nextTryInSecs": 5
+        }]);
+        let upstream = json!({
+            "success": {
+                "n1": expected,
+                "n2": [{
+                    "blockHash": "bb22",
+                    "refcount": 7,
+                    "errorCount": 8,
+                    "lastTrySecsAgo": 9,
+                    "nextTryInSecs": 10
+                }]
+            }
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(upstream.to_string())).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let response = exchange(
+            &app,
+            request("GET", "/api/nodes/n1/block-errors", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+            json!([{
+                "blockHash": "aa11",
+                "refcount": 2,
+                "errorCount": 3,
+                "lastTrySecsAgo": 4,
+                "nextTryInSecs": 5
+            }])
+        );
+        let calls = cluster_calls(&mock, "ListBlockErrors");
+        assert_cluster_get(&calls, "/v2/ListBlockErrors?node=n1");
+        assert!(calls[0].line.starts_with("GET "), "{}", calls[0].line);
+    }
+
     fn assert_worker_post(calls: &[UpstreamCall], path: &str, body: Value) {
         assert_eq!(
             calls.len(),
