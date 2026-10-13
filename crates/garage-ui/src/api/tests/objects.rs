@@ -3240,6 +3240,106 @@
         assert_eq!(text, "two-body");
     }
 
+    fn resident_peak_bytes() -> u64 {
+        #[repr(C)]
+        struct Timeval {
+            secs: i64,
+            usecs: i32,
+            pad: i32,
+        }
+
+        #[repr(C)]
+        struct Rusage {
+            user: Timeval,
+            system: Timeval,
+            max_rss: i64,
+            rest: [i64; 13],
+        }
+
+        unsafe extern "C" {
+            fn getrusage(who: i32, usage: *mut Rusage) -> i32;
+        }
+
+        // macOS getrusage stores the peak resident set in ru_maxrss, in bytes.
+        const _: () = assert!(std::mem::size_of::<Rusage>() == 144);
+        const _: () = assert!(std::mem::offset_of!(Rusage, max_rss) == 32);
+
+        let mut usage = std::mem::MaybeUninit::<Rusage>::zeroed();
+        let rc = unsafe { getrusage(0, usage.as_mut_ptr()) };
+        assert_eq!(rc, 0, "getrusage");
+        let usage = unsafe { usage.assume_init() };
+        u64::try_from(usage.max_rss).expect("resident peak")
+    }
+
+    #[tokio::test]
+    async fn packing_one_thousand_objects_grows_resident_set_by_at_most_64mb() {
+        let mock = S3Mock::start(|line| {
+            if line.starts_with("GET ") {
+                object_bytes("application/octet-stream", "n")
+            } else {
+                head_missing()
+            }
+        })
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        assert!(dir.join("garage-ui.sqlite").is_file());
+        let (admin, _) = login(&app).await;
+        let token = {
+            let keys: Vec<String> = (0..1000).map(|index| format!("k{index:04}")).collect();
+            let issued = exchange(
+                &app,
+                request(
+                    "POST",
+                    "/api/buckets/bkt-1/archive-token",
+                    Some(&json!({ "keys": keys }).to_string()),
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_eq!(issued.status, StatusCode::OK, "{}", issued.body);
+            serde_json::from_str::<Value>(&issued.body).unwrap()["token"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let before = resident_peak_bytes();
+        let archive_path = format!("/api/buckets/bkt-1/archive?token={token}");
+        let response = router(app.clone())
+            .oneshot(request("GET", &archive_path, None, Some(&admin)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = std::pin::pin!(response.into_body());
+        let mut bytes = Vec::new();
+        while let Some(frame) =
+            std::future::poll_fn(|cx| HttpBody::poll_frame(body.as_mut(), cx)).await
+        {
+            let frame = frame.expect("archive frame");
+            let Ok(chunk) = frame.into_data() else {
+                continue;
+            };
+            bytes.extend_from_slice(&chunk);
+        }
+        let growth = resident_peak_bytes().saturating_sub(before);
+        println!("resident-set growth bytes: {growth}");
+        assert!(
+            growth <= 67_108_864,
+            "packing 1000 objects grew resident set by {growth} bytes"
+        );
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        assert_eq!(archive.len(), 1000);
+        assert!(archive.by_name("_errors.txt").is_err());
+        for index in 0..1000 {
+            let mut file = archive.by_index(index).unwrap();
+            let mut text = String::new();
+            file.read_to_string(&mut text).unwrap();
+            assert_eq!(text, "n", "{}", file.name().unwrap());
+        }
+        assert!(archive.by_name("k0000").is_ok());
+        assert!(archive.by_name("k0999").is_ok());
+    }
+
     #[tokio::test]
     async fn share_denial_is_audited() {
         let dir = crate::util::temp_dir();
