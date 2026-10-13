@@ -293,3 +293,100 @@ test("clicking Details 7 shows rpc timeout", async () => {
   expect(details).toEqual([{ url: "/api/nodes/n1/workers/7", method: "GET" }]);
   expect(window.location.hash).toBe("#workers/n1");
 });
+
+test("saving scrub_tranquility sends the new value after typing its name", async () => {
+  window.location.hash = "#workers/n1";
+  const writes: { url: string; method: string; body: string; confirm: string | null }[] = [];
+  const reads: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url === "/api/nodes/n1/worker-variables" && method === "PUT") {
+        writes.push({
+          url,
+          method,
+          body: typeof init?.body === "string" ? init.body : "",
+          confirm: new Headers(init?.headers).get("x-confirm"),
+        });
+        return new Response(
+          JSON.stringify({ variable: "scrub_tranquility", value: "3" }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/nodes/n1/worker-variables")) {
+        reads.push(url);
+        return new Response(JSON.stringify({ scrub_tranquility: "3" }), { status: 200 });
+      }
+      if (url.includes("/api/nodes/n1/workers/7")) {
+        return new Response("no", { status: 500 });
+      }
+      if (url.includes("/api/nodes/n1/workers")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 7,
+              name: "block_resync",
+              state: "busy",
+              errors: 3,
+              progress: "1/4",
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("block_resync")).toBeTruthy();
+  expect(screen.getAllByText("3").map((node) => node.textContent)).toEqual(["3"]);
+  fireEvent.change(screen.getByLabelText("Variable"), { target: { value: "scrub_tranquility" } });
+  fireEvent.change(screen.getByLabelText("Value"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
+  expect(screen.getByText("This changes a worker variable on the node.")).toBeTruthy();
+  const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  expect(writes).toEqual([]);
+  expect(reads).toEqual([]);
+  fireEvent.change(screen.getByLabelText("Type scrub_tranquility to confirm"), {
+    target: { value: "scrub" },
+  });
+  expect(confirm.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Type scrub_tranquility to confirm"), {
+    target: { value: "scrub_tranquility" },
+  });
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+  expect(await screen.findByText("Variable scrub_tranquility is 3")).toBeTruthy();
+  expect(writes).toEqual([
+    {
+      url: "/api/nodes/n1/worker-variables",
+      method: "PUT",
+      body: JSON.stringify({ variable: "scrub_tranquility", value: "3" }),
+      confirm: "yes",
+    },
+  ]);
+  expect(reads).toEqual(["/api/nodes/n1/worker-variables?variable=scrub_tranquility"]);
+  expect(screen.getAllByText("3").map((node) => node.textContent)).toEqual(["3"]);
+  expect(window.location.hash).toBe("#workers/n1");
+});

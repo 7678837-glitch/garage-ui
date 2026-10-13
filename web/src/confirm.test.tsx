@@ -19,6 +19,7 @@ const actions = [
   ["batch-delete", "high"],
   ["clear-block", "high"],
   ["repair", "high"],
+  ["worker-variable", "high"],
   ["skip-dead-node", "high"],
   ["apply-layout", "high"],
   ["enable-website", "high"],

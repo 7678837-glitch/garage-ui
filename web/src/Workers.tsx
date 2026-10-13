@@ -120,6 +120,103 @@ async function loadWorkers(nodeId: string, filter: WorkerFilter): Promise<Worker
   return workersFrom(await api<unknown>(workersPath(nodeId, filter)));
 }
 
+type VariableAssignment = {
+  variable: string;
+  value: string;
+};
+
+function variableSentence(variable: string, body: unknown): string {
+  if (!isRecord(body)) {
+    throw new Error(UNAVAILABLE);
+  }
+  const found = body[variable];
+  if (typeof found !== "string") {
+    throw new Error(UNAVAILABLE);
+  }
+  return `Variable ${variable} is ${found}`;
+}
+
+async function saveWorkerVariable(nodeId: string, assignment: VariableAssignment): Promise<string> {
+  await api(`/api/nodes/${encodeURIComponent(nodeId)}/worker-variables`, {
+    method: "PUT",
+    headers: { "x-confirm": "yes" },
+    body: JSON.stringify({ variable: assignment.variable, value: assignment.value }),
+  });
+  const body = await api<unknown>(
+    `/api/nodes/${encodeURIComponent(nodeId)}/worker-variables?variable=${encodeURIComponent(assignment.variable)}`,
+  );
+  return variableSentence(assignment.variable, body);
+}
+
+function WorkerVariable({ nodeId }: { nodeId: string }) {
+  const [variable, setVariable] = useState("");
+  const [value, setValue] = useState("");
+  const [open, setOpen] = useState(false);
+  const save = useMutation({
+    mutationFn: (assignment: VariableAssignment) => saveWorkerVariable(nodeId, assignment),
+  });
+  const ready = variable.length > 0 && value.length > 0;
+
+  return (
+    <div className="grid max-w-sm gap-3">
+      <label className="block">
+        <span className="text-sm">Variable</span>
+        <input
+          className="mt-1 w-full border border-line px-2 py-1"
+          value={variable}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => {
+            setVariable(event.target.value);
+          }}
+        />
+      </label>
+      <label className="block">
+        <span className="text-sm">Value</span>
+        <input
+          className="mt-1 w-full border border-line px-2 py-1"
+          value={value}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => {
+            setValue(event.target.value);
+          }}
+        />
+      </label>
+      <button
+        className="border border-ink px-3 py-1 text-left"
+        type="button"
+        disabled={!ready}
+        onClick={() => {
+          if (!ready) {
+            return;
+          }
+          setOpen(true);
+        }}
+      >
+        Save variable
+      </button>
+      {save.data !== undefined ? <p>{save.data}</p> : null}
+      {open ? (
+        <ConfirmDialog
+          action="worker-variable"
+          name={variable}
+          scope={value}
+          consequence="This changes a worker variable on the node."
+          onCancel={() => {
+            setOpen(false);
+          }}
+          onConfirm={() => {
+            const assignment = { variable, value };
+            setOpen(false);
+            save.mutate(assignment);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 const REPAIR_KINDS = [
   "tables",
   "blocks",
@@ -356,6 +453,7 @@ export function Workers() {
       ) : (
         <>
           <NodeRepair nodeId={nodeId} />
+          <WorkerVariable nodeId={nodeId} />
           <WorkersList nodeId={nodeId} />
         </>
       )}
