@@ -1827,3 +1827,93 @@ block_bytes_written 5
             );
         }
     }
+
+    #[tokio::test]
+    async fn read_only_user_cannot_call_operations_apis() {
+        let mock = Upstream::start(UpstreamReply::Ok(
+            r#"{"success":{"n1":{}},"error":{}}"#.to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let calls = [
+            ("GET", "/api/nodes/n1/workers", None, "ListWorkers", false),
+            (
+                "GET",
+                "/api/nodes/n1/workers/7",
+                None,
+                "GetWorkerInfo",
+                false,
+            ),
+            (
+                "GET",
+                "/api/nodes/n1/block-errors",
+                None,
+                "ListBlockErrors",
+                false,
+            ),
+            (
+                "GET",
+                "/api/nodes/n1/blocks/aa11",
+                None,
+                "GetBlockInfo",
+                false,
+            ),
+            (
+                "POST",
+                "/api/nodes/n1/blocks/retry",
+                Some(r#"{"blockHashes":["abc"]}"#),
+                "RetryBlockResync",
+                false,
+            ),
+            (
+                "POST",
+                "/api/garage/v2/ApplyClusterLayout",
+                Some("{}"),
+                "ApplyClusterLayout",
+                false,
+            ),
+            (
+                "POST",
+                "/api/garage/v2/RevertClusterLayout",
+                Some("{}"),
+                "RevertClusterLayout",
+                false,
+            ),
+            (
+                "POST",
+                "/api/garage/v2/ClusterLayoutSkipDeadNodes",
+                Some("{}"),
+                "ClusterLayoutSkipDeadNodes",
+                true,
+            ),
+            (
+                "POST",
+                "/api/garage/v2/ImportKey",
+                Some("{}"),
+                "ImportKey",
+                false,
+            ),
+        ];
+
+        let hits_before = mock.hits();
+        for (method, path, body, endpoint, confirm) in calls {
+            let call = request(method, path, body, Some(&viewer));
+            let call = if confirm { with_confirm(call) } else { call };
+            let response = exchange(&app, call).await;
+            assert_eq!(
+                response.status,
+                StatusCode::FORBIDDEN,
+                "{method} {path} {}",
+                response.body
+            );
+            assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+            assert!(
+                cluster_calls(&mock, endpoint).is_empty(),
+                "{endpoint} reached upstream"
+            );
+        }
+        assert_eq!(mock.hits(), hits_before, "a read-only call reached upstream");
+    }
