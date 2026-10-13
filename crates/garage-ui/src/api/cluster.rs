@@ -474,6 +474,26 @@ pub(crate) async fn post_retry_blocks(
     worker_node(&app, posted, &id).await
 }
 
+pub(crate) async fn post_metadata_snapshot(
+    State(app): State<App>,
+    Authed(current): Authed,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::RunOps)?;
+    let query = format!("node={}", percent_encode(&id));
+    let posted = post_garage(
+        &app,
+        &current,
+        &headers,
+        "CreateMetadataSnapshot",
+        Some(&query),
+        &[],
+    )
+    .await?;
+    worker_node(&app, posted, &id).await
+}
+
 pub(crate) async fn get_block_info(
     State(app): State<App>,
     Authed(current): Authed,
@@ -1086,6 +1106,10 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/nodes/{id}/blocks/retry", post(post_retry_blocks))
         .route("/api/nodes/{id}/blocks/{hash}", get(get_block_info))
         .route("/api/nodes/{id}/repair", post(post_repair))
+        .route(
+            "/api/nodes/{id}/metadata-snapshot",
+            post(post_metadata_snapshot),
+        )
         .route("/api/cluster/connect", post(connect_cluster))
         .route("/api/layout/history", get(layout_history))
         .route("/api/layout/preview", post(preview_layout))

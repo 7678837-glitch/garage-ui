@@ -1019,6 +1019,109 @@
     }
 
     #[tokio::test]
+    async fn metadata_snapshot_forwards_one_node() {
+        let success = json!({ "n1": Value::Null });
+        let mock = Upstream::start(UpstreamReply::Ok(
+            json!({
+                "success": success,
+                "error": {}
+            })
+            .to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let posted = exchange(
+            &app,
+            request("POST", "/api/nodes/n1/metadata-snapshot", None, Some(&admin)),
+        )
+        .await;
+        assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+        assert_eq!(posted.body, "null");
+        let calls = cluster_calls(&mock, "CreateMetadataSnapshot");
+        assert_eq!(
+            calls.len(),
+            1,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(calls[0].line.starts_with("POST "), "{}", calls[0].line);
+        let target = calls[0].line.split_whitespace().nth(1).unwrap_or("");
+        assert_eq!(
+            target,
+            "/v2/CreateMetadataSnapshot?node=n1",
+            "{}",
+            calls[0].line
+        );
+        assert!(calls[0].body.is_empty(), "{}", calls[0].body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "v2/CreateMetadataSnapshot");
+        assert_eq!(row.target, "CreateMetadataSnapshot");
+        assert_eq!(row.status, 200);
+
+        let every = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/nodes/%2A/metadata-snapshot",
+                None,
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(every.status, StatusCode::OK, "{}", every.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&every.body).unwrap(),
+            success
+        );
+        let calls = cluster_calls(&mock, "CreateMetadataSnapshot");
+        assert_eq!(
+            calls.len(),
+            2,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(calls[1].line.starts_with("POST "), "{}", calls[1].line);
+        assert_eq!(
+            calls[1].line.split_whitespace().nth(1).unwrap_or(""),
+            "/v2/CreateMetadataSnapshot?node=%2A",
+            "{}",
+            calls[1].line
+        );
+        assert!(calls[1].body.is_empty(), "{}", calls[1].body);
+
+        let viewer = viewer_session(&app, &admin).await;
+        let hits_before_viewer = mock.hits();
+        let denied = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/nodes/n1/metadata-snapshot",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&denied, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        assert_eq!(mock.hits(), hits_before_viewer);
+        assert_eq!(cluster_calls(&mock, "CreateMetadataSnapshot").len(), 2);
+    }
+
+    #[tokio::test]
     async fn admin_connect_forwards_the_node_list_unchanged() {
         let upstream = br#"[ "joined" , "abcd@127.0.0.1:3901" ]"#;
         let capture = ConnectCapture::start(upstream).await;
