@@ -465,6 +465,22 @@ async fn failed_login_is_audited_without_the_password() {
     assert!(!logs(&app).contains("not-a-secret-but-query"));
 }
 
+#[tokio::test]
+async fn unknown_user_and_wrong_password_return_the_same_error_text() {
+    let dir = crate::util::temp_dir();
+    let app = state::test_app(&dir).await;
+    setup_admin(&app).await;
+    let unknown = login(&app, "Nobody", "wrong horse", None, None).await;
+    let wrong = login(&app, "Ada", "wrong horse", None, None).await;
+    assert_eq!(unknown.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(unknown.body, wrong.body);
+    assert_eq!(
+        serde_json::from_str::<Value>(&unknown.body).unwrap(),
+        json!({ "code": "invalid_credentials", "message": "Invalid credentials" })
+    );
+}
+
 fn failed_login_from(peer: [u8; 4], forwarded: &str) -> Request<Body> {
     let mut request = request(
         "POST",
