@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "garage-loadgen"
-version = "20261010.1.0"
+version = "20261014.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "garage-ui"
-version = "20261010.1.0"
+version = "20261014.1.0"
 dependencies = [
  "anyhow",
  "aws-config",
