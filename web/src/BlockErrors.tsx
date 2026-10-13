@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./api/client";
+import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
 
@@ -62,6 +64,7 @@ async function loadBlockErrors(nodeId: string): Promise<BlockError[]> {
 }
 
 function BlockErrorList({ nodeId }: { nodeId: string }) {
+  const [purgeHash, setPurgeHash] = useState<string | null>(null);
   const blockErrors = useQuery({
     queryKey: ["nodes", nodeId, "block-errors"],
     queryFn: () => loadBlockErrors(nodeId),
@@ -71,6 +74,14 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       api(`/api/nodes/${encodeURIComponent(nodeId)}/blocks/retry`, {
         method: "POST",
         body: JSON.stringify(command),
+      }),
+  });
+  const purge = useMutation({
+    mutationFn: (hash: string) =>
+      api(`/api/nodes/${encodeURIComponent(nodeId)}/blocks/purge`, {
+        method: "POST",
+        headers: { "x-confirm": "yes" },
+        body: JSON.stringify([hash]),
       }),
   });
   const message = blockErrors.error instanceof Error ? blockErrors.error.message : UNAVAILABLE;
@@ -84,6 +95,9 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       {blockErrors.isError && !isGarageDown(blockErrors.error) ? <p>{message}</p> : null}
       {retry.error instanceof Error && !isGarageDown(retry.error) ? (
         <p>{retry.error.message}</p>
+      ) : null}
+      {purge.error instanceof Error && !isGarageDown(purge.error) ? (
+        <p>{purge.error.message}</p>
       ) : null}
       {blockErrors.isSuccess && rows.length === 0 ? <p>There are no block errors.</p> : null}
       {rows.length > 0 ? (
@@ -114,8 +128,11 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                   <th className="py-2 pr-3 font-medium" scope="col">
                     Next try in seconds
                   </th>
-                  <th className="py-2 font-medium" scope="col">
+                  <th className="py-2 pr-3 font-medium" scope="col">
                     Retry
+                  </th>
+                  <th className="py-2 font-medium" scope="col">
+                    Purge
                   </th>
                 </tr>
               </thead>
@@ -127,7 +144,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                     <td className="py-2 pr-3">{row.errorCount}</td>
                     <td className="py-2 pr-3">{row.lastTrySecsAgo}</td>
                     <td className="py-2 pr-3">{row.nextTryInSecs}</td>
-                    <td className="py-2">
+                    <td className="py-2 pr-3">
                       <button
                         className="border border-ink px-3 py-1 text-left"
                         type="button"
@@ -136,12 +153,39 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                         Retry {row.blockHash}
                       </button>
                     </td>
+                    <td className="py-2">
+                      <button
+                        className="border border-ink px-3 py-1 text-left"
+                        type="button"
+                        onClick={() => {
+                          setPurgeHash(row.blockHash);
+                        }}
+                      >
+                        Purge {row.blockHash}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </>
+      ) : null}
+      {purgeHash !== null ? (
+        <ConfirmDialog
+          action="clear-block"
+          name={purgeHash}
+          scope={nodeId}
+          consequence="Object data will be lost."
+          onCancel={() => {
+            setPurgeHash(null);
+          }}
+          onConfirm={() => {
+            const hash = purgeHash;
+            setPurgeHash(null);
+            purge.mutate(hash);
+          }}
+        />
       ) : null}
     </>
   );

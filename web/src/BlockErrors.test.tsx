@@ -112,3 +112,39 @@ test("clicking Retry all posts all true for that node", async () => {
   });
   expect(window.location.hash).toBe("#block-errors/n1");
 });
+
+function purgePosts(): { url: string; body: unknown; confirm: string | null }[] {
+  return vi.mocked(fetch).mock.calls.flatMap(([input, init]) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method !== "POST" || url !== "/api/nodes/n1/blocks/purge") {
+      return [];
+    }
+    const raw = init?.body;
+    return [
+      {
+        url,
+        body: typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw,
+        confirm: new Headers(init?.headers).get("x-confirm"),
+      },
+    ];
+  });
+}
+
+test("clicking Purge aa11 posts that one hash after the operator types it", async () => {
+  window.location.hash = "#block-errors/n1";
+  stubAdminBlockErrors();
+  renderApp();
+  fireEvent.click(await screen.findByRole("button", { name: "Purge aa11" }));
+  expect(purgePosts()).toEqual([]);
+  fireEvent.change(screen.getByLabelText("Type aa11 to confirm"), {
+    target: { value: "aa11" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => {
+    expect(purgePosts()).toEqual([
+      { url: "/api/nodes/n1/blocks/purge", body: ["aa11"], confirm: "yes" },
+    ]);
+  });
+  expect(window.location.hash).toBe("#block-errors/n1");
+});
