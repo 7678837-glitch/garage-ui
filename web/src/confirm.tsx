@@ -11,6 +11,7 @@ const RISK = {
   "recursive-delete": "high",
   "batch-delete": "high",
   "clear-block": "high",
+  "repair": "high",
   "skip-dead-node": "high",
   "apply-layout": "high",
   "enable-website": "high",
