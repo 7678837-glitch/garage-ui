@@ -243,6 +243,14 @@
 
     impl CatalogMock {
         async fn start() -> Self {
+            Self::open(None).await
+        }
+
+        async fn start_buckets(count: usize) -> Self {
+            Self::open(Some(count)).await
+        }
+
+        async fn open(buckets: Option<usize>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let requests = Arc::new(Mutex::new(Vec::new()));
@@ -252,7 +260,7 @@
                     let Ok((socket, _)) = listener.accept().await else {
                         break;
                     };
-                    let _ = serve_catalog(socket, Arc::clone(&requests_task)).await;
+                    let _ = serve_catalog(socket, Arc::clone(&requests_task), buckets).await;
                 }
             });
             Self {
@@ -270,6 +278,7 @@
     async fn serve_catalog(
         mut socket: tokio::net::TcpStream,
         requests: Arc<Mutex<Vec<String>>>,
+        buckets: Option<usize>,
     ) -> std::io::Result<()> {
         let mut buf = Vec::new();
         let mut tmp = [0_u8; 1024];
@@ -289,7 +298,13 @@
         let target = line.split_whitespace().nth(1).unwrap_or("");
         let path = target.split('?').next().unwrap_or("");
         let (status, body) = match path {
-            "/v2/ListBucketsInfo" => ("200 OK", catalog_json(&["b0", "b1", "b2"], target)),
+            "/v2/ListBucketsInfo" => (
+                "200 OK",
+                match buckets {
+                    Some(count) => counted_bucket_page(count, target),
+                    None => catalog_json(&["b0", "b1", "b2"], target),
+                },
+            ),
             "/v2/ListKeysInfo" => ("200 OK", catalog_json(&["k0", "k1", "k2"], target)),
             _ => ("404 Not Found", r#"{"error":"not found"}"#.to_string()),
         };
@@ -300,6 +315,24 @@
         socket.write_all(response.as_bytes()).await?;
         let _ = socket.shutdown().await;
         Ok(())
+    }
+
+    fn counted_bucket_id(index: usize) -> String {
+        format!("{index:05}")
+    }
+
+    fn counted_bucket_page(count: usize, target: &str) -> String {
+        let limit = query_value(target, "limit")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(count);
+        let start = query_value(target, "offset")
+            .and_then(|id| (0..count).find(|index| counted_bucket_id(*index) == id))
+            .unwrap_or(0);
+        let end = start.saturating_add(limit).min(count);
+        let items: Vec<_> = (start..end)
+            .map(|index| json!({ "id": counted_bucket_id(index) }))
+            .collect();
+        serde_json::to_string(&items).unwrap()
     }
 
     fn catalog_json(ids: &[&str], target: &str) -> String {

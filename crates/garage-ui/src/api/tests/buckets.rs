@@ -238,6 +238,61 @@
     }
 
     #[tokio::test]
+    async fn large_list_first_page_of_10000_buckets() {
+        const CATALOG: usize = 10_000;
+        const PAGE: usize = 1000;
+        let mock = CatalogMock::start_buckets(CATALOG).await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (session, _) = login(&app).await;
+
+        let started = std::time::Instant::now();
+        let response = exchange(
+            &app,
+            request("GET", "/api/buckets?limit=1000", None, Some(&session)),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        let lines = mock.requests();
+        println!(
+            "large_list_bucket_ms={:.3}",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        println!("large_list_bucket_upstream={lines:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "first bucket page took {elapsed:?}"
+        );
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).unwrap();
+        let items = body["items"].as_array().expect("items");
+        assert_eq!(items.len(), PAGE, "{}", response.body);
+        assert_eq!(items[0], json!({ "id": "00000" }));
+        assert_eq!(items[500], json!({ "id": "00500" }));
+        assert_eq!(items[PAGE - 1], json!({ "id": "00999" }));
+        assert_eq!(body["hasMore"], true);
+        assert!(!response.body.contains("\"01000\""));
+        assert!(!response.body.contains("\"09999\""));
+        let lists: Vec<_> = lines
+            .iter()
+            .filter(|line| line.contains("ListBucketsInfo"))
+            .collect();
+        assert_eq!(lists.len(), 1, "{lines:?}");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lists[0].contains("GET /v2/ListBucketsInfo?limit=1000 "));
+        assert!(!lists[0].contains("offset="));
+        assert!(!lists[0].contains("limit=10000"));
+        assert!(
+            lines.iter().all(|line| {
+                !line.contains("GetBucketInfo")
+                    && !line.contains("GetObject")
+                    && !line.contains("HeadObject")
+            }),
+            "{lines:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn admin_create_hits_create_bucket_once() {
         let mock = Upstream::start(UpstreamReply::Ok(r#"{"id":"new"}"#.to_string())).await;
         let dir = crate::util::temp_dir();

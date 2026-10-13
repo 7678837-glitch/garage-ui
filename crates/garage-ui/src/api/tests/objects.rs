@@ -356,6 +356,134 @@
         assert_eq!(bucket_of(&seen[2]), "bkt-1");
     }
 
+    const OBJECT_CATALOG: usize = 100_000;
+    const OBJECT_PAGE_MAX: usize = 1000;
+    const OBJECT_PREFIX: &str = "shots/";
+
+    fn prefix_catalog_page(line: &str) -> String {
+        let target = request_target(line);
+        let asked = query_value(target, "max-keys")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(OBJECT_PAGE_MAX)
+            .min(OBJECT_PAGE_MAX);
+        let start = query_value(target, "continuation-token")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(OBJECT_CATALOG);
+        let end = start.saturating_add(asked).min(OBJECT_CATALOG);
+        let count = end - start;
+        let truncated = end < OBJECT_CATALOG;
+        let mut xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
+        );
+        xml.push_str(&format!(
+            "<KeyCount>{count}</KeyCount><MaxKeys>{asked}</MaxKeys><IsTruncated>{}</IsTruncated>",
+            if truncated { "true" } else { "false" }
+        ));
+        if truncated {
+            xml.push_str(&format!(
+                "<NextContinuationToken>{end}</NextContinuationToken>"
+            ));
+        }
+        for index in start..end {
+            xml.push_str(&format!(
+                "<Contents><Key>{OBJECT_PREFIX}{index:06}</Key><LastModified>2026-10-11T00:00:00.000Z</LastModified><ETag>\"abc\"</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents>"
+            ));
+        }
+        xml.push_str("</ListBucketResult>");
+        http_xml(&xml)
+    }
+
+    #[tokio::test]
+    async fn large_list_first_page_of_100000_objects() {
+        let mock = S3Mock::start(prefix_catalog_page).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+
+        let started = std::time::Instant::now();
+        let response = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects?prefix=shots/&limit=1000",
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        let lines = mock.requests();
+        println!(
+            "large_list_object_ms={:.3}",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        println!("large_list_object_upstream={lines:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "first object page took {elapsed:?}"
+        );
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["prefix"], OBJECT_PREFIX);
+        assert_eq!(body["next"], "1000");
+        let entries = body["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), OBJECT_PAGE_MAX, "{}", response.body);
+        assert_eq!(
+            entries[0],
+            json!({
+                "kind": "object",
+                "key": "shots/000000",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z"
+            })
+        );
+        assert_eq!(
+            entries[500],
+            json!({
+                "kind": "object",
+                "key": "shots/000500",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z"
+            })
+        );
+        assert_eq!(
+            entries[OBJECT_PAGE_MAX - 1],
+            json!({
+                "kind": "object",
+                "key": "shots/000999",
+                "size": 1,
+                "etag": "abc",
+                "lastModified": "2026-10-11T00:00:00Z"
+            })
+        );
+        assert!(entries.iter().all(|entry| entry["kind"] == "object"));
+        assert!(!response.body.contains("shots/001000"));
+        assert!(!response.body.contains("shots/099999"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let target = request_target(&lines[0]);
+        assert!(target.contains("list-type=2"), "{target}");
+        assert_eq!(query_value(target, "max-keys"), Some("1000"), "{target}");
+        assert_eq!(
+            percent_decode(query_value(target, "prefix").unwrap_or("")),
+            OBJECT_PREFIX,
+            "{target}"
+        );
+        assert_eq!(query_value(target, "continuation-token"), None, "{target}");
+        assert_eq!(bucket_of(&lines[0]), "bkt-1");
+        assert!(
+            lines.iter().all(|line| {
+                !line.contains("GetBucketInfo")
+                    && !line.contains("GetObject")
+                    && !line.contains("HeadObject")
+                    && !line.starts_with("HEAD ")
+            }),
+            "{lines:?}"
+        );
+    }
+
     #[tokio::test]
     async fn object_list_walks_5000_objects_page_by_page() {
         let pages: Vec<Vec<String>> = (0..5)
