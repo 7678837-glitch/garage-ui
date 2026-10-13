@@ -257,6 +257,51 @@
     }
 
     #[tokio::test]
+    async fn csrf_rejection_records_the_last_forwarded_hop() {
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", "http://127.0.0.1:9"),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("TRUSTED_PROXY", "true"),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&app).await;
+        let rejected = exchange(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/logout")
+                .header("cookie", cookie_header(&admin))
+                .header("x-forwarded-for", "198.51.100.10, 203.0.113.55, ")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_error(
+            &rejected,
+            StatusCode::FORBIDDEN,
+            "csrf_rejected",
+            "CSRF token missing or mismatched",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.reason == "csrf_rejected")
+            .expect("csrf rejection audit");
+        assert_eq!(row.ip, "203.0.113.55");
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/auth/logout");
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains("198.51.100.10"));
+        assert!(!audit_text(row).contains(&admin.csrf));
+    }
+
+    #[tokio::test]
     async fn setup_invalid_username_is_audited() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
