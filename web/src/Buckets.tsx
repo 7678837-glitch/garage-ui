@@ -1324,6 +1324,17 @@ function uploadsFrom(body: unknown): IncompleteUpload[] {
   return rows;
 }
 
+function uploadsDeletedFrom(body: unknown): number | null {
+  if (typeof body !== "object" || body === null || !("uploadsDeleted" in body)) {
+    return null;
+  }
+  const value = (body as { uploadsDeleted: unknown }).uploadsDeleted;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
 function IncompleteUploads({ bucketId }: { bucketId: string }) {
   const [open, setOpen] = useState(false);
   if (!open) {
@@ -1371,6 +1382,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
     return null;
   }
   const secs = olderThanSecs(hours);
+  const deleted = uploadsDeletedFrom(cleanup.data);
   return (
     <div className="mt-3 grid max-w-sm gap-2">
       {uploadsFrom(query.data).map((upload) => (
@@ -1405,6 +1417,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
         Clean up
       </button>
       {cleanup.error instanceof Error ? <p>{cleanup.error.message}</p> : null}
+      {deleted !== null ? <p>Cleaned up {deleted}</p> : null}
     </div>
   );
 }

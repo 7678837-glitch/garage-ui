@@ -1205,7 +1205,7 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
       }
       if (call.url.endsWith("/cleanup-uploads")) {
         cleaned = true;
-        return json({});
+        return json({ uploadsDeleted: 1 });
       }
       if (call.url.endsWith("/lifecycle")) {
         return json({ lifecycleRules: [] });
@@ -1245,6 +1245,7 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
   await waitFor(() => {
     expect(screen.queryByText("up-old")).toBeNull();
   });
+  expect(screen.getByText("Cleaned up 1")).toBeTruthy();
   const posts = calls.filter((call) => call.method === "POST");
   expect(posts).toHaveLength(1);
   expect(posts[0]?.url).toBe("/api/buckets/bkt-1/cleanup-uploads");
