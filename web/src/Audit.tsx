@@ -36,6 +36,14 @@ async function exportAudit(): Promise<void> {
   if (!response.ok) {
     throw new Error(`request failed (${response.status})`);
   }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "audit.csv";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export function Audit() {

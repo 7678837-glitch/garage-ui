@@ -87,3 +87,27 @@ test("an admin on #audit sees Ada and login", async () => {
     expect(fetchMock.mock.calls.some((call) => String(call[0]) === "/api/audit/export")).toBe(true);
   });
 });
+
+test("exporting audit downloads audit.csv", async () => {
+  const priorCreate = URL.createObjectURL;
+  const priorRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => "blob:audit-csv";
+  URL.revokeObjectURL = () => undefined;
+  window.location.hash = "#audit";
+  const fetchMock = stubAdminAudit();
+  renderApp();
+  try {
+    fireEvent.click(await screen.findByRole("button", { name: "Export audit" }));
+    await waitFor(() => {
+      const link = document.querySelector('a[download="audit.csv"]');
+      expect(link?.getAttribute("download")).toBe("audit.csv");
+    });
+    const exportUrl = fetchMock.mock.calls
+      .map((call) => String(call[0]))
+      .find((url) => url.includes("/api/audit/export"));
+    expect(exportUrl).toBe("/api/audit/export");
+  } finally {
+    URL.createObjectURL = priorCreate;
+    URL.revokeObjectURL = priorRevoke;
+  }
+});
