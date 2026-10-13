@@ -2,7 +2,7 @@
 
 garage-ui is an unofficial web admin UI for Garage, the S3-compatible object store from Deuxfleurs. The program is one static Rust binary.
 
-garage-ui is under active development, not yet released.
+The current version is 20261014.1.
 
 ## Current behavior
 
