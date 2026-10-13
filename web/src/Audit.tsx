@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
+import { isGarageDown } from "./garageDown";
 
 const COLUMNS = [
   "at",
@@ -49,6 +50,16 @@ function auditSearch(filters: AuditFilters): string {
   return search === "" ? "" : `?${search}`;
 }
 
+function failureOf(error: unknown): { message: string; code: string | null } {
+  if (error instanceof ApiError) {
+    return { message: error.message, code: error.code };
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return { message: error.message, code: null };
+  }
+  return { message: "Audit is unavailable", code: null };
+}
+
 async function loadAudit(filters: AuditFilters): Promise<AuditPage> {
   const page = await api<AuditPage>(`/api/audit${auditSearch(filters)}`);
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
@@ -87,8 +98,14 @@ export function Audit() {
   });
   const [exportFailed, setExportFailed] = useState(false);
   const items = listed.data?.items ?? [];
+  const view = {
+    busy: listed.isPending,
+    refreshing: items.length > 0 && listed.isFetching && !listed.isPending,
+    empty: Boolean(listed.data) && items.length === 0,
+    failure: listed.isError ? failureOf(listed.error) : null,
+  };
   return (
-    <section className="grid gap-4" aria-label="Audit">
+    <section className="grid gap-4" aria-label="Audit" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Audit</h2>
       <div className="flex flex-wrap items-end gap-3">
         {FILTER_FIELDS.map(([key, label]) => (
@@ -120,7 +137,24 @@ export function Audit() {
         Export audit
       </button>
       {exportFailed ? <p>Export failed</p> : null}
-      {listed.isError ? <p>Audit is unavailable</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label="Loading audit" /> : null}
+      {view.refreshing ? <p>Refreshing audit</p> : null}
+      {view.failure && !isGarageDown(view.failure) ? (
+        <>
+          <p>{view.failure.message}</p>
+          {view.failure.code ? <p>{view.failure.code}</p> : null}
+          <button
+            className="border border-ink px-3 py-1 text-left"
+            type="button"
+            onClick={() => {
+              void listed.refetch();
+            }}
+          >
+            Retry
+          </button>
+        </>
+      ) : null}
+      {view.empty ? <p>There are no audit events.</p> : null}
       <table className="w-full border-collapse text-left text-sm">
         <thead>
           <tr>

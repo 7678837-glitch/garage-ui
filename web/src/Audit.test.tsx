@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { Audit } from "./Audit";
 
 afterEach(() => {
   cleanup();
@@ -150,4 +151,164 @@ test("exporting audit downloads audit.csv", async () => {
     URL.createObjectURL = priorCreate;
     URL.revokeObjectURL = priorRevoke;
   }
+});
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status });
+}
+
+const auditRow = {
+  at: 1700000000,
+  username: "Ada",
+  ip: "127.0.0.1",
+  result: "success",
+  reason: "login",
+  method: "POST",
+  path: "/api/auth/login",
+  target: "",
+  status: 200,
+};
+
+function renderAudit() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <Audit />
+    </QueryClientProvider>,
+  );
+  return client;
+}
+
+test("shows Loading audit and marks the audit section busy on the first load", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  );
+  renderAudit();
+  const section = screen.getByRole("region", { name: "Audit" });
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByLabelText("Loading audit").getAttribute("role")).toBeNull();
+  expect(screen.queryByText("Loading audit")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no audit events.")).toBeNull();
+  expect(screen.queryByText("Refreshing audit")).toBeNull();
+  expect(screen.getByLabelText("User")).toBeTruthy();
+  expect(screen.getByLabelText("From")).toBeTruthy();
+  expect(screen.getByLabelText("To")).toBeTruthy();
+  expect(screen.getByLabelText("Action")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Export audit" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
+  release(json({ items: [auditRow], hasMore: false }));
+  expect(await screen.findByText("login")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Audit" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByLabelText("Loading audit")).toBeNull();
+  expect(screen.queryByText("Loading audit")).toBeNull();
+});
+
+test("says there are no audit events", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/audit");
+      expect(init?.credentials).toBe("include");
+      return json({ items: [], hasMore: false });
+    }),
+  );
+  renderAudit();
+  expect((await screen.findByText("There are no audit events.")).textContent).toBe(
+    "There are no audit events.",
+  );
+  expect(screen.getByText("There are no audit events.").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
+  expect(screen.getByRole("button", { name: "Export audit" })).toBeTruthy();
+  expect(screen.getByLabelText("User")).toBeTruthy();
+  expect(screen.getByLabelText("From")).toBeTruthy();
+  expect(screen.getByLabelText("To")).toBeTruthy();
+  expect(screen.getByLabelText("Action")).toBeTruthy();
+  expect(screen.queryByText("login")).toBeNull();
+  expect(screen.queryByLabelText("Loading audit")).toBeNull();
+  expect(screen.queryByText("Loading audit")).toBeNull();
+  expect(screen.getByRole("region", { name: "Audit" }).getAttribute("aria-busy")).toBe("false");
+});
+
+test("shows the API code and requests the audit list again from Retry", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/audit");
+      expect((init?.method ?? "GET").toUpperCase()).toBe("GET");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return json({ code: "upstream_failed", message: "Garage returned an error" }, 502);
+      }
+      return json({ items: [auditRow], hasMore: false });
+    }),
+  );
+  renderAudit();
+  expect((await screen.findByText("Garage returned an error")).textContent).toBe(
+    "Garage returned an error",
+  );
+  expect(screen.getByText("upstream_failed").textContent).toBe("upstream_failed");
+  expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("There are no audit events.")).toBeNull();
+  expect(screen.getByLabelText("User")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Export audit" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("login")).toBeTruthy();
+  expect(screen.queryByText("upstream_failed")).toBeNull();
+  expect(screen.queryByText("Garage returned an error")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(calls).toBe(2);
+});
+
+test("keeps one visible audit row while a later fetch refreshes", async () => {
+  let calls = 0;
+  let releaseNext: (response: Response) => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      expect(url.pathname).toBe("/api/audit");
+      expect(init?.credentials).toBe("include");
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(json({ items: [auditRow], hasMore: false }));
+      }
+      return new Promise<Response>((resolve) => {
+        releaseNext = resolve;
+      });
+    }),
+  );
+  const client = renderAudit();
+  expect(await screen.findByText("login")).toBeTruthy();
+  expect(screen.queryByText("Refreshing audit")).toBeNull();
+  const refresh = client.refetchQueries({ queryKey: ["audit"] });
+  expect(await screen.findByText("Refreshing audit")).toBeTruthy();
+  expect(screen.getByText("login")).toBeTruthy();
+  expect(screen.getByText("Ada")).toBeTruthy();
+  expect(screen.queryByLabelText("Loading audit")).toBeNull();
+  expect(screen.queryByText("Loading audit")).toBeNull();
+  expect(screen.getByRole("region", { name: "Audit" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryByRole("alert")).toBeNull();
+  releaseNext(json({ items: [auditRow], hasMore: false }));
+  await refresh;
+  await waitFor(() => {
+    expect(screen.queryByText("Refreshing audit")).toBeNull();
+  });
+  expect(screen.getByText("login")).toBeTruthy();
+  expect(calls).toBe(2);
 });
