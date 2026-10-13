@@ -14,7 +14,10 @@ afterEach(() => {
 
 function renderObjects(
   bucketId = "bkt-1",
-  access: { canWrite: boolean; canTransfer: boolean } = { canWrite: true, canTransfer: true },
+  access: { canWrite: boolean; canTransfer: boolean; canManage?: boolean } = {
+    canWrite: true,
+    canTransfer: true,
+  },
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -27,6 +30,7 @@ function renderObjects(
         onBack={onBack}
         canWrite={access.canWrite}
         canTransfer={access.canTransfer}
+        canManage={access.canManage}
       />
     </QueryClientProvider>,
   );
@@ -1649,4 +1653,57 @@ test("shares one object after an admin chooses the bucket key", async () => {
   expect(calls.find((call) => call.method === "PUT")?.body).toBe(
     JSON.stringify({ access_key_id: "CHOSEN" }),
   );
+});
+
+test("an admin inspecting photos/cat.jpg sees version u1", async () => {
+  window.location.hash = "#buckets/bkt-1/photos/";
+  const inspectUrl = "/api/buckets/bkt-1/inspect/photos/cat.jpg";
+  const calls: { url: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://ui.local");
+      calls.push({ url: url.pathname, method: (init?.method ?? "GET").toUpperCase() });
+      if (url.pathname === "/api/buckets/bkt-1/objects") {
+        return json(page([objectRow("photos/cat.jpg", 1, "2026-10-11T00:00:00Z")], null, "photos/"));
+      }
+      if (url.pathname === inspectUrl) {
+        return json({
+          bucketId: "bkt-1",
+          key: "photos/cat.jpg",
+          versions: [
+            {
+              uuid: "u1",
+              timestamp: "2026-10-11T00:00:00Z",
+              encrypted: false,
+              uploading: false,
+              aborted: false,
+              deleteMarker: false,
+              inline: true,
+            },
+          ],
+        });
+      }
+      return json({ message: "unexpected" }, 500);
+    }),
+  );
+  renderObjects();
+  expect(await screen.findByRole("button", { name: "photos/cat.jpg" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Inspect photos/cat.jpg" })).toBeNull();
+  cleanup();
+  renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
+  const inspect = await screen.findByRole("button", { name: "Inspect photos/cat.jpg" });
+  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
+  expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
+  fireEvent.click(inspect);
+  expect((await screen.findByText("u1")).textContent).toBe("u1");
+  expect(screen.getByText("encrypted no").textContent).toBe("encrypted no");
+  expect(screen.getByText("uploading no").textContent).toBe("uploading no");
+  expect(screen.getByText("aborted no").textContent).toBe("aborted no");
+  expect(screen.getByText("deleteMarker no").textContent).toBe("deleteMarker no");
+  expect(screen.getByText("inline yes").textContent).toBe("inline yes");
+  expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
+  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([
+    { url: inspectUrl, method: "GET" },
+  ]);
 });

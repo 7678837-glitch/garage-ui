@@ -50,6 +50,20 @@ type ObjectMeta = {
   contentType: string;
 };
 
+const INSPECT_FLAGS = ["encrypted", "uploading", "aborted", "deleteMarker", "inline"] as const;
+
+type InspectFlag = (typeof INSPECT_FLAGS)[number];
+
+type InspectVersion = {
+  uuid: string;
+} & Record<InspectFlag, boolean>;
+
+type InspectedObject = {
+  bucketId: string;
+  key: string;
+  versions: InspectVersion[];
+};
+
 type SortChoice = "key" | "size" | "time";
 
 type BrowseState = {
@@ -102,6 +116,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requiredString(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   if (typeof value !== "string") {
+    throw new Error(UNAVAILABLE);
+  }
+  return value;
+}
+
+function requiredBoolean(row: Record<string, unknown>, key: string): boolean {
+  const value = row[key];
+  if (typeof value !== "boolean") {
     throw new Error(UNAVAILABLE);
   }
   return value;
@@ -202,6 +224,35 @@ function parseMeta(value: unknown): ObjectMeta {
   };
 }
 
+function parseInspectVersion(value: unknown): InspectVersion {
+  if (!isRecord(value)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return {
+    uuid: requiredString(value, "uuid"),
+    encrypted: requiredBoolean(value, "encrypted"),
+    uploading: requiredBoolean(value, "uploading"),
+    aborted: requiredBoolean(value, "aborted"),
+    deleteMarker: requiredBoolean(value, "deleteMarker"),
+    inline: requiredBoolean(value, "inline"),
+  };
+}
+
+function parseInspect(value: unknown): InspectedObject {
+  if (!isRecord(value) || !Array.isArray(value.versions)) {
+    throw new Error(UNAVAILABLE);
+  }
+  return {
+    bucketId: requiredString(value, "bucketId"),
+    key: requiredString(value, "key"),
+    versions: value.versions.map(parseInspectVersion),
+  };
+}
+
+function yesNo(value: boolean): "yes" | "no" {
+  return value ? "yes" : "no";
+}
+
 function parseBatchDelete(value: unknown): DeleteFailure[] {
   if (!isRecord(value) || !Array.isArray(value.failed)) {
     throw new Error(UNAVAILABLE);
@@ -247,6 +298,10 @@ function searchPath(bucketId: string, prefix: string, q: string): string {
 
 function metadataPath(bucketId: string, key: string): string {
   return `${bucketUrl(bucketId)}/objects/${encodeObjectKey(key)}`;
+}
+
+function inspectPath(bucketId: string, key: string): string {
+  return `${bucketUrl(bucketId)}/inspect/${encodeObjectKey(key)}`;
 }
 
 function archiveHref(bucketId: string, value: unknown): string {
@@ -525,11 +580,13 @@ export function Objects({
   onBack,
   canWrite,
   canTransfer,
+  canManage = false,
 }: {
   bucketId: string;
   onBack: () => void;
   canWrite: boolean;
   canTransfer: boolean;
+  canManage?: boolean;
 }) {
   const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
@@ -549,13 +606,16 @@ export function Objects({
     website: string | null;
   } | null>(null);
   const [zipLink, setZipLink] = useState<{ keys: readonly string[]; href: string } | null>(null);
+  const [inspectKey, setInspectKey] = useState<string | null>(null);
   const zipAnchor = useRef<HTMLAnchorElement>(null);
   let pageToken = browse.next;
   let search = browse.search;
   let selected = browse.selected;
   let picked = browse.picked;
+  let inspected = inspectKey;
   const prefixChanged = trackedPrefix !== prefix;
   if (prefixChanged) {
+    inspected = null;
     pageToken = null;
     search = null;
     selected = null;
@@ -582,6 +642,9 @@ export function Objects({
     if (zipLink !== null) {
       setZipLink(null);
     }
+    if (inspectKey !== null) {
+      setInspectKey(null);
+    }
   }
   const searching = search !== null;
   // Read the share flag on the object page. The caller does not have this field, so this file cannot change the parent to pass it down.
@@ -605,6 +668,12 @@ export function Objects({
     queryKey: ["bucket-object-search", bucketId, prefix, search],
     queryFn: () => readJson(searchPath(bucketId, prefix, search ?? "")).then(parseSearch),
     enabled: searching,
+  });
+  const listBusy = searching ? found.isFetching : list.isFetching;
+  const inspect = useQuery({
+    queryKey: ["bucket-object-inspect", bucketId, inspected],
+    queryFn: () => readJson(inspectPath(bucketId, inspected ?? "")).then(parseInspect),
+    enabled: inspected !== null && !listBusy,
   });
   const meta = useQuery({
     queryKey: ["bucket-object", bucketId, selected],
@@ -1130,15 +1199,28 @@ export function Objects({
                       />
                     </td>
                     <td className="min-w-0 max-w-full break-all py-2 pr-3">
-                      <button
-                        className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
-                        type="button"
-                        onClick={() => {
-                          setBrowse((current) => ({ ...current, selected: entry.key }));
-                        }}
-                      >
-                        {entry.key}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+                          type="button"
+                          onClick={() => {
+                            setBrowse((current) => ({ ...current, selected: entry.key }));
+                          }}
+                        >
+                          {entry.key}
+                        </button>
+                        {canManage ? (
+                          <button
+                            className="border border-neutral-900 px-2 py-1 text-left"
+                            type="button"
+                            onClick={() => {
+                              setInspectKey(entry.key);
+                            }}
+                          >
+                            Inspect {entry.key}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="py-2 pr-3">{entry.size}</td>
                     <td className="py-2">{entry.lastModified}</td>
@@ -1148,6 +1230,20 @@ export function Objects({
             </tbody>
           </table>
         </div>
+      ) : null}
+      {inspect.data && inspected !== null && inspect.data.key === inspected ? (
+        <section aria-label={`Inspect ${inspected}`}>
+          {inspect.data.versions.map((version) => (
+            <div key={version.uuid}>
+              <p>{version.uuid}</p>
+              {INSPECT_FLAGS.map((flag) => (
+                <p key={flag}>
+                  {flag} {yesNo(version[flag])}
+                </p>
+              ))}
+            </div>
+          ))}
+        </section>
       ) : null}
       {meta.data && selected === meta.data.key ? <p>{meta.data.contentType}</p> : null}
       {nextPage ? (

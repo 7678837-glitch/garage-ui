@@ -1834,6 +1834,7 @@ export function Buckets({
               bucketId={bucketDetail.id}
               canWrite={canWrite}
               canTransfer={canTransfer}
+              canManage={canManage}
               onBack={() => {
                 goHash("#buckets");
               }}
@@ -1915,6 +1916,7 @@ export function Buckets({
           bucketId={location.bucketId}
           canWrite={canWrite}
           canTransfer={canTransfer}
+          canManage={canManage}
           onBack={() => {
             goHash("#buckets");
           }}
