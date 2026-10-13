@@ -794,6 +794,8 @@ put_zeros() {
   dd if=/dev/zero bs=1048576 count="$count" status=none | curl -sS -D /work/headers -o /work/body \
     -X PUT \
     -H "Content-Length: ${declared}" \
+    -H "Transfer-Encoding:" \
+    -H "Expect:" \
     -H "Content-Type: ${type}" \
     -H "X-CSRF-Token: $(csrf)" \
     -b /work/cookies \
@@ -849,6 +851,8 @@ disconnect)
   done | curl -sS -o /dev/null \
     -X PUT \
     -H "Content-Length: 2147483648" \
+    -H "Transfer-Encoding:" \
+    -H "Expect:" \
     -H "Content-Type: application/octet-stream" \
     -H "X-CSRF-Token: $(csrf)" \
     -b /work/cookies \
@@ -891,6 +895,16 @@ thumbs)
     i=$((i + 1))
   done
   echo "thumb_image_responses=${ok}"
+  i=0
+  while [ "$i" -lt 100 ]; do
+    if [ "$(cat "/tmp/thumb-code-${i}")" != 200 ]; then
+      echo "thumb_fail_status=$(cat "/tmp/thumb-code-${i}")"
+      head -c 200 "/tmp/thumb-${i}" || true
+      echo
+      break
+    fi
+    i=$((i + 1))
+  done
   echo "$ok" > /work/thumb.count
   test "$ok" = 100
   ;;
