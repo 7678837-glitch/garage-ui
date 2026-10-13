@@ -85,9 +85,9 @@ const OPEN_BEFORE_SETUP: &[(&str, &str)] = &[("POST", "/api/setup"), ("GET", "/a
 
 fn open_before_setup(method: &Method, path: &str) -> bool {
     let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
-    OPEN_BEFORE_SETUP.iter().any(|(allowed_method, route)| {
-        *allowed_method == method.as_str() && (path == *route || path.ends_with(route))
-    })
+    OPEN_BEFORE_SETUP
+        .iter()
+        .any(|(allowed_method, route)| *allowed_method == method.as_str() && path == *route)
 }
 
 async fn closed_until_setup(

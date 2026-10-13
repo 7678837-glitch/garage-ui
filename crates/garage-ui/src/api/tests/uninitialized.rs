@@ -239,3 +239,39 @@
             json!({ "code": "unauthenticated", "message": "Login required" })
         );
     }
+
+    #[test]
+    fn exact_setup_and_status_paths_are_the_only_open_routes_before_setup() {
+        let closed = [
+            ("POST", "/api/garage/v2/api/setup"),
+            ("GET", "/api/garage/v2/api/auth/status"),
+            ("GET", "/api/buckets/bkt/inspect/notes/api/auth/status"),
+            ("POST", "/api/setup/extra"),
+            ("GET", "/admin/api/auth/status"),
+            ("HEAD", "/api/auth/status"),
+        ];
+        for (method, path) in closed {
+            let http = method.parse::<axum::http::Method>().expect(method);
+            assert!(
+                !super::open_before_setup(&http, path),
+                "{method} {path} counted as open"
+            );
+        }
+        let open = [
+            ("POST", "/api/setup"),
+            ("GET", "/api/auth/status"),
+            ("POST", "/api/setup/"),
+            ("GET", "/api/auth/status/"),
+            ("POST", "/api/setup?next=1"),
+            ("GET", "/api/auth/status?next=1"),
+            ("POST", "/api/setup/?next=1"),
+            ("GET", "/api/auth/status/?next=1"),
+        ];
+        for (method, path) in open {
+            let http = method.parse::<axum::http::Method>().expect(method);
+            assert!(
+                super::open_before_setup(&http, path),
+                "{method} {path} counted as closed"
+            );
+        }
+    }
