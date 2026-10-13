@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "generate:api": "openapi-typescript ../openapi/garage-admin-v2.json -o src/api/garage-admin-v2.ts"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/react": "16.3.3",
     "@types/react": "18.3.24",
