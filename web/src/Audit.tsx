@@ -105,7 +105,7 @@ export function Audit() {
     failure: listed.isError ? failureOf(listed.error) : null,
   };
   return (
-    <section className="grid gap-4" aria-label="Audit" aria-busy={view.busy}>
+    <section className="grid min-w-0 gap-4" aria-label="Audit" aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">Audit</h2>
       <div className="flex flex-wrap items-end gap-3">
         {FILTER_FIELDS.map(([key, label]) => (
@@ -155,28 +155,30 @@ export function Audit() {
         </>
       ) : null}
       {view.empty ? <p>There are no audit events.</p> : null}
-      <table className="w-full border-collapse text-left text-sm">
-        <thead>
-          <tr>
-            {COLUMNS.map((column) => (
-              <th className="py-2 pr-3 font-medium" key={column} scope="col">
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((row, index) => (
-            <tr key={`${row.at}-${row.path}-${index}`}>
+      <div className="min-w-0 overflow-x-auto">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead>
+            <tr>
               {COLUMNS.map((column) => (
-                <td className="py-2 pr-3" key={column}>
-                  {String(row[column] ?? "")}
-                </td>
+                <th className="py-2 pr-3 font-medium" key={column} scope="col">
+                  {column}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((row, index) => (
+              <tr key={`${row.at}-${row.path}-${index}`}>
+                {COLUMNS.map((column) => (
+                  <td className="py-2 pr-3" key={column}>
+                    {String(row[column] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
