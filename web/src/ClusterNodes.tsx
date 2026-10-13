@@ -743,6 +743,18 @@ export function ClusterNodes() {
           className="border border-ink px-3 py-1 text-left"
           type="button"
           onClick={() => {
+            snapshot.mutate("*");
+          }}
+        >
+          Snapshot every node
+        </button>
+        {snapshot.isSuccess && snapshot.variables === "*" ? (
+          <p>Metadata snapshot started</p>
+        ) : null}
+        <button
+          className="border border-ink px-3 py-1 text-left"
+          type="button"
+          onClick={() => {
             void previewLayout().then(setLayoutPreview);
           }}
         >

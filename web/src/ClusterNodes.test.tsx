@@ -113,6 +113,9 @@ function installFetch(
     if (url === "/api/nodes/n1/metadata-snapshot" && init?.method?.toUpperCase() === "POST") {
       return new Response("", { status: 200 });
     }
+    if (url === "/api/nodes/*/metadata-snapshot" && init?.method?.toUpperCase() === "POST") {
+      return new Response("", { status: 200 });
+    }
     return new Response("no", { status: 500 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1021,6 +1024,27 @@ test("snapshot metadata on n1 shows the notice", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   const posts = fetchMock.mock.calls.filter(
     (call) => String(call[0]) === "/api/nodes/n1/metadata-snapshot",
+  );
+  expect(posts).toHaveLength(1);
+  const init = posts[0]?.[1] as RequestInit | undefined;
+  expect(init?.method).toBe("POST");
+  expect(init?.body ?? null).toBeNull();
+  expect(new Headers(init?.headers).get("x-confirm")).toBeNull();
+});
+
+test("snapshot every node shows the notice", async () => {
+  window.location.hash = "#nodes";
+  const fetchMock = installFetch("admin", () =>
+    json({ nodes: [{ id: "n1", isUp: true, draining: false }] }),
+  );
+  renderApp();
+  expect(await screen.findByText("n1")).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "Snapshot every node" }));
+  expect(await screen.findByText("Metadata snapshot started")).toBeTruthy();
+  expect(window.location.hash).toBe("#nodes");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const posts = fetchMock.mock.calls.filter(
+    (call) => String(call[0]) === "/api/nodes/*/metadata-snapshot",
   );
   expect(posts).toHaveLength(1);
   const init = posts[0]?.[1] as RequestInit | undefined;
