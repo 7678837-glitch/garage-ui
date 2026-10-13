@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { workersNodeId } from "./Nav";
 import { Workers } from "./Workers";
 
 afterEach(() => {
@@ -776,4 +777,18 @@ test("keeps one visible worker row while a later fetch refreshes", async () => {
   });
   expect(screen.getByRole("button", { name: "Details 7" })).toBeTruthy();
   expect(calls).toBe(2);
+});
+
+test("says no node is selected", () => {
+  window.location.hash = "#workers";
+  expect(workersNodeId(window.location.hash)).toBeNull();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <Workers />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("No node is selected.").textContent).toBe("No node is selected.");
 });

@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { BlockErrors } from "./BlockErrors";
+import { blockErrorsNodeId } from "./Nav";
 
 afterEach(() => {
   cleanup();
@@ -361,4 +362,18 @@ test("keeps one visible block error while a later fetch refreshes", async () => 
   });
   expect(screen.getByRole("button", { name: "Retry aa11" })).toBeTruthy();
   expect(calls).toBe(2);
+});
+
+test("says no node is selected", () => {
+  window.location.hash = "#block-errors";
+  expect(blockErrorsNodeId(window.location.hash)).toBeNull();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <BlockErrors />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("No node is selected.").textContent).toBe("No node is selected.");
 });
