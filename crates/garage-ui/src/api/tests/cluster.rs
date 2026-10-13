@@ -1720,3 +1720,29 @@ block_bytes_written 5
         assert_eq!(missing, metrics_notice());
         assert_eq!(mock.auths().len(), calls_before);
     }
+
+    #[tokio::test]
+    async fn layout_stage_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let sent = r#"{"id":"keep-node","capacity":"1800000000000"}"#;
+        let response = exchange(
+            &app,
+            request("POST", "/api/layout/stage", Some(sent), Some(&viewer)),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/layout/stage");
+        assert_eq!(row.target, sent);
+        assert_eq!(row.status, 403);
+    }
