@@ -450,3 +450,94 @@ test("an admin on #workers/* sees both nodes", async () => {
   expect(screen.getByText("block_rc")).toBeTruthy();
   expect(window.location.hash).toBe("#workers/*");
 });
+
+test("starting repair on #workers/* posts tables after typing the star", async () => {
+  window.location.hash = "#workers/*";
+  const repairs: { url: string; method: string; body: string; confirm: string | null }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/api/auth/status")) {
+        return new Response(
+          JSON.stringify({
+            initialized: true,
+            authenticated: true,
+            username: "Ada",
+            role: "admin",
+            can_download: true,
+            can_share: true,
+            garage_version: "v2.4.1",
+            garage_write_blocked: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/healthz")) {
+        return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
+      }
+      if (url === "/api/nodes/%2A/repair" || url === "/api/nodes/*/repair") {
+        repairs.push({
+          url,
+          method,
+          body: typeof init?.body === "string" ? init.body : "",
+          confirm: new Headers(init?.headers).get("x-confirm"),
+        });
+        return new Response("null", { status: 200 });
+      }
+      if (url.includes("/api/nodes/%2A/workers") || url.includes("/api/nodes/*/workers")) {
+        return new Response(
+          JSON.stringify({
+            n1: [
+              {
+                id: 7,
+                name: "block_resync",
+                state: "busy",
+                errors: 1,
+                progress: "1/4",
+              },
+            ],
+            n2: [
+              {
+                id: 8,
+                name: "block_rc",
+                state: "done",
+                errors: 0,
+                progress: "",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 500 });
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("n1")).toBeTruthy();
+  expect(screen.getByText("block_resync")).toBeTruthy();
+  expect(screen.getByText("n2")).toBeTruthy();
+  expect(screen.getByText("block_rc")).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "Repair type" }), {
+    target: { value: "tables" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+  const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  expect(repairs).toEqual([]);
+  fireEvent.change(screen.getByLabelText("Type * to confirm"), { target: { value: "*" } });
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+  await waitFor(() => {
+    expect(repairs).toEqual([
+      {
+        url: "/api/nodes/*/repair",
+        method: "POST",
+        body: JSON.stringify({ repairType: "tables" }),
+        confirm: "yes",
+      },
+    ]);
+  });
+  expect(window.location.hash).toBe("#workers/*");
+});

@@ -291,3 +291,59 @@
             "/v2/ListWorkers?node=n1"
         );
     }
+
+    #[tokio::test]
+    async fn every_node_repair_forwards_star() {
+        let success = json!({
+            "n1": null,
+            "n2": null
+        });
+        let mock = Upstream::start(UpstreamReply::Ok(
+            json!({
+                "success": success,
+                "error": {}
+            })
+            .to_string(),
+        ))
+        .await;
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &mock.url).await;
+        let (admin, _) = login(&app).await;
+        let posted = exchange(
+            &app,
+            with_confirm(request(
+                "POST",
+                "/api/nodes/%2A/repair",
+                Some(r#"{"repairType":"tables"}"#),
+                Some(&admin),
+            )),
+        )
+        .await;
+        assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&posted.body).unwrap(),
+            success
+        );
+        let calls = cluster_calls(&mock, "LaunchRepairOperation");
+        assert_eq!(
+            calls.len(),
+            1,
+            "{:?}",
+            calls
+                .iter()
+                .map(|call| call.line.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(calls[0].line.starts_with("POST "), "{}", calls[0].line);
+        let target = calls[0].line.split_whitespace().nth(1).unwrap_or("");
+        assert_eq!(
+            target,
+            "/v2/LaunchRepairOperation?node=%2A",
+            "{}",
+            calls[0].line
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&calls[0].body).unwrap(),
+            json!({ "repairType": "tables" })
+        );
+    }
