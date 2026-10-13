@@ -6,6 +6,7 @@ import { Objects } from "./Objects";
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   window.location.hash = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
