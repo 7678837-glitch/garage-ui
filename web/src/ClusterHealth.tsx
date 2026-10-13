@@ -14,6 +14,23 @@ const COUNTS = [
 
 type CountKey = (typeof COUNTS)[number][0];
 
+const METRICS = [
+  ["s3Requests", "S3 requests"],
+  ["s3Errors", "S3 errors"],
+  ["blockReadBytes", "Block read bytes"],
+  ["blockWriteBytes", "Block write bytes"],
+] as const;
+
+type MetricKey = (typeof METRICS)[number][0];
+
+type MetricsSummary = {
+  s3Requests: number;
+  s3Errors: number;
+  blockReadBytes: number;
+  blockWriteBytes: number;
+  notice: string | null;
+};
+
 type ClusterHealthReport = {
   status: string;
   knownNodes: number;
@@ -77,6 +94,38 @@ function countOf(row: Record<string, unknown>, key: CountKey): number {
   return value;
 }
 
+function metricOf(row: Record<string, unknown>, key: MetricKey): number {
+  const value = row[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error("Cluster metrics are unavailable");
+  }
+  return value;
+}
+
+function noticeText(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("Cluster metrics are unavailable");
+  }
+  return value;
+}
+
+function parseMetrics(body: unknown): MetricsSummary {
+  if (typeof body !== "object" || body === null) {
+    throw new Error("Cluster metrics are unavailable");
+  }
+  const row = body as Record<string, unknown>;
+  return {
+    s3Requests: metricOf(row, "s3Requests"),
+    s3Errors: metricOf(row, "s3Errors"),
+    blockReadBytes: metricOf(row, "blockReadBytes"),
+    blockWriteBytes: metricOf(row, "blockWriteBytes"),
+    notice: noticeText(row.notice),
+  };
+}
+
 function parseHealth(body: unknown): ClusterHealthReport {
   if (typeof body !== "object" || body === null) {
     throw new Error("Cluster health is unavailable");
@@ -136,7 +185,7 @@ function shownStatistic(field: CountText, display: StatisticDisplay, unset: stri
   return field.text;
 }
 
-// JSON.parse 会把 9007199254740993 收成 9007199254740992。统计数字按响应原文保留。
+// JSON.parse rounds 9007199254740993 to 9007199254740992. Keep statistic digits from the response text.
 function readStatistics(text: string): ClusterStatistics {
   const found = new Map<string, RawStat>();
   let index = 0;
@@ -255,7 +304,7 @@ function endOfDigits(text: string, index: number): number {
   return index;
 }
 
-// 按十进制单位切原文字。不用 Number，避免超过 2^53 的字节被舍入。
+// Split the original digit text on decimal units. Avoid Number so byte counts past 2^53 are not rounded.
 function formatBytes(bytes: string): string {
   const digits = bytes.replace(/^0+(?=\d)/, "");
   for (const [unit, scale] of DECIMAL_UNITS) {
@@ -297,7 +346,7 @@ async function loadStatistics(): Promise<ClusterStatistics> {
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
     noteUnauthenticated(response.status, failure.code);
-    // 统计响应按原文解析，不经过 api()。横幅只认 error.code。
+    // Statistics are parsed from the response text, not through api(). The banner only reads error.code.
     throw new ApiError(failure.message, failure.code);
   }
   return readStatistics(text);
@@ -311,6 +360,10 @@ export function ClusterHealth() {
   const statistics = useQuery({
     queryKey: ["cluster", "statistics"],
     queryFn: loadStatistics,
+  });
+  const metrics = useQuery({
+    queryKey: ["cluster", "metrics"],
+    queryFn: async () => parseMetrics(await api<unknown>("/api/metrics")),
   });
   const healthMessage =
     health.error instanceof Error ? health.error.message : "Cluster health is unavailable";
@@ -384,6 +437,19 @@ export function ClusterHealth() {
           {statistics.data.incompleteAvailInfo ? (
             <p>Available space may be lower because some nodes are disconnected.</p>
           ) : null}
+        </>
+      ) : null}
+      {metrics.isSuccess ? (
+        <>
+          <dl className="grid gap-2 text-sm">
+            {METRICS.map(([key, label]) => (
+              <div key={key}>
+                <dt className="font-medium">{label}</dt>
+                <dd>{metrics.data[key]}</dd>
+              </div>
+            ))}
+          </dl>
+          {metrics.data.notice ? <p>{metrics.data.notice}</p> : null}
         </>
       ) : null}
     </section>

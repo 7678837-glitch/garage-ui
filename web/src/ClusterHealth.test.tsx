@@ -85,11 +85,19 @@ function healthLines(): string[] {
   return [...section.querySelectorAll("p")].map((node) => node.textContent ?? "");
 }
 
+const quietMetrics = {
+  s3Requests: 0,
+  s3Errors: 0,
+  blockReadBytes: 0,
+  blockWriteBytes: 0,
+};
+
 function stubFetch(
   statisticsResponse: RouteResponse,
   health: RouteResponse = json(report),
   role: "admin" | "viewer" = "admin",
   writeBlocked = false,
+  metrics: RouteResponse = json(quietMetrics),
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -108,6 +116,9 @@ function stubFetch(
     }
     if (url === "/api/cluster/statistics") {
       return routeResponse(statisticsResponse);
+    }
+    if (url === "/api/metrics") {
+      return routeResponse(metrics);
     }
     if (url === "/api/cluster/status") {
       return json({ nodes: [] });
@@ -386,6 +397,53 @@ test("shows the statistics code and loads statistics again from Retry statistics
   expect(screen.queryByRole("button", { name: "Retry statistics" })).toBeNull();
   expect(statisticsCalls).toBe(statisticsSeen + 1);
   expect(healthCalls).toBe(healthSeen);
+});
+
+const metricsNotice = "No metrics token or admin token can be used.";
+
+test("shows the four Garage metrics counts on cluster health", async () => {
+  const fetchMock = stubFetch(
+    json(statistics),
+    json(report),
+    "admin",
+    false,
+    json({
+      s3Requests: 29,
+      s3Errors: 17,
+      blockReadBytes: 5,
+      blockWriteBytes: 81,
+    }),
+  );
+  renderApp();
+  expect(await screen.findByText("S3 requests", { selector: "dt" })).toBeTruthy();
+  expect(valueOf("S3 requests")).toBe("29");
+  expect(valueOf("S3 errors")).toBe("17");
+  expect(valueOf("Block read bytes")).toBe("5");
+  expect(valueOf("Block write bytes")).toBe("81");
+  expect(screen.queryByText(metricsNotice)).toBeNull();
+  expect(valueOf("Status")).toBe("degraded");
+  expect(valueOf("Known nodes")).toBe("5");
+  expect(valueOf("Buckets")).toBe("2");
+  expect(fetchMock.mock.calls.some((entry) => entry[0] === "/api/metrics")).toBe(true);
+});
+
+test("shows the metrics notice when no token can be used", async () => {
+  stubFetch(
+    json(statistics),
+    json(report),
+    "admin",
+    false,
+    json({ ...quietMetrics, notice: metricsNotice }),
+  );
+  renderApp();
+  const note = await screen.findByText(metricsNotice);
+  expect(note.tagName).toBe("P");
+  expect(note.getAttribute("role")).toBeNull();
+  expect(valueOf("S3 requests")).toBe("0");
+  expect(valueOf("S3 errors")).toBe("0");
+  expect(valueOf("Block read bytes")).toBe("0");
+  expect(valueOf("Block write bytes")).toBe("0");
+  expect(valueOf("Status")).toBe("degraded");
 });
 
 test("shows a statistics failure without an empty code line", async () => {
