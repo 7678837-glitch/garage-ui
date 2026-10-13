@@ -3092,3 +3092,282 @@
         file.read_to_string(&mut text).unwrap();
         assert_eq!(text, "two-body");
     }
+
+    #[tokio::test]
+    async fn share_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/share",
+                Some(
+                    &json!({ "ttl_seconds": 3600, "bucket": "bkt-1", "key": "a.txt" }).to_string(),
+                ),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/share");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 403);
+    }
+
+    #[tokio::test]
+    async fn share_rate_limit_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let body = json!({ "ttl_seconds": 3600, "bucket": "bkt-1", "key": "a.txt" }).to_string();
+        for _ in 0..10 {
+            let response = exchange(
+                &app,
+                request("POST", "/api/share", Some(&body), Some(&admin)),
+            )
+            .await;
+            assert_eq!(response.status, StatusCode::NOT_IMPLEMENTED, "{}", response.body);
+            assert_eq!(code_of(&response.body), "share_unavailable");
+        }
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let blocked = exchange(
+            &app,
+            request("POST", "/api/share", Some(&body), Some(&admin)),
+        )
+        .await;
+        assert_eq!(blocked.status, StatusCode::TOO_MANY_REQUESTS, "{}", blocked.body);
+        assert_eq!(code_of(&blocked.body), "rate_limited");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "rate_limited");
+        assert_eq!(row.reason, "rate_limited");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/share");
+        assert_eq!(row.target, "");
+        assert_eq!(row.status, 429);
+    }
+
+    #[tokio::test]
+    async fn share_success_is_audited() {
+        let secret = "project-secret-value";
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("PUBLIC_S3_URL", "http://127.0.0.1:3901"),
+                ("S3_REGION", "garage"),
+                ("S3_ACCESS_KEY_ID", "PROJECT"),
+                ("S3_SECRET_ACCESS_KEY", secret),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/share",
+                Some(
+                    &json!({ "ttl_seconds": 3600, "bucket": "bkt-1", "key": "a.txt" }).to_string(),
+                ),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "success");
+        assert_eq!(row.reason, "ok");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/share");
+        assert_eq!(row.target, "bkt-1\na.txt\n3600");
+        assert_eq!(row.status, 200);
+        assert!(!audit_text(row).contains(secret));
+    }
+
+    #[tokio::test]
+    async fn object_put_missing_length_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, "http://127.0.0.1:9", true).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                None,
+                &admin,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "length_required",
+            "Content-Length is required",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "length_required");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 400);
+        assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn object_put_too_large_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, "http://127.0.0.1:9", true).await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            put_bytes(
+                "/api/buckets/bkt-1/objects/photos/a.txt",
+                b"hello",
+                Some("9999999999"),
+                &admin,
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "Upload is too large",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "payload_too_large");
+        assert_eq!(row.method, "PUT");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.target, "bkt-1/photos/a.txt");
+        assert_eq!(row.status, 413);
+        assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_denial_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(&json!({ "keys": ["a.txt"] }).to_string()),
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_error(&response, StatusCode::FORBIDDEN, "forbidden", "Not allowed");
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Bea");
+        assert_eq!(row.result, "denied");
+        assert_eq!(row.reason, "forbidden");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects:delete");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 403);
+        assert!(!audit_text(row).contains("a.txt"));
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_invalid_keys_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some("{}"),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "invalid_keys",
+            "keys must be an array of strings",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "invalid_keys");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects:delete");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+    }
+
+    #[tokio::test]
+    async fn object_delete_many_keys_required_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        let (admin, _) = login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let response = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/objects:delete",
+                Some(r#"{"keys":[]}"#),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_error(
+            &response,
+            StatusCode::BAD_REQUEST,
+            "keys_required",
+            "At least one key is required",
+        );
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        let row = &rows[0];
+        assert_eq!(row.username, "Ada");
+        assert_eq!(row.result, "error");
+        assert_eq!(row.reason, "keys_required");
+        assert_eq!(row.method, "POST");
+        assert_eq!(row.path, "/api/buckets/bkt-1/objects:delete");
+        assert_eq!(row.target, "bkt-1");
+        assert_eq!(row.status, 400);
+    }
