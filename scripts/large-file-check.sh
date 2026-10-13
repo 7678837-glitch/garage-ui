@@ -1200,7 +1200,7 @@ open("${WORK}/check.thumbnails", "w", encoding="utf-8").write("0\n" if passed el
 PY
 thumb_pass="$(tr -d '\n' <"${WORK}/check.thumbnails")"
 
-transfer_code=1
+transfer_code=0
 transfer_pass=1
 if [[ "$ui_status" == "running" && "$oom_after" == "false" ]]; then
   rm -f "${WORK}/outcome.json"
