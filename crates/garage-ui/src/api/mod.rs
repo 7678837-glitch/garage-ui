@@ -28,6 +28,7 @@ mod keys;
 mod objects;
 mod admin_tokens;
 mod cluster;
+mod workers;
 pub(crate) use admin_tokens::create_admin_token;
 pub(crate) use admin_tokens::current_admin_token;
 pub(crate) use admin_tokens::delete_admin_token;
@@ -133,6 +134,7 @@ pub fn routes(app: App) -> Router<App> {
         .merge(keys::routes())
         .merge(admin_tokens::routes())
         .merge(cluster::routes())
+        .merge(workers::routes())
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
         .layer(DefaultBodyLimit::max(json_limit));
     let upload = Router::new()
@@ -356,4 +358,5 @@ mod tests {
     include!("tests/keys.rs");
     include!("tests/admin_tokens.rs");
     include!("tests/cluster.rs");
+    include!("tests/workers.rs");
 }
