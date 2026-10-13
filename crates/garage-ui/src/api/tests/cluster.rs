@@ -1192,3 +1192,261 @@
             history.len()
         );
     }
+
+    const METRICS_TOKEN: &str = "metrics-token-value1";
+    const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum PromAuth {
+        Metrics,
+        Admin,
+        Other,
+    }
+
+    struct PromMock {
+        url: String,
+        phase: Arc<AtomicUsize>,
+        auths: Arc<Mutex<Vec<PromAuth>>>,
+        lines: Arc<Mutex<Vec<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for PromMock {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl PromMock {
+        async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let phase = Arc::new(AtomicUsize::new(0));
+            let auths = Arc::new(Mutex::new(Vec::new()));
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let phase_task = Arc::clone(&phase);
+            let auths_task = Arc::clone(&auths);
+            let lines_task = Arc::clone(&lines);
+            let task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let phase = Arc::clone(&phase_task);
+                    let auths = Arc::clone(&auths_task);
+                    let lines = Arc::clone(&lines_task);
+                    tokio::spawn(async move {
+                        let Ok(header) = read_prom_header(&mut socket).await else {
+                            return;
+                        };
+                        let line = header.lines().next().unwrap_or("").to_string();
+                        let auth = prom_auth(&header);
+                        lines.lock().expect("lines").push(line);
+                        auths.lock().expect("auths").push(auth);
+                        let (status, content_type, body) =
+                            prom_reply(phase.load(Ordering::SeqCst), auth);
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                        let _ = socket.shutdown().await;
+                    });
+                }
+            });
+            Self {
+                url: format!("http://127.0.0.1:{port}"),
+                phase,
+                auths,
+                lines,
+                task,
+            }
+        }
+
+        fn set_phase(&self, phase: usize) {
+            self.phase.store(phase, Ordering::SeqCst);
+        }
+
+        fn auths(&self) -> Vec<PromAuth> {
+            self.auths.lock().expect("auths").clone()
+        }
+
+        fn targets(&self) -> Vec<String> {
+            self.lines
+                .lock()
+                .expect("lines")
+                .iter()
+                .map(|line| line.split_whitespace().nth(1).unwrap_or("").to_string())
+                .collect()
+        }
+    }
+
+    async fn read_prom_header(socket: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+        let mut buf = Vec::new();
+        let mut tmp = [0_u8; 2048];
+        loop {
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..read]);
+            if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 65536 {
+                break;
+            }
+        }
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    fn prom_auth(header: &str) -> PromAuth {
+        for line in header.lines() {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            if !name.eq_ignore_ascii_case("authorization") {
+                continue;
+            }
+            let token = value.trim().strip_prefix("Bearer ").unwrap_or(value.trim());
+            if token == METRICS_TOKEN {
+                return PromAuth::Metrics;
+            }
+            if token == TOKEN {
+                return PromAuth::Admin;
+            }
+            return PromAuth::Other;
+        }
+        PromAuth::Other
+    }
+
+    fn prom_reply(phase: usize, auth: PromAuth) -> (String, &'static str, String) {
+        let denied = (
+            "401 Unauthorized".to_string(),
+            "application/json",
+            r#"{"error":"denied"}"#.to_string(),
+        );
+        match (phase, auth) {
+            (0, PromAuth::Metrics) => ("200 OK".to_string(), "text/plain", String::new()),
+            (1, PromAuth::Metrics) => (
+                "200 OK".to_string(),
+                "text/plain",
+                "\
+api_s3_request_counter{api_endpoint=\"GetObject\"} 15
+api_s3_request_counter{api_endpoint=\"PutObject\"} 14
+api_s3_error_counter{api_endpoint=\"ListBuckets\"} 17
+block_bytes_written 81
+"
+                .to_string(),
+            ),
+            (2, PromAuth::Admin) => (
+                "200 OK".to_string(),
+                "text/plain",
+                "\
+api_s3_request_counter 3
+api_s3_error_counter 4
+block_bytes_written 5
+"
+                .to_string(),
+            ),
+            _ => denied,
+        }
+    }
+
+    async fn read_metrics(app: &App, session: &Session) -> Value {
+        let response = exchange(app, request("GET", "/api/metrics", None, Some(session))).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert!(!response.body.contains(TOKEN), "{}", response.body);
+        assert!(!response.body.contains(METRICS_TOKEN), "{}", response.body);
+        serde_json::from_str(&response.body).unwrap()
+    }
+
+    fn metrics_notice() -> Value {
+        json!({
+            "s3Requests": 0,
+            "s3Errors": 0,
+            "blockReadBytes": 0,
+            "blockWriteBytes": 0,
+            "notice": METRICS_NOTICE,
+        })
+    }
+
+    #[tokio::test]
+    async fn metrics_summary_tries_metrics_token_then_admin_token() {
+        let mock = PromMock::start().await;
+        let dir = crate::util::temp_dir();
+        let app = state::test_app_with(
+            &dir,
+            &[
+                ("GARAGE_ADMIN_URL", &mock.url),
+                ("GARAGE_ADMIN_TOKEN", TOKEN),
+                ("GARAGE_METRICS_TOKEN", METRICS_TOKEN),
+            ],
+            test_quota(),
+        )
+        .await;
+        let (admin, _) = login(&app).await;
+
+        let empty = read_metrics(&app, &admin).await;
+        assert_eq!(
+            empty,
+            json!({
+                "s3Requests": 0,
+                "s3Errors": 0,
+                "blockReadBytes": 0,
+                "blockWriteBytes": 0,
+            })
+        );
+        assert_eq!(mock.auths(), vec![PromAuth::Metrics]);
+        assert_eq!(mock.targets(), vec!["/metrics"]);
+
+        mock.set_phase(1);
+        let parsed = read_metrics(&app, &admin).await;
+        assert_eq!(
+            parsed,
+            json!({
+                "s3Requests": 29,
+                "s3Errors": 17,
+                "blockReadBytes": 0,
+                "blockWriteBytes": 81,
+            })
+        );
+        assert_eq!(mock.auths(), vec![PromAuth::Metrics, PromAuth::Metrics]);
+        assert_eq!(mock.targets(), vec!["/metrics", "/metrics"]);
+
+        mock.set_phase(2);
+        let fallback = read_metrics(&app, &admin).await;
+        assert_eq!(
+            fallback,
+            json!({
+                "s3Requests": 3,
+                "s3Errors": 4,
+                "blockReadBytes": 0,
+                "blockWriteBytes": 5,
+            })
+        );
+        assert_eq!(
+            mock.auths(),
+            vec![
+                PromAuth::Metrics,
+                PromAuth::Metrics,
+                PromAuth::Metrics,
+                PromAuth::Admin,
+            ]
+        );
+
+        mock.set_phase(3);
+        let rejected = read_metrics(&app, &admin).await;
+        assert_eq!(rejected, metrics_notice());
+        assert_eq!(&mock.auths()[4..], &[PromAuth::Metrics, PromAuth::Admin]);
+
+        let bare_dir = crate::util::temp_dir();
+        let bare = state::test_app_with(
+            &bare_dir,
+            &[("GARAGE_ADMIN_URL", &mock.url)],
+            test_quota(),
+        )
+        .await;
+        let (bare_admin, _) = login(&bare).await;
+        let calls_before = mock.auths().len();
+        let missing = read_metrics(&bare, &bare_admin).await;
+        assert_eq!(missing, metrics_notice());
+        assert_eq!(mock.auths().len(), calls_before);
+    }

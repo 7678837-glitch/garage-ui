@@ -79,6 +79,110 @@ pub(crate) async fn node_statistics(
     .await
 }
 
+const METRICS_NOTICE: &str = "No metrics token or admin token can be used.";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MetricsSummary {
+    s3_requests: u64,
+    s3_errors: u64,
+    block_read_bytes: u64,
+    block_write_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: Option<&'static str>,
+}
+
+pub(crate) async fn cluster_metrics(
+    State(app): State<App>,
+    Authed(current): Authed,
+) -> Result<Response, ApiError> {
+    require(&current.user, Op::ViewMetrics)?;
+    Ok(Json(load_metrics_summary(&app).await?).into_response())
+}
+
+async fn load_metrics_summary(app: &App) -> Result<MetricsSummary, ApiError> {
+    let tokens = metrics_bearers(app);
+    if tokens.is_empty() {
+        return Ok(notice_summary());
+    }
+    let Some(base) = app.settings.garage_admin_url.as_deref() else {
+        return Err(ApiError::unavailable(
+            "garage_unavailable",
+            "Garage admin API is not configured",
+        ));
+    };
+    let url = crate::config::join(base, "metrics");
+    for token in &tokens {
+        if let Some(metrics) = fetch_garage_metrics(&app.http, &url, token).await? {
+            return Ok(summary_from(metrics, None));
+        }
+    }
+    Ok(notice_summary())
+}
+
+fn metrics_bearers(app: &App) -> Vec<String> {
+    let mut tokens = Vec::new();
+    if let Some(token) = app.settings.metrics_token.clone() {
+        tokens.push(token);
+    }
+    if let Some(token) = app.settings.garage_admin_token.clone()
+        && !tokens.iter().any(|have| util::ct_eq(have, &token))
+    {
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn notice_summary() -> MetricsSummary {
+    summary_from(
+        crate::prometheus::parse_garage_metrics(""),
+        Some(METRICS_NOTICE),
+    )
+}
+
+fn summary_from(
+    metrics: crate::prometheus::GarageMetrics,
+    notice: Option<&'static str>,
+) -> MetricsSummary {
+    MetricsSummary {
+        s3_requests: metrics.s3_requests,
+        s3_errors: metrics.s3_errors,
+        block_read_bytes: metrics.block_read_bytes,
+        block_write_bytes: metrics.block_write_bytes,
+        notice,
+    }
+}
+
+fn garage_metrics_down() -> ApiError {
+    ApiError::unavailable(
+        "garage_unavailable",
+        "Garage admin API is not reachable",
+    )
+}
+
+async fn fetch_garage_metrics(
+    http: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> Result<Option<crate::prometheus::GarageMetrics>, ApiError> {
+    let response = match http.get(url).bearer_auth(token).send().await {
+        Ok(response) => response,
+        Err(_) => return Err(garage_metrics_down()),
+    };
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let _ = response.bytes().await;
+        return Ok(None);
+    }
+    if !status.is_success() {
+        let _ = response.bytes().await;
+        return Err(garage_metrics_down());
+    }
+    let bytes = response.bytes().await.map_err(|_| garage_metrics_down())?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(Some(crate::prometheus::parse_garage_metrics(&text)))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkerVariableAssignment {
@@ -856,6 +960,7 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/cluster/health", get(cluster_health))
         .route("/api/cluster/status", get(cluster_status))
         .route("/api/cluster/statistics", get(cluster_statistics))
+        .route("/api/metrics", get(cluster_metrics))
         .route("/api/nodes/{id}/statistics", get(node_statistics))
         .route(
             "/api/nodes/{id}/worker-variables",
