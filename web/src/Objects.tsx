@@ -1257,7 +1257,7 @@ export function Objects({
           <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
           <p>{fill(copy("ui.etag"), { etag: preview.etag })}</p>
           <p>
-            {copy("ui.last.modified")}<InstantText value={preview.lastModified} />
+            {copy("ui.last.modified")} <InstantText value={preview.lastModified} />
           </p>
           {kind !== null ? (
             <InlineBody
