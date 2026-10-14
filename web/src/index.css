@@ -76,6 +76,7 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-table :is(th, td) { padding: 10px 14px; border-bottom: 1px solid var(--separator); vertical-align: middle; }
 .ui-table :is(th, td) { min-width: 10ch; }
 .ui-table td > div:not(.ui-actions) > p { white-space: nowrap; }
+.ui-table td > .ui-actions { flex-wrap: nowrap; }
 .ui-table .ui-input { min-width: 14ch; }
 .ui-table .ui-disclosure { display: inline-block; vertical-align: middle; }
 .ui-table .ui-disclosure > summary { padding: var(--space-small) var(--space-medium); white-space: nowrap; }
