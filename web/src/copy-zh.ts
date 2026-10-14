@@ -34,6 +34,7 @@ export const zh = {
   "common.idCopyFailed": "无法复制 ID。请选择完整 ID 并手动复制。",
   "shell.status": "系统状态",
 
+  "common.close": "关闭",
   "nav.close": "关闭导航",
   "nav.skip": "跳转到内容",
   "settings.appearance": "外观",

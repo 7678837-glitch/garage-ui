@@ -1,3 +1,4 @@
+import { GarageTheme } from "./theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe, { type AxeResults } from "axe-core";
@@ -140,7 +141,7 @@ function renderSignedIn() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <App />
+      <GarageTheme><App /></GarageTheme>
     </QueryClientProvider>,
   );
 }

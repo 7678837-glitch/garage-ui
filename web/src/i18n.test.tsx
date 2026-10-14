@@ -1,3 +1,4 @@
+import { GarageTheme } from "./theme";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { Breadcrumb } from "./App";
@@ -53,12 +54,13 @@ test("new page labels translate from exact English phrases", () => {
 test("switching to chinese replaces the language label", () => {
   localStorage.clear();
   render(
-    <LanguageProvider>
+    <GarageTheme><LanguageProvider>
       <LanguageChooser />
-    </LanguageProvider>,
+    </LanguageProvider></GarageTheme>,
   );
   expect(screen.getByLabelText("Language")).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh-CN" } });
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Language" }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: "Chinese" }));
   expect(screen.getByLabelText("语言")).toBeTruthy();
   expect(screen.queryByLabelText("Language")).toBeNull();
   expect(screen.queryByText("settings.language")).toBeNull();

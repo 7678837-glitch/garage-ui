@@ -1,3 +1,4 @@
+import { GarageTheme } from "./theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -18,7 +19,7 @@ function renderApp() {
   });
   render(
     <QueryClientProvider client={client}>
-      <App />
+      <GarageTheme><App /></GarageTheme>
     </QueryClientProvider>,
   );
 }
@@ -118,7 +119,7 @@ test("a bucket, a key, and a node each open on the detail tab in the address", a
   cleanup();
   window.location.hash = "#buckets/bkt-1/photos/2024/";
   renderApp();
-  expect((await screen.findByText("Ada · admin")).textContent).toBe("Ada · admin");
+  expect(await screen.findByRole("button", { name: "Ada · admin" })).toBeTruthy();
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/2024/");
   expect(crumb().getByText("Objects", { selector: "[aria-current='page']" }).textContent).toBe(
     "Objects",
@@ -190,7 +191,7 @@ test("a bucket, a key, and a node each open on the detail tab in the address", a
 
 function renderStorage(resource: "bucket" | "key") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}>{resource === "bucket" ? <Buckets canManage /> : <Keys canManage />}</QueryClientProvider>);
+  render(<QueryClientProvider client={client}><GarageTheme>{resource === "bucket" ? <Buckets canManage /> : <Keys canManage />}</GarageTheme></QueryClientProvider>);
 }
 
 test.each(["id", "accessKeyId"])("cold key settings load the addressed %s response beyond the first list page", async (idField) => {

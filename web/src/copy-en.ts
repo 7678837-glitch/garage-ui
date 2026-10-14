@@ -32,6 +32,7 @@ export const en = {
   "common.idCopyFailed": "Could not copy ID. Select the full ID and copy it manually.",
   "shell.status": "System status",
 
+  "common.close": "Close",
   "nav.close": "Close navigation",
   "nav.skip": "Skip to content",
   "settings.appearance": "Appearance",

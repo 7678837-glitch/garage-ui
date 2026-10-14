@@ -1,3 +1,4 @@
+import { Select } from "@radix-ui/themes";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { en, type CopyKey } from "./copy-en";
 import { zh } from "./copy-zh";
@@ -244,17 +245,13 @@ export function LanguageChooser() {
   return (
     <label className="ui-field">
       {t("settings.language")}
-      <select
-        className="ui-input"
-        value={language}
-        onChange={(event) => {
-          const next = event.target.value === "zh-CN" ? "zh-CN" : "en";
-          setLanguage(next);
-        }}
-      >
-        <option value="en">{t("language.english")}</option>
-        <option value="zh-CN">{t("language.chinese")}</option>
-      </select>
+      <Select.Root size="2" value={language} onValueChange={(next) => setLanguage(next === "zh-CN" ? "zh-CN" : "en")}>
+        <Select.Trigger aria-label={t("settings.language")} />
+        <Select.Content>
+          <Select.Item value="en">{t("language.english")}</Select.Item>
+          <Select.Item value="zh-CN">{t("language.chinese")}</Select.Item>
+        </Select.Content>
+      </Select.Root>
     </label>
   );
 }

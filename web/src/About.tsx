@@ -1,3 +1,4 @@
+import { Button, Heading } from "@radix-ui/themes";
 import { useQuery } from "@tanstack/react-query";
 import { captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -116,8 +117,8 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
   });
   const failure = capabilities.error ? failureOf(capabilities.error) : null;
   return (
-    <section className="ui-panel" aria-label={copy("ui.about")}>
-      <h2 className="text-lg font-semibold">{copy("ui.about")}</h2>
+    <section className="ui-settings-section" aria-label={copy("ui.about")}>
+      <header><Heading as="h3" size="3">{copy("ui.about")}</Heading></header><div className="ui-settings-controls">
       <p>{garageLine(garageVersion)}</p>
       {failure && !isGarageDown(failure) ? (
         <>
@@ -125,14 +126,13 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
             {failure.message}
             {failure.code ? ` ${failure.code}` : ""}
           </p>
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void capabilities.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {!failure && capabilities.data ? (
@@ -142,6 +142,6 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
           <p>{fill(copy("ui.list.keys.info"), { listKeysInfo: capabilities.data.listKeysInfo })}</p>
         </>
       ) : null}
-    </section>
+    </div></section>
   );
 }

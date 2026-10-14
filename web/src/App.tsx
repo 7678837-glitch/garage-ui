@@ -1,3 +1,4 @@
+import { Button, Callout, Card, Heading, Popover, TextField } from "@radix-ui/themes";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   useMutation,
@@ -34,7 +35,7 @@ import {
   useLocationHash,
   type SectionId,
 } from "./Nav";
-import { ThemeChooser, useThemeSync } from "./theme";
+import { ThemeChooser } from "./theme";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
 import { Workers } from "./Workers";
@@ -69,11 +70,11 @@ function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean
   return wide ? <div className="console-root">{children}</div> : (
     <main className="auth-shell" id="main-content">
       <div className="auth-preferences"><ThemeChooser /></div>
-      <section className="auth-card">
+      <Card className="auth-card" size="3">
         <h1 className="console-wordmark"><img src="./brand/garage-ui.svg" width="32" height="32" alt="" />Garage UI</h1>
         {children}
         <LanguageChooser />
-      </section>
+      </Card>
     </main>
   );
 }
@@ -85,15 +86,14 @@ function Field({
   registration,
 }: {
   label: string;
-  type: string;
+  type: "text" | "password";
   autoComplete: string;
   registration: UseFormRegisterReturn;
 }) {
   return (
     <label className="ui-field">
       <span className="text-sm">{label}</span>
-      <input
-        className="ui-input"
+      <TextField.Root size="2"
         type={type}
         autoComplete={autoComplete}
         {...registration}
@@ -142,13 +142,12 @@ function SetupForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={setup.error instanceof Error ? setup.error.message : undefined} />
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2"
         type="submit"
         disabled={setup.isPending}
       >
         {setup.isPending ? copy("ui.creating.administrator") : copy("ui.create.administrator")}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -186,13 +185,12 @@ function LoginForm() {
       />
       <ErrorText message={errors.password?.message} />
       <ErrorText message={login.error instanceof Error ? login.error.message : undefined} />
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2"
         type="submit"
         disabled={login.isPending}
       >
         {login.isPending ? t("auth.loggingIn") : t("auth.logIn")}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -357,9 +355,8 @@ function GarageBanner() {
   }
   return (
     <>
-      <p role="alert">{copy("ui.garage.admin.api.is.not.reachable")}</p>
-      <button
-        className="ui-button ui-button-primary"
+      <Callout.Root color="red"><Callout.Text role="alert">{copy("ui.garage.admin.api.is.not.reachable")}</Callout.Text></Callout.Root>
+      <Button size="2"
         type="button"
         onClick={() => {
           void client.refetchQueries({
@@ -368,7 +365,7 @@ function GarageBanner() {
           });
         }}
       >
-        {copy("ui.retry")}</button>
+        {copy("ui.retry")}</Button>
     </>
   );
 }
@@ -383,11 +380,11 @@ function Home({ status }: { status: SessionStatus }) {
   const { hash, section, select } = useHashSection(status.role ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
-  const account = useRef<HTMLDetailsElement>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
   const toggleMenu = useCallback(() => setMenuOpen((open) => !open), []);
   const closeHeaderOverlays = useCallback(() => {
     setMenuOpen(false);
-    account.current?.removeAttribute("open");
+    setAccountOpen(false);
   }, []);
   const form = useForm<PasswordChange>({
     resolver: zodResolver(passwordChange),
@@ -434,36 +431,40 @@ function Home({ status }: { status: SessionStatus }) {
       <Nav role={status.role ?? ""} section={section} open={menuOpen} onToggle={toggleMenu} onClose={closeHeaderOverlays} menuTrigger={menuTrigger} onSelect={select} />
       <div className="console-workspace">
         <header className="console-topbar">
-          <button ref={menuTrigger} className="ui-button console-menu" type="button" aria-expanded={menuOpen} aria-controls="console-navigation" onClick={toggleMenu}>{t("nav.menu")}</button>
+          <Button ref={menuTrigger} size="2" variant="soft" color="gray" className="console-menu" type="button" aria-expanded={menuOpen} aria-controls="console-navigation" onClick={toggleMenu}>{t("nav.menu")}</Button>
           <MobileContext section={section} hash={hash} onSelect={select} />
           <Breadcrumb section={section} hash={hash} onSelect={select} />
-          <details ref={account} className="console-session console-header-disclosure">
-            <summary aria-label={`${status.username} · ${status.role}`}><span className="console-account-name">{status.username}</span></summary>
-            <div className="console-header-panel">
+          <Popover.Root open={accountOpen} onOpenChange={setAccountOpen}>
+            <Popover.Trigger>
+              <Button size="2" variant="ghost" color="gray" className="console-session console-account-trigger" aria-label={`${status.username} · ${status.role}`}>
+                <span className="console-account-name">{status.username}</span><span aria-hidden="true">▾</span>
+              </Button>
+            </Popover.Trigger>
+            <Popover.Content size="2" align="end" maxWidth="320px" className="console-account-panel" aria-label={`${status.username} · ${status.role}`}>
               <p className="console-account-identity">{status.username} · {status.role}</p>
               <div className="console-health">
                 <p className="ui-muted">{t("shell.status")}</p>
                 <p className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</p>
                 <p>{garageLine(status.garage_version)}</p>
               </div>
-              <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button>
-            </div>
-          </details>
+              <Button size="2" variant="soft" color="gray" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</Button>
+            </Popover.Content>
+          </Popover.Root>
         </header>
         <main id="main-content" tabIndex={-1} className={section === "settings" ? "console-content console-settings" : "console-content"}>
           <GarageBanner />
-          {section === "overview" && status.garage_write_blocked === true ? <p role="alert" className="ui-alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p> : null}
-          {section === "overview" && status.tls_insecure === true ? <p role="alert" className="ui-alert">{copy("ui.tls.certificate.verification.is.off")}</p> : null}
+          {section === "overview" && status.garage_write_blocked === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</Callout.Text></Callout.Root> : null}
+          {section === "overview" && status.tls_insecure === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.tls.certificate.verification.is.off")}</Callout.Text></Callout.Root> : null}
           {section === "overview" ? admin ? <ClusterHealth /> : (
             <section className="ui-page">
               <header className="ui-page-header"><h2>{t("nav.overview")}</h2></header>
               <div className="ui-panel">
                 <div className="ui-actions">
                   {(["buckets", "keys"] as const).map((id) => (
-                    <a key={id} href={`#${id}`} className="ui-button" onClick={(event) => {
+                    <Button key={id} size="2" variant="soft" color="gray" asChild><a href={`#${id}`} onClick={(event) => {
                       event.preventDefault();
                       select(id);
-                    }}>{t(sectionCopyKey(id))}</a>
+                    }}>{t(sectionCopyKey(id))}</a></Button>
                   ))}
                 </div>
               </div>
@@ -475,17 +476,16 @@ function Home({ status }: { status: SessionStatus }) {
         {section === "audit" && admin ? <Audit /> : null}
         {section === "settings" ? (
           <div className="ui-page">
-            <header className="ui-page-header"><h2>{t("nav.settings")}</h2></header>
-            <section className="ui-panel"><h3>{t("settings.appearance")}</h3><ThemeChooser /><LanguageChooser /></section>
-            <section className="ui-panel"><h3>{copy("ui.change.password")}</h3>
+            <header className="ui-page-header"><Heading size="5">{t("nav.settings")}</Heading></header>
+            <section className="ui-settings-section"><header><Heading as="h3" size="3">{t("settings.appearance")}</Heading></header><div className="ui-settings-controls"><ThemeChooser /><LanguageChooser /></div></section>
+            <section className="ui-settings-section"><header><Heading as="h3" size="3">{copy("ui.change.password")}</Heading></header><div className="ui-settings-controls">
             <form
               className="ui-form"
               onSubmit={form.handleSubmit((input) => change.mutate(input))}
             >
               <label className="ui-field">
                 <span className="text-sm">{copy("ui.current.password")}</span>
-                <input
-                  className="ui-input"
+                <TextField.Root size="2"
                   type="password"
                   autoComplete="current-password"
                   {...form.register("current_password")}
@@ -494,8 +494,7 @@ function Home({ status }: { status: SessionStatus }) {
               <ErrorText message={errors.current_password?.message} />
               <label className="ui-field">
                 <span className="text-sm">{copy("ui.new.password")}</span>
-                <input
-                  className="ui-input"
+                <TextField.Root size="2"
                   type="password"
                   autoComplete="new-password"
                   {...form.register("new_password")}
@@ -506,14 +505,13 @@ function Home({ status }: { status: SessionStatus }) {
                 message={change.error instanceof Error ? change.error.message : undefined}
               />
               {passwordStatus ? <p>{passwordStatus}</p> : null}
-              <button
-                className="ui-button ui-button-primary"
+              <Button size="2"
                 type="submit"
                 disabled={change.isPending}
               >
-                {copy("ui.change.password")}</button>
+                {copy("ui.change.password")}</Button>
             </form>
-            </section>
+            </div></section>
             <About garageVersion={status.garage_version} />
           </div>
         ) : null}
@@ -548,7 +546,6 @@ function clearSignedIn(client: QueryClient): void {
 }
 
 export function App() {
-  useThemeSync();
   const client = useQueryClient();
   // A child request can return before the effect runs. Attach the hook before useQuery, and detach it on unmount.
   bindUnauthenticated(() => clearSignedIn(client));

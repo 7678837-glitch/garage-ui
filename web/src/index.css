@@ -116,7 +116,8 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
 .console-menu, .console-mobile-brand { display: none; }
 .console-skip { position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%); padding: 8px 12px; border-radius: var(--control-radius); background: var(--surface); }
 .console-skip:focus { transform: none; }
-.console-drawer { position: fixed; inset: 0 auto 0 0; margin: 0; height: 100dvh; max-height: 100dvh; width: min(288px, 85vw); border: 0; border-right: 1px solid var(--separator); padding: 12px; background: var(--surface); color: var(--ink); }
+.console-drawer.rt-DialogContent { position: fixed; inset: 0 auto 0 0; margin: 0; height: 100dvh; max-height: 100dvh; width: min(288px, 85vw); border-radius: 0; padding: 12px; overflow-y: auto; }
+.console-drawer-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .console-drawer-close { margin-left: 12px; }
 .auth-shell { min-height: 100dvh; display: grid; place-items: center; padding: 72px 20px 32px; }
 .auth-preferences { position: absolute; right: 20px; top: 20px; }
@@ -155,18 +156,15 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
 .console-nav-group-label { padding: 16px 12px 4px; color: var(--muted); font-size: 12px; }
 .console-nav-group:last-child { margin-top: 24px; }
 .console-breadcrumb { flex: 1 1 0; overflow-wrap: anywhere; }
-.console-header-disclosure { position: relative; font-size: 12px; min-width: 0; max-width: 40%; }
-.console-header-disclosure > summary { cursor: pointer; padding: 8px; min-width: 0; min-height: var(--touch-control-height); display: flex; align-items: center; gap: 8px; color: var(--muted); }
-.console-header-disclosure > summary::after { content: "▾"; flex-shrink: 0; }
-.console-header-disclosure[open] > summary::after { content: "▴"; }
-.console-header-panel { position: absolute; top: 100%; right: 0; z-index: 20; display: grid; gap: 12px; padding: 16px; width: max-content; max-width: min(320px, calc(100vw - 32px)); overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--separator); border-radius: var(--control-radius); box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
+
+.console-account-panel { display: grid; gap: 12px; width: min(320px, calc(100vw - 32px)); overflow-wrap: anywhere; }
 @media (max-width: 899px) {
   .console-topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); padding: 8px 16px; gap: 4px 8px; }
   .console-menu { display: inline-flex; grid-column: 1; grid-row: 1; min-height: var(--touch-control-height); }
   .console-mobile-brand { display: flex; align-items: center; gap: 6px; grid-column: 2; grid-row: 1; min-width: 0; font-weight: 600; font-size: 13px; white-space: nowrap; }
   .console-mobile-brand img { flex-shrink: 0; }
   .console-session { grid-column: 3; grid-row: 1; width: 100%; max-width: none; margin: 0; }
-  .console-session > summary { justify-content: flex-end; }
+  .console-account-trigger { justify-content: flex-end; }
   .console-breadcrumb { grid-column: 1 / -1; grid-row: 2; padding-block: 4px; }
 
   .console-content { padding: 16px 16px 32px; gap: 24px; }
@@ -330,7 +328,8 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
   font-size: 14px;
   line-height: 1.5;
 }
-.ui-detail-tabs { min-width: 0; overflow-x: auto; }
+.ui-page > .rt-TabsRoot { min-width: 0; max-width: 100%; }
+.ui-detail-tabs { min-width: 0; max-width: 100%; overflow-x: auto; }
 .ui-detail-tabs .rt-TabsTrigger { flex-shrink: 0; text-decoration: none; }
 .ui-confirm-name, .ui-confirm-scope { margin-top: 16px; }
 .rt-Button[aria-disabled="true"] { cursor: default; opacity: .55; }
@@ -349,3 +348,10 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
 
 /* Portal forms need their own width container for responsive settings rows. */
 .rt-DialogContent { container-type: inline-size; max-height: calc(100dvh - 48px); overflow: auto; }
+
+.console-sidebar[hidden] { display: none; }
+.console-account-trigger { min-width: 0; max-width: 40%; }
+.console-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; font-size: 13px; }
+@media (min-width: 640px) { .console-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1200px) { .console-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

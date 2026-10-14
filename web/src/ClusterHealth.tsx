@@ -1,3 +1,4 @@
+import { Button, Card, Heading } from "@radix-ui/themes";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
@@ -350,8 +351,8 @@ export function ClusterHealth() {
 
   return (
     <section className="ui-page" aria-label={copy("ui.cluster.health")}>
-      <h2 className="text-lg font-semibold">{copy("ui.cluster.health")}</h2>
-      <h3>{copy("ui.health.status")}</h3>
+      <Heading size="5">{copy("ui.cluster.health")}</Heading>
+      <Heading as="h3" size="3">{copy("ui.health.status")}</Heading>
       {health.isPending ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.cluster.health")}>{copy("ui.loading.cluster.health")}</div>
       ) : null}
@@ -359,18 +360,17 @@ export function ClusterHealth() {
         <>
           <p>{healthMessage}</p>
           {healthCode ? <p>{healthCode}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void health.refetch();
             }}
           >
-            {copy("ui.retry.health")}</button>
+            {copy("ui.retry.health")}</Button>
         </>
       ) : null}
       {health.isSuccess ? (
-        <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
+        <Card size="2" asChild><dl className="console-metrics">
           <div>
             <dt className="font-medium">{copy("ui.status")}</dt>
             <dd className="mt-1 text-lg font-semibold">{health.data.status}</dd>
@@ -381,52 +381,51 @@ export function ClusterHealth() {
               <dd className="mt-1 text-lg font-semibold">{health.data[key]}</dd>
             </div>
           ))}
-        </dl>
+        </dl></Card>
       ) : null}
-      <h3>{copy("ui.capacity")}</h3>
+      <Heading as="h3" size="3">{copy("ui.capacity")}</Heading>
       {statistics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {statistics.isError && !isGarageDown(statistics.error) ? (
         <>
           <p>{fill(copy("ui.statistics"), { statisticsMessage: statisticsMessage })}</p>
           {statisticsCode ? <p>{statisticsCode}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void statistics.refetch();
             }}
           >
-            {copy("ui.retry.statistics")}</button>
+            {copy("ui.retry.statistics")}</Button>
         </>
       ) : null}
       {statistics.isSuccess ? (
         <>
-          <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
+          <Card size="2" asChild><dl className="console-metrics">
             {STATISTICS.map(([key, label, display, unset]) => (
               <div key={key}>
                 <dt className="font-medium">{translate(label)}</dt>
                 <dd className="mt-1 text-lg font-semibold">{shownStatistic(statistics.data[key], display, unset, language)}</dd>
               </div>
             ))}
-          </dl>
+          </dl></Card>
           {statistics.data.incompleteAvailInfo ? (
             <p>{copy("ui.available.space.may.be.lower.because.some.nodes")}</p>
           ) : null}
         </>
       ) : null}
-      <h3>{translate("Activity")}</h3>
+      <Heading as="h3" size="3">{translate("Activity")}</Heading>
       {metrics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
-      {metrics.isError && !isGarageDown(metrics.error) ? <div className="ui-alert"><p role="alert">{metrics.error instanceof Error ? metrics.error.message : copy("ui.cluster.metrics.are.unavailable")}</p><button className="ui-button" onClick={() => { void metrics.refetch(); }}>{copy("ui.retry")}</button></div> : null}
+      {metrics.isError && !isGarageDown(metrics.error) ? <div className="ui-alert"><p role="alert">{metrics.error instanceof Error ? metrics.error.message : copy("ui.cluster.metrics.are.unavailable")}</p><Button size="2" variant="soft" color="gray" onClick={() => { void metrics.refetch(); }}>{copy("ui.retry")}</Button></div> : null}
       {metrics.isSuccess ? (
         <>
-          <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
+          <Card size="2" asChild><dl className="console-metrics">
             {METRICS.map(([key, label]) => (
               <div key={key}>
                 <dt className="font-medium">{translate(label)}</dt>
                 <dd className="mt-1 text-lg font-semibold">{key === "blockReadBytes" || key === "blockWriteBytes" ? <CompactCapacityText digits={String(metrics.data[key])} /> : metrics.data[key]}</dd>
               </div>
             ))}
-          </dl>
+          </dl></Card>
           {metrics.data.notice ? <p>{metrics.data.notice}</p> : null}
         </>
       ) : null}

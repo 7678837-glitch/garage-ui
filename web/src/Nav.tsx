@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { Button, Dialog } from "@radix-ui/themes";
+import { useEffect, useState, type RefObject } from "react";
 import type { CopyKey } from "./copy-en";
 import { useI18n } from "./i18n";
 
@@ -263,8 +264,6 @@ export function Nav({ role, section, open, onToggle, onClose, menuTrigger, onSel
 }) {
   const { t } = useI18n();
   const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 899px)").matches);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(max-width: 899px)");
@@ -272,16 +271,6 @@ export function Nav({ role, section, open, onToggle, onClose, menuTrigger, onSel
     media.addEventListener("change", changed);
     return () => media.removeEventListener("change", changed);
   }, [onClose]);
-  useEffect(() => {
-    if (!mobile || !open) return;
-    const element = dialog.current;
-    if (!element) return;
-    if (typeof element.showModal === "function") element.showModal();
-    else element.setAttribute("open", "");
-    close.current?.focus();
-    const trigger = menuTrigger.current;
-    return () => { element.close?.(); trigger?.focus(); };
-  }, [mobile, open, menuTrigger]);
   const groups: { label?: CopyKey; ids: SectionId[] }[] = [
     { ids: ["overview"] },
     { label: "nav.storage", ids: ["buckets", "keys"] },
@@ -305,10 +294,15 @@ export function Nav({ role, section, open, onToggle, onClose, menuTrigger, onSel
     })}
   </nav>;
   return <>
-    {mobile ? open ? <dialog ref={dialog} id="console-navigation" className="console-drawer" aria-modal="true" aria-label={t("nav.sections")}
-      onCancel={(event) => { event.preventDefault(); onToggle(); }}
-      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onToggle(); } }}
-      onClick={(event) => { if (event.target === event.currentTarget) { const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onToggle(); } }}
-    ><button ref={close} type="button" className="ui-button console-drawer-close" onClick={onToggle}>{t("nav.close")}</button>{links}</dialog> : null : <aside id="console-navigation" className="console-sidebar">{links}</aside>}
+    <aside id={mobile ? undefined : "console-navigation"} className="console-sidebar" hidden={mobile}>{links}</aside>
+    <Dialog.Root open={mobile && open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Content id="console-navigation" className="console-drawer" size="1" maxWidth="min(288px, 85vw)"
+        aria-modal="true" aria-describedby={undefined}
+        onCloseAutoFocus={(event) => { event.preventDefault(); menuTrigger.current?.focus(); }}>
+        <Dialog.Title className="console-drawer-title">{t("nav.sections")}</Dialog.Title>
+        <Dialog.Close><Button size="2" variant="soft" color="gray" type="button" className="console-drawer-close">{t("nav.close")}</Button></Dialog.Close>
+        {links}
+      </Dialog.Content>
+    </Dialog.Root>
   </>;
 }

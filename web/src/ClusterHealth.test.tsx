@@ -1,3 +1,4 @@
+import { GarageTheme } from "./theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -16,7 +17,7 @@ function renderApp() {
   });
   render(
     <QueryClientProvider client={client}>
-      <App />
+      <GarageTheme><App /></GarageTheme>
     </QueryClientProvider>,
   );
 }
@@ -202,7 +203,8 @@ test("shows the Garage banner for a down health query and keeps the version aler
 test("does not show cluster health to a viewer or request it", async () => {
   const fetchMock = stubFetch(json(statistics), json(report), "viewer");
   renderApp();
-  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Bea · viewer" })).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: / · (admin|viewer)$/ }));
   expect(await screen.findByText("ok · test")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
   expect(screen.queryByText("degraded")).toBeNull();

@@ -36,7 +36,7 @@ test("links share the button focus-visible outline", () => {
   const source = readFileSync(stylesheetPath(), "utf8");
   const rule = ruleFor(
     source,
-    ":where(a, button, input, select, textarea, summary, [tabindex]):focus-visible",
+    ':where(a, button, input, select, textarea, summary, [tabindex]):not([class*="rt-"]):focus-visible',
   );
   expect(rule).toBeDefined();
   expect(rule?.body).toContain("outline: 2px solid var(--accent)");

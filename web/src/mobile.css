@@ -9,12 +9,12 @@
   .console-topbar { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 60px; }
   .console-breadcrumb { display: none; }
   .console-parent-link { display: flex; align-items: center; min-height: var(--touch-control-height); min-width: 0; white-space: normal; }
-  .console-session { width: auto; max-width: 100px; }
+  .console-session.console-account-trigger { width: auto; max-width: min(28vw, 140px); }
 }
 
 @media (max-width: 639px) {
   .console-topbar { min-height: 56px; padding: 8px 12px; }
-  .console-header-disclosure > summary { padding: 4px 8px; }
+  .console-account-trigger { padding: 4px 8px; }
   .ui-audit-table tbody tr { padding: 12px; }
   .ui-identity-details > summary { min-height: var(--touch-control-height); }
   .ui-resource-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 12px; }
@@ -57,11 +57,12 @@
 @media (max-width: 639px) {
   .radix-themes :is(.rt-Button, .rt-IconButton, .rt-SelectTrigger, .rt-TextFieldRoot, .rt-TextAreaRoot, .rt-TabsTrigger) { min-height: 36px; }
   .radix-themes :is(.rt-TextFieldInput, .rt-TextAreaInput) { font-size: 16px; }
+  .radix-themes :is(.rt-SelectItem, .rt-DropdownMenuItem) { min-height: 36px; }
   .ui-table-records.rt-TableRoot .rt-ScrollAreaViewport > div { display: block !important; }
-  .ui-table-records .rt-TableRootTable { display: block; }
+  .ui-table-records .rt-TableRootTable { display: block; height: auto; }
 }
 @container (max-width: 48rem) {
   :is(.ui-objects-table, .ui-audit-table).rt-TableRoot .rt-ScrollAreaViewport > div { display: block !important; }
-  :is(.ui-objects-table, .ui-audit-table) .rt-TableRootTable { display: block; }
+  :is(.ui-objects-table, .ui-audit-table) .rt-TableRootTable { display: block; height: auto; }
   .ui-objects-table [data-kind="actions"] .rt-Button { min-height: var(--touch-control-height); min-width: var(--touch-control-height); white-space: nowrap; }
 }
