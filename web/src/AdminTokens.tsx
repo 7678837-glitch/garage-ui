@@ -471,7 +471,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby={titleId}
-      className="border border-ink bg-canvas p-4 text-ink"
+      className="ui-dialog"
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -486,10 +486,10 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
       <h3 id={titleId} className="font-medium">
         {copy("ui.admin.token.secret")}</h3>
       <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.secret")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           readOnly
           autoComplete="off"
           type={visible ? "text" : "password"}
@@ -497,7 +497,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
         />
       </label>
       <button
-        className="mr-2 border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setVisible(true);
@@ -506,7 +506,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
         {copy("ui.show.secret")}</button>
       <button
         ref={copyRef}
-        className="mr-2 border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           void copySecret(secret).then((result) => {
@@ -521,7 +521,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
       >
         {copy("ui.copy.secret")}</button>
       {feedback ? <p>{feedback}</p> : null}
-      <button className="border border-ink px-3 py-1 text-left" type="button" onClick={onClose}>
+      <button className="ui-button" type="button" onClick={onClose}>
         {copy("ui.i.have.saved.it")}</button>
     </dialog>
   );
@@ -557,7 +557,7 @@ function CreateTokenForm() {
   return (
     <>
       <form
-        className="grid max-w-sm gap-3"
+        className="ui-form max-w-xl"
         onSubmit={(event) => {
           event.preventDefault();
           if (draft.name.trim().length === 0 || create.isPending) {
@@ -567,9 +567,9 @@ function CreateTokenForm() {
           setPending(draft);
         }}
       >
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.name")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={draft.name}
             required
             onChange={(event) => {
@@ -577,9 +577,9 @@ function CreateTokenForm() {
             }}
           />
         </label>
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.expiration")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={draft.expiration}
             onChange={(event) => {
               setDraft({ ...draft, expiration: event.target.value });
@@ -602,9 +602,9 @@ function CreateTokenForm() {
             setDraft({ ...draft, scope });
           }}
         />
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {error ? <p className="ui-alert">{error}</p> : null}
         <button
-          className="border border-ink px-3 py-1 text-left"
+          className="ui-button ui-button-primary"
           type="submit"
           disabled={create.isPending}
         >
@@ -672,7 +672,7 @@ function EditTokenForm({
   return (
     <>
       <form
-        className="grid max-w-sm gap-3"
+        className="ui-form max-w-xl"
         onSubmit={(event) => {
           event.preventDefault();
           if (draft.name.trim().length === 0 || update.isPending) {
@@ -682,9 +682,9 @@ function EditTokenForm({
           setPending(draft);
         }}
       >
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.name")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={draft.name}
             required
             onChange={(event) => {
@@ -692,9 +692,9 @@ function EditTokenForm({
             }}
           />
         </label>
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.expiration")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={draft.expiration}
             onChange={(event) => {
               setDraft({ ...draft, expiration: event.target.value });
@@ -717,13 +717,14 @@ function EditTokenForm({
             setDraft({ ...draft, scope });
           }}
         />
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {error ? <p className="ui-alert">{error}</p> : null}
         <button
-          className="border border-ink px-3 py-1 text-left"
+          className="ui-button ui-button-primary"
           type="submit"
           disabled={update.isPending}
         >
           {copy("ui.update.token")}</button>
+        <button type="button" className="ui-button" disabled={update.isPending} onClick={onClose}>{copy("ui.cancel")}</button>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -768,37 +769,38 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
   });
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-max border-collapse text-left text-sm">
+      <div className="ui-table-container" role="region" aria-label={translate("Admin token list")} tabIndex={0}>
+        <table className="ui-table">
           <thead>
             <tr>
-              <th className="py-2 pr-3 font-medium" scope="col">
+              <th scope="col">
                 {copy("ui.name")}</th>
-              <th className="py-2 pr-3 font-medium" scope="col">
+              <th scope="col">
                 {copy("ui.scope")}</th>
-              <th className="py-2 pr-3 font-medium" scope="col">
+              <th scope="col">
                 {copy("ui.expiration")}</th>
-              <th className="py-2 pr-3 font-medium" scope="col">
+              <th scope="col">
                 {copy("ui.expired")}</th>
-              <th className="py-2 font-medium" scope="col">
+              <th scope="col">
                 {copy("ui.source")}</th>
+              <th scope="col">{copy("ui.actions")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((token, index) => (
               <tr key={`${token.name}-${token.created}-${index}`}>
-                <td className="py-2 pr-3">{token.name}</td>
-                <td className="py-2 pr-3">{token.scope.join(", ")}</td>
-                <td className="py-2 pr-3">
+                <td>{token.name}</td>
+                <td className="ui-identifier">{token.scope.join(", ")}</td>
+                <td>
                   <InstantText value={token.expiration} />
                 </td>
-                <td className="py-2 pr-3">{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</td>
-                <td className="py-2">
-                  {sourceLabel(token)}
-                  {issuedTokenId(token) !== null ? (
+                <td>{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</td>
+                <td>{sourceLabel(token)}</td>
+                <td>
+                  <div className="ui-actions">{issuedTokenId(token) !== null ? (
                     <>
                       <button
-                        className="border border-ink px-3 py-1 text-left"
+                        className="ui-button"
                         type="button"
                         onClick={() => {
                           setEditing(token);
@@ -806,7 +808,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                       >
                         {copy("ui.edit")}</button>
                       <button
-                        className="ml-2 border border-ink px-3 py-1 text-left"
+                        className="ui-button ui-button-danger"
                         type="button"
                         onClick={() => {
                           setRemoving(token);
@@ -814,7 +816,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                       >
                         {copy("ui.delete.2")}</button>
                     </>
-                  ) : null}
+                  ) : null}</div>
                 </td>
               </tr>
             ))}
@@ -822,14 +824,17 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
         </table>
       </div>
       {editing !== null && editingId !== null ? (
-        <EditTokenForm
+        <div className="ui-panel">
+          <div className="ui-page-header"><h3>{editing.name}</h3></div>
+          <EditTokenForm
           key={`${editing.name}-${editing.created}`}
           id={editingId}
           token={editing}
           onClose={() => {
             setEditing(null);
           }}
-        />
+          />
+        </div>
       ) : null}
       {removing !== null && removingId !== null ? (
         <ConfirmDialog
@@ -856,7 +861,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
 
 function CurrentToken({ token }: { token: AdminToken }) {
   return (
-    <section aria-labelledby="admin-token-current">
+    <section className="ui-panel" aria-labelledby="admin-token-current">
       <h3 id="admin-token-current" className="font-semibold">
         {copy("ui.this.server")}</h3>
       <dl className="grid gap-1">
@@ -915,16 +920,19 @@ export function AdminTokens() {
 
   return (
     <section
-      className="grid gap-4"
+      className="ui-page"
       aria-label={copy("nav.tokens")}
       aria-busy={list.isPending || current.isPending}
     >
-      <h2 className="text-lg font-semibold">{copy("nav.tokens")}</h2>
-      <CreateTokenForm />
-      <div className="grid max-w-sm gap-3">
-        <label className="block text-sm">
+      <h2>{copy("nav.tokens")}</h2>
+      <details className="ui-disclosure">
+        <summary>{copy("ui.create.token")}</summary>
+        <CreateTokenForm />
+      </details>
+      <div className="ui-toolbar">
+        <label className="ui-field">
           {copy("ui.filter.admin.tokens")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -933,9 +941,9 @@ export function AdminTokens() {
             }}
           />
         </label>
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.sort")}<select
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={query.sort}
             onChange={(event) => {
               const next = { filter: query.filter, sort: tokenSortFrom(event.target.value) };
@@ -949,30 +957,7 @@ export function AdminTokens() {
         </label>
         <p>{copy("ui.default.sort.is.by.name")}</p>
         <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
-        <div className="flex gap-2">
-          <button
-            className="border border-neutral-900 px-3 py-1 text-left"
-            type="button"
-            disabled={offset === 0}
-            onClick={() => {
-              const next = Math.max(0, offset - 100);
-              setOffset(next);
-              writeTokenOffset(next);
-            }}
-          >
-            {copy("ui.previous")}</button>
-          <button
-            className="border border-neutral-900 px-3 py-1 text-left"
-            type="button"
-            disabled={list.data?.hasMore !== true}
-            onClick={() => {
-              const next = offset + 100;
-              setOffset(next);
-              writeTokenOffset(next);
-            }}
-          >
-            {copy("ui.next")}</button>
-        </div>
+
       </div>
       {list.isPending ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.admin.tokens")} />
@@ -982,7 +967,7 @@ export function AdminTokens() {
           <p>{listFailure.message}</p>
           {listFailure.code ? <p>{listFailure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void list.refetch();
@@ -996,7 +981,7 @@ export function AdminTokens() {
           <p>{currentFailure.message}</p>
           {currentFailure.code ? <p>{currentFailure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void current.refetch();
@@ -1005,8 +990,32 @@ export function AdminTokens() {
             {copy("ui.retry")}</button>
         </>
       ) : null}
-      {list.isSuccess && shown.length === 0 ? <p>{list.data.items.length === 0 ? copy("ui.no.admin.tokens") : translate("No matches on this page.")}</p> : null}
+      {list.isSuccess && shown.length === 0 ? <p>{list.data.items.length === 0 && offset === 0 && !list.data.hasMore ? copy("ui.no.admin.tokens") : translate("No matches on this page.")}</p> : null}
       {list.isSuccess && shown.length > 0 ? <TokenTable rows={shown} /> : null}
+        <div className="ui-actions">
+          <button
+            className="ui-button"
+            type="button"
+            disabled={offset === 0}
+            onClick={() => {
+              const next = Math.max(0, offset - 100);
+              setOffset(next);
+              writeTokenOffset(next);
+            }}
+          >
+            {copy("ui.previous")}</button>
+          <button
+            className="ui-button"
+            type="button"
+            disabled={list.data?.hasMore !== true}
+            onClick={() => {
+              const next = offset + 100;
+              setOffset(next);
+              writeTokenOffset(next);
+            }}
+          >
+            {copy("ui.next")}</button>
+        </div>
       {current.data ? <CurrentToken token={current.data} /> : null}
     </section>
   );

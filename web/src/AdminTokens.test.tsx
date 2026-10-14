@@ -37,7 +37,7 @@ function isTokenList(input: RequestInfo | URL, method: string): boolean {
   return method === "GET" && url.pathname === "/api/admin-tokens";
 }
 
-function renderTokens() {
+function renderTokens(expandCreate = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -46,6 +46,9 @@ function renderTokens() {
       <AdminTokens />
     </QueryClientProvider>,
   );
+  if (expandCreate) {
+    fireEvent.click(screen.getByText("Create token", { selector: "summary" }));
+  }
 }
 
 function installApi() {
@@ -521,8 +524,8 @@ test("turns admin token pages by 100 and keeps the filter, sort, and hash", asyn
   const next = screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
   expect(previous.disabled).toBe(true);
   expect(next.disabled).toBe(false);
-  expect(previous.className).toBe("border border-neutral-900 px-3 py-1 text-left");
-  expect(next.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+
+
   fireEvent.click(next);
   expect(await screen.findByRole("row", { name: /later-reader/ })).toBeTruthy();
   expect(screen.queryByRole("row", { name: /config-reader/ })).toBeNull();
@@ -927,4 +930,29 @@ test("discloses page-local token filtering without claiming the repository is em
   expect(screen.getByText("No matches on this page.")).toBeTruthy();
   expect(screen.queryByText("No admin tokens")).toBeNull();
   expect(screen.getByRole("button", { name: "Previous" })).toBeTruthy();
+});
+
+test("opens token creation on demand and preserves the scope draft across collapse", async () => {
+  installApi();
+  renderTokens(false);
+  await screen.findByRole("cell", { name: "issued-reader" });
+  expect(screen.getByRole("button", { name: "Create token" }).closest("details")?.open).toBe(false);
+  const create = screen.getByText("Create token", { selector: "summary" });
+  fireEvent.click(create);
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "retained-name" } });
+  fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
+  fireEvent.click(create);
+  expect(screen.getByRole("button", { name: "Create token" }).closest("details")?.open).toBe(false);
+  fireEvent.click(create);
+  expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("retained-name");
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+});
+
+test("an empty later token page does not claim the repository is empty", async () => {
+  window.history.replaceState(null, "", "/?tokensOffset=100#tokens");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => tokenResponse(new URL(String(input), "http://ui.local").pathname)));
+  renderTokens(false);
+  expect(await screen.findByText("No matches on this page.")).toBeTruthy();
+  expect(screen.queryByText("No admin tokens")).toBeNull();
+  expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(false);
 });

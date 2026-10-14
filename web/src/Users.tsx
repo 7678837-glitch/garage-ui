@@ -316,99 +316,119 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
   return (
     <>
       <tr>
-        <td className="py-2 pr-3">{account.username}</td>
-        <td className="py-2 pr-3">
-          <select
-            aria-label={fill(copy("ui.role.for"), { username: account.username })}
-            className="border border-line px-2 py-1"
-            value={account.role}
-            disabled={self || busy}
-            onChange={(event) => {
-              if (self) {
-                return;
-              }
-              const role = asRole(event.target.value);
-              patch.mutate({
-                role,
-                ...permissionBits(role, account.can_download, account.can_share),
-              });
-            }}
-          >
-            <option value="admin">{copy("ui.admin")}</option>
-            <option value="viewer">{copy("ui.viewer")}</option>
-          </select>
-          {patch.isPending ? <span>{copy("ui.saving")}</span> : null}
+        <td>{account.username}</td>
+        <td>
+          <span>{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</span>
+          <details className="ui-disclosure">
+            <summary>{copy("ui.edit")}</summary>
+            <div className="ui-form">
+              <label className="ui-field">
+                <span>{copy("ui.role")}</span>
+                <select
+                  aria-label={fill(copy("ui.role.for"), { username: account.username })}
+                  className="ui-input"
+                  value={account.role}
+                  disabled={self || busy}
+                  onChange={(event) => {
+                    if (self) {
+                      return;
+                    }
+                    const role = asRole(event.target.value);
+                    patch.mutate({
+                      role,
+                      ...permissionBits(role, account.can_download, account.can_share),
+                    });
+                  }}
+                >
+                  <option value="admin">{copy("ui.admin")}</option>
+                  <option value="viewer">{copy("ui.viewer")}</option>
+                </select>
+                {patch.isPending ? <span>{copy("ui.saving")}</span> : null}
+              </label>
+              <label className="ui-field">
+                <span>{copy("ui.download")}</span>
+                <input
+                  aria-label={fill(copy("ui.download.for"), { username: account.username })}
+                  type="checkbox"
+                  checked={shown.can_download}
+                  disabled={account.role !== "viewer" || busy}
+                  onChange={(event) => {
+                    patch.mutate(permissionBits(account.role, event.target.checked, account.can_share));
+                  }}
+                />
+              </label>
+              <label className="ui-field">
+                <span>{copy("ui.share")}</span>
+                <input
+                  aria-label={fill(copy("ui.share.for"), { username: account.username })}
+                  type="checkbox"
+                  checked={shown.can_share}
+                  disabled={shareLocked}
+                  onChange={(event) => {
+                    patch.mutate({ can_share: event.target.checked });
+                  }}
+                />
+              </label>
+              <label className="ui-field">
+                <span>{copy("ui.disabled")}</span>
+                <input
+                  aria-label={fill(copy("ui.disabled.for"), { username: account.username })}
+                  type="checkbox"
+                  checked={account.disabled}
+                  disabled={self || busy}
+                  onChange={(event) => {
+                    if (self) {
+                      return;
+                    }
+                    patch.mutate({ disabled: event.target.checked });
+                  }}
+                />
+              </label>
+            </div>
+          </details>
         </td>
-        <td className="py-2 pr-3">
-          <input
-            aria-label={fill(copy("ui.download.for"), { username: account.username })}
-            type="checkbox"
-            checked={shown.can_download}
-            disabled={account.role !== "viewer" || busy}
-            onChange={(event) => {
-              patch.mutate(permissionBits(account.role, event.target.checked, account.can_share));
-            }}
-          />
-        </td>
-        <td className="py-2 pr-3">
-          <input
-            aria-label={fill(copy("ui.share.for"), { username: account.username })}
-            type="checkbox"
-            checked={shown.can_share}
-            disabled={shareLocked}
-            onChange={(event) => {
-              patch.mutate({ can_share: event.target.checked });
-            }}
-          />
-        </td>
-        <td className="py-2 pr-3">
-          <input
-            aria-label={fill(copy("ui.disabled.for"), { username: account.username })}
-            type="checkbox"
-            checked={account.disabled}
-            disabled={self || busy}
-            onChange={(event) => {
-              if (self) {
-                return;
-              }
-              patch.mutate({ disabled: event.target.checked });
-            }}
-          />
-        </td>
-        <td className="py-2 pr-3">
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (self || password.length === 0) {
-                return;
-              }
-              setError(null);
-              reset.mutate(password);
-            }}
-          >
-            <input
-              aria-label={fill(copy("ui.new.password.for"), { username: account.username })}
-              className="border border-line px-2 py-1"
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              disabled={self || busy}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-            <button
-              className="border border-ink px-3 py-1 text-left"
-              type="submit"
-              disabled={self || busy || password.length === 0}
-            >
-              {reset.isPending ? copy("ui.resetting.password") : fill(copy("ui.reset.password.for"), { username: account.username })}
-            </button>
-          </form>
+        <td>{shown.can_download ? copy("ui.yes.2") : copy("ui.no.2")}</td>
+        <td>{shown.can_share ? copy("ui.yes.2") : copy("ui.no.2")}</td>
+        <td>{account.disabled ? copy("ui.yes.2") : copy("ui.no.2")}</td>
+        <td>
+          {self ? <button className="ui-button" type="button" disabled>{fill(copy("ui.reset.password.for"), { username: account.username })}</button> : (
+            <details className="ui-disclosure">
+              <summary>{fill(copy("ui.reset.password.for"), { username: account.username })}</summary>
+              <form
+                className="ui-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (self || password.length === 0) {
+                    return;
+                  }
+                  setError(null);
+                  reset.mutate(password);
+                }}
+              >
+                <input
+                  aria-label={fill(copy("ui.new.password.for"), { username: account.username })}
+                  className="ui-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  disabled={self || busy}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <button
+                  className="ui-button"
+                  type="submit"
+                  disabled={self || busy || password.length === 0}
+                >
+                  {reset.isPending ? copy("ui.resetting.password") : fill(copy("ui.reset.password.for"), { username: account.username })}
+                </button>
+              </form>
+            </details>
+          )}
           {reset.isSuccess ? <p>{copy("ui.password.reset")}</p> : null}
         </td>
-        <td className="py-2">
+        <td>
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button ui-button-danger"
             type="button"
             disabled={self || busy}
             onClick={() => {
@@ -426,7 +446,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
       {error ? (
         <tr>
           <td colSpan={7} className="pb-2">
-            <p role="alert">{error}</p>
+            <p className="ui-alert" role="alert">{error}</p>
           </td>
         </tr>
       ) : null}
@@ -463,7 +483,7 @@ function CreateAccount() {
   return (
     <form
       aria-label={copy("ui.create.user")}
-      className="grid max-w-sm gap-3"
+      className="ui-form max-w-xl"
       onSubmit={(event) => {
         event.preventDefault();
         setError(null);
@@ -476,29 +496,29 @@ function CreateAccount() {
         });
       }}
     >
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.username")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           autoComplete="off"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
         />
       </label>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.password")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           type="password"
           autoComplete="new-password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
       </label>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.role")}</span>
         <select
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={role}
           onChange={(event) => {
             const next = asRole(event.target.value);
@@ -513,7 +533,7 @@ function CreateAccount() {
           <option value="admin">{copy("ui.admin")}</option>
         </select>
       </label>
-      <label className="block text-sm">
+      <label className="ui-field">
         <input
           type="checkbox"
           checked={download}
@@ -527,7 +547,7 @@ function CreateAccount() {
           }}
         />{" "}
         {copy("ui.download")}</label>
-      <label className="block text-sm">
+      <label className="ui-field">
         <input
           type="checkbox"
           checked={bits.can_share}
@@ -535,10 +555,10 @@ function CreateAccount() {
           onChange={(event) => setShare(event.target.checked)}
         />{" "}
         {copy("ui.share")}</label>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <p className="ui-alert" role="alert">{error}</p> : null}
       {create.isSuccess ? <p>{copy("ui.user.created")}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button ui-button-primary"
         type="submit"
         disabled={create.isPending || username.length === 0 || password.length === 0}
       >
@@ -575,12 +595,16 @@ export function Users({ selfUsername }: { selfUsername: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label={copy("nav.users")} aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">{copy("nav.users")}</h2>
-      <div className="grid max-w-sm gap-3">
-        <label className="block text-sm">
+    <section className="ui-page" aria-label={copy("nav.users")} aria-busy={view.busy}>
+      <div className="ui-page-header"><h2>{copy("nav.users")}</h2></div>
+      <details className="ui-disclosure">
+        <summary>{copy("ui.create.user")}</summary>
+        <CreateAccount />
+      </details>
+      <div className="ui-toolbar">
+        <label className="ui-field">
           {copy("ui.filter.users")}<input
-            className="mt-1 w-full border border-line px-2 py-1"
+            className="ui-input"
             value={filter}
             onChange={(event) => {
               const next = event.target.value;
@@ -589,9 +613,9 @@ export function Users({ selfUsername }: { selfUsername: string }) {
             }}
           />
         </label>
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.sort.users")}<select
-            className="mt-1 w-full border border-line px-2 py-1"
+            className="ui-input"
             value={sort}
             onChange={(event) => {
               const next = userSortFrom(event.target.value);
@@ -605,30 +629,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         </label>
         <p>{copy("ui.default.order.is.username")}</p>
         <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
-        <div className="flex gap-2">
-          <button
-            className="border border-neutral-900 px-3 py-1 text-left"
-            type="button"
-            disabled={offset === 0}
-            onClick={() => {
-              const next = Math.max(0, offset - 100);
-              setOffset(next);
-              writeUserOffset(next);
-            }}
-          >
-            {copy("ui.previous")}</button>
-          <button
-            className="border border-neutral-900 px-3 py-1 text-left"
-            type="button"
-            disabled={users.data?.hasMore !== true}
-            onClick={() => {
-              const next = offset + 100;
-              setOffset(next);
-              writeUserOffset(next);
-            }}
-          >
-            {copy("ui.next")}</button>
-        </div>
+
       </div>
       {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.users")} /> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.users")}</p> : null}
@@ -637,7 +638,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void users.refetch();
@@ -647,25 +648,25 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         </>
       ) : null}
       {users.isSuccess && loaded.length > 0 && shown.length === 0 ? <p>{translate("No matches on this page.")}</p> : null}
-      {view.empty ? <p>{copy("ui.there.are.no.users.create.the.first.user")}</p> : null}
+      {view.empty ? <p>{offset === 0 && users.data?.hasMore === false ? copy("ui.there.are.no.users.create.the.first.user") : translate("No matches on this page.")}</p> : null}
       {users.data && shown.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+        <div className="ui-table-container" role="region" aria-label={translate("User list")} tabIndex={0}>
+          <table className="ui-table">
             <thead>
               <tr>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.username")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.role")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.download")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.share")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.disabled")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.reset.password")}</th>
-                <th className="py-2 font-medium" scope="col">
+                <th scope="col">
                   {copy("ui.delete.2")}</th>
               </tr>
             </thead>
@@ -681,7 +682,31 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           </table>
         </div>
       ) : null}
-      <CreateAccount />
+
+        <div className="ui-actions">
+          <button
+            className="ui-button"
+            type="button"
+            disabled={offset === 0}
+            onClick={() => {
+              const next = Math.max(0, offset - 100);
+              setOffset(next);
+              writeUserOffset(next);
+            }}
+          >
+            {copy("ui.previous")}</button>
+          <button
+            className="ui-button"
+            type="button"
+            disabled={users.data?.hasMore !== true}
+            onClick={() => {
+              const next = offset + 100;
+              setOffset(next);
+              writeUserOffset(next);
+            }}
+          >
+            {copy("ui.next")}</button>
+        </div>
     </section>
   );
 }

@@ -124,14 +124,14 @@ export function Audit() {
     failure: listed.isError ? failureOf(listed.error) : null,
   };
   return (
-    <section className="grid min-w-0 gap-4" aria-label={copy("nav.audit")} aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">{copy("nav.audit")}</h2>
-      <div className="flex min-w-0 flex-wrap items-end gap-3">
+    <section className="ui-page" aria-label={copy("nav.audit")} aria-busy={view.busy}>
+      <h2>{copy("nav.audit")}</h2>
+      <div className="ui-toolbar">
         {FILTER_FIELDS.map(([key, label]) => (
-          <label className="block text-sm" key={key}>
+          <label className="ui-field" key={key}>
             {translate(label)}
             <input
-              className="mt-1 border border-line px-2 py-1"
+              className="ui-input"
               value={filters[key]}
               autoComplete="off"
               spellCheck={false}
@@ -143,9 +143,8 @@ export function Audit() {
             />
           </label>
         ))}
-      </div>
       <button
-        className="w-fit border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setExportFailed(false);
@@ -155,6 +154,7 @@ export function Audit() {
         }}
       >
         {copy("ui.export.audit")}</button>
+      </div>
       {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
       {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.audit")} /> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.audit")}</p> : null}
@@ -163,7 +163,7 @@ export function Audit() {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void listed.refetch();
@@ -173,12 +173,12 @@ export function Audit() {
         </>
       ) : null}
       {view.empty ? <p>{copy("ui.there.are.no.audit.events")}</p> : null}
-      <div className="min-w-0 overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
+      <div className="ui-table-container" role="region" aria-label={translate("Audit events")} tabIndex={0}>
+        <table className="ui-table">
           <thead>
             <tr>
               {COLUMNS.map((column) => (
-                <th className="py-2 pr-3 font-medium" key={column} scope="col">
+                <th key={column} scope="col">
                   {copy(columnLabel[column])}
                 </th>
               ))}
@@ -188,7 +188,7 @@ export function Audit() {
             {items.map((row, index) => (
               <tr key={`${row.at}-${row.path}-${index}`}>
                 {COLUMNS.map((column) => (
-                  <td className="py-2 pr-3" key={column}>
+                  <td className={column === "path" || column === "target" ? "ui-identifier" : undefined} key={column}>
                     {String(row[column] ?? "")}
                   </td>
                 ))}

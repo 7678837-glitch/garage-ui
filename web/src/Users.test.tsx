@@ -40,7 +40,7 @@ function isUserList(input: RequestInfo | URL, method: string): boolean {
   return method === "GET" && url.pathname === "/api/users";
 }
 
-function renderUsers() {
+function renderUsers(expandCreate = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -49,6 +49,9 @@ function renderUsers() {
       <Users selfUsername="Ada" />
     </QueryClientProvider>,
   );
+  if (expandCreate) {
+    fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
+  }
   return client;
 }
 
@@ -164,9 +167,15 @@ const bea: Row = {
   disabled: false,
 };
 
-async function shown() {
+async function shown(expandEditors = true) {
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  if (expandEditors) {
+    for (const row of screen.getAllByRole("row").slice(1)) {
+      fireEvent.click(within(row).getByText("Edit", { selector: "summary" }));
+    }
+    fireEvent.click(screen.getByText("Reset password for Bea", { selector: "summary" }));
+  }
 }
 
 test("lists users and never renders a password hash", async () => {
@@ -874,8 +883,8 @@ test("turns user pages by 100 and keeps the filter, sort, and hash", async () =>
   const next = screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
   expect(previous.disabled).toBe(true);
   expect(next.disabled).toBe(false);
-  expect(previous.className).toBe("border border-neutral-900 px-3 py-1 text-left");
-  expect(next.className).toBe("border border-neutral-900 px-3 py-1 text-left");
+
+
   fireEvent.click(next);
   expect(await screen.findByRole("cell", { name: "Bea" })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
@@ -920,4 +929,42 @@ test("discloses page-local user filtering and keeps navigation for no matches", 
   expect(screen.getByText("No matches on this page.")).toBeTruthy();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("opens user creation and password reset on demand while retaining reset drafts", async () => {
+  installApi([ada, bea]);
+  renderUsers(false);
+  await shown(false);
+  expect(screen.getByRole("form", { name: "Create user" }).closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
+  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByLabelText("New password for Bea").closest("details")?.open).toBe(false);
+  const reset = screen.getByText("Reset password for Bea", { selector: "summary" });
+  fireEvent.click(reset);
+  fireEvent.change(screen.getByLabelText("New password for Bea"), { target: { value: "retained-password" } });
+  fireEvent.click(reset);
+  expect(reset.closest("details")?.open).toBe(false);
+  fireEvent.click(reset);
+  expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe("retained-password");
+});
+
+test("opens account permission controls on demand", async () => {
+  installApi([ada, bea]);
+  renderUsers(false);
+  await shown(false);
+  const role = screen.getByRole("combobox", { name: "Role for Bea" });
+  expect(role.closest("details")?.open).toBe(false);
+  const row = screen.getByRole("row", { name: /Bea/ });
+  fireEvent.click(within(row).getByText("Edit", { selector: "summary" }));
+  expect(role.closest("details")?.open).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "Download for Bea" }) as HTMLInputElement).checked).toBe(true);
+});
+
+test("an empty later user page does not claim the repository is empty", async () => {
+  window.history.replaceState(null, "", "/?usersOffset=100#users");
+  vi.stubGlobal("fetch", vi.fn(async () => json(userPage([]))));
+  renderUsers(false);
+  expect(await screen.findByText("No matches on this page.")).toBeTruthy();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
+  expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(false);
 });
