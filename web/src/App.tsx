@@ -364,6 +364,13 @@ function Home({ status }: { status: SessionStatus }) {
   });
   const { hash, section, select } = useHashSection(status.role ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const account = useRef<HTMLDetailsElement>(null);
+  const toggleMenu = useCallback(() => setMenuOpen((open) => !open), []);
+  const closeHeaderOverlays = useCallback(() => {
+    setMenuOpen(false);
+    account.current?.removeAttribute("open");
+  }, []);
   const form = useForm<PasswordChange>({
     resolver: zodResolver(passwordChange),
     defaultValues: { current_password: "", new_password: "" },
@@ -404,20 +411,23 @@ function Home({ status }: { status: SessionStatus }) {
   return (
     <div className="console-layout">
       <a href="#main-content" className="console-skip" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("nav.skip")}</a>
-      <Nav role={status.role ?? ""} section={section} open={menuOpen} onToggle={() => setMenuOpen((open) => !open)} onSelect={select} />
+      <Nav role={status.role ?? ""} section={section} open={menuOpen} onToggle={toggleMenu} onClose={closeHeaderOverlays} menuTrigger={menuTrigger} onSelect={select} />
       <div className="console-workspace">
         <header className="console-topbar">
+          <button ref={menuTrigger} className="ui-button console-menu" type="button" aria-expanded={menuOpen} aria-controls="console-navigation" onClick={toggleMenu}>{t("nav.menu")}</button>
+          <div className="console-mobile-brand"><img src="./brand/garage-ui.svg" width="24" height="24" alt="" /><span>Garage UI</span></div>
           <Breadcrumb section={section} hash={hash} onSelect={select} />
-          <details className="console-session console-header-disclosure">
-            <summary><span className="console-account-name">{status.username} · {status.role}</span></summary>
+          <details ref={account} className="console-session console-header-disclosure">
+            <summary aria-label={`${status.username} · ${status.role}`}><span className="console-account-name">{status.username}</span></summary>
             <div className="console-header-panel">
-            <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button></div>
-          </details>
-          <details className="console-health console-header-disclosure">
-            <summary><span className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</span> <span>{garageLine(status.garage_version)}</span></summary>
-            <div className="console-header-panel">
-            <p className="ui-muted">{t("shell.status")}</p>
-            <p>{copy("ui.version")}: {health.data?.version ?? healthText}</p></div>
+              <p className="console-account-identity">{status.username} · {status.role}</p>
+              <div className="console-health">
+                <p className="ui-muted">{t("shell.status")}</p>
+                <p className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</p>
+                <p>{garageLine(status.garage_version)}</p>
+              </div>
+              <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button>
+            </div>
           </details>
         </header>
         <main id="main-content" tabIndex={-1} className={section === "settings" ? "console-content console-settings" : "console-content"}>

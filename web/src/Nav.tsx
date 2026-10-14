@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { CopyKey } from "./copy-en";
 import { useI18n } from "./i18n";
 
@@ -252,25 +252,26 @@ export function sectionCopyKey(id: SectionId): CopyKey {
   return sectionCopy[id];
 }
 
-export function Nav({ role, section, open, onToggle, onSelect }: {
+export function Nav({ role, section, open, onToggle, onClose, menuTrigger, onSelect }: {
   role: string;
   section: SectionId;
   open: boolean;
   onToggle: () => void;
+  onClose: () => void;
+  menuTrigger: RefObject<HTMLButtonElement>;
   onSelect: (id: SectionId) => boolean;
 }) {
   const { t } = useI18n();
   const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 899px)").matches);
   const dialog = useRef<HTMLDialogElement>(null);
-  const menu = useRef<HTMLButtonElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(max-width: 899px)");
-    const changed = () => setMobile(media.matches);
+    const changed = () => { setMobile(media.matches); onClose(); };
     media.addEventListener("change", changed);
     return () => media.removeEventListener("change", changed);
-  }, []);
+  }, [onClose]);
   useEffect(() => {
     if (!mobile || !open) return;
     const element = dialog.current;
@@ -278,9 +279,9 @@ export function Nav({ role, section, open, onToggle, onSelect }: {
     if (typeof element.showModal === "function") element.showModal();
     else element.setAttribute("open", "");
     close.current?.focus();
-    const trigger = menu.current;
+    const trigger = menuTrigger.current;
     return () => { element.close?.(); trigger?.focus(); };
-  }, [mobile, open]);
+  }, [mobile, open, menuTrigger]);
   const groups: { label?: CopyKey; ids: SectionId[] }[] = [
     { ids: ["overview"] },
     { label: "nav.storage", ids: ["buckets", "keys"] },
@@ -304,7 +305,6 @@ export function Nav({ role, section, open, onToggle, onSelect }: {
     })}
   </nav>;
   return <>
-    <button ref={menu} className="ui-button console-menu" type="button" aria-expanded={mobile && open} aria-controls="console-navigation" onClick={onToggle}>{t("nav.menu")}</button>
     {mobile ? open ? <dialog ref={dialog} id="console-navigation" className="console-drawer" aria-modal="true" aria-label={t("nav.sections")}
       onCancel={(event) => { event.preventDefault(); onToggle(); }}
       onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onToggle(); } }}

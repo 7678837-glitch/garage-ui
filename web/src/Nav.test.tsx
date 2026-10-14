@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -241,4 +241,48 @@ test("mobile navigation stays open on rejected dirty leave and closes on accepte
   await waitFor(() => expect(window.location.hash).toBe("#keys"));
   expect(screen.queryByRole("dialog", { name: "Sections" })).toBeNull();
   expect(document.activeElement).toBe(menu);
+});
+
+
+test("mobile Menu lives in the header and a desktop resize clears the open drawer", async () => {
+  let narrow = true;
+  let changed: (() => void) | undefined;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches() { return query === "(max-width: 899px)" && narrow; },
+    addEventListener: (_: string, listener: () => void) => { if (query === "(max-width: 899px)") changed = listener; },
+    removeEventListener: vi.fn(),
+  }));
+  stubSignedIn("viewer");
+  renderApp();
+  const menu = await screen.findByRole("button", { name: "Menu" });
+  expect(menu.closest(".console-topbar")).toBeTruthy();
+  const account = document.querySelector<HTMLDetailsElement>(".console-session");
+  expect(account).toBeTruthy();
+  account?.setAttribute("open", "");
+  fireEvent.click(menu);
+  expect(screen.getByRole("dialog", { name: "Sections" })).toBeTruthy();
+  act(() => { narrow = false; changed?.(); });
+  expect(account?.open).toBe(false);
+  expect(screen.queryByRole("dialog", { name: "Sections" })).toBeNull();
+  expect(sectionsNav().getByRole("link", { name: "Settings" })).toBeTruthy();
+  act(() => { narrow = true; changed?.(); });
+  expect(screen.queryByRole("dialog", { name: "Sections" })).toBeNull();
+  expect(menu.getAttribute("aria-expanded")).toBe("false");
+});
+
+
+test("one account disclosure retains identity and status outside its compact summary", async () => {
+  stubSignedIn("viewer");
+  renderApp();
+  await screen.findByText("ok · test");
+  const account = document.querySelector<HTMLDetailsElement>(".console-session");
+  const summary = account?.querySelector("summary");
+  expect(summary?.getAttribute("aria-label")).toBe("Bea · viewer");
+  expect(summary?.textContent).toBe("Bea");
+  expect(account?.open).toBe(false);
+  expect(account?.querySelectorAll("summary")).toHaveLength(1);
+  expect(account?.querySelector(".console-account-identity")?.textContent).toBe("Bea · viewer");
+  expect(account?.querySelector(".console-health")?.textContent).toContain("ok · test");
+  expect(account?.querySelector(".console-health")?.textContent).toContain("Garage v2.4.1");
+  expect(account?.querySelector("button")?.textContent).toBe("Log out");
 });
