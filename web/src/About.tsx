@@ -115,7 +115,7 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
   });
   const failure = capabilities.error ? failureOf(capabilities.error) : null;
   return (
-    <section className="grid gap-4" aria-label={copy("ui.about")}>
+    <section className="ui-panel" aria-label={copy("ui.about")}>
       <h2 className="text-lg font-semibold">{copy("ui.about")}</h2>
       <p>{garageLine(garageVersion)}</p>
       {failure && !isGarageDown(failure) ? (
@@ -125,7 +125,7 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
             {failure.code ? ` ${failure.code}` : ""}
           </p>
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void capabilities.refetch();

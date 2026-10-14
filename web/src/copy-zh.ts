@@ -1,6 +1,17 @@
 import type { CopyKey } from "./copy-en";
 
 export const zh = {
+  "nav.close": "关闭导航",
+  "nav.skip": "跳转到内容",
+  "settings.appearance": "外观",
+  "common.create": "创建",
+  "common.selectNode": "选择节点",
+  "common.currentPage": "筛选仅作用于当前页",
+  "common.pagination": "分页",
+  "common.page": "第 {page} 页",
+  "common.previousPage": "上一页",
+  "common.nextPage": "下一页",
+
   "nav.sections": "分区",
   "nav.menu": "菜单",
   "nav.breadcrumb": "路径",

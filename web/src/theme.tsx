@@ -24,6 +24,7 @@ export function readThemeChoice(storage: Pick<Storage, "getItem">): ThemeChoice 
 
 export function writeThemeChoice(storage: Pick<Storage, "setItem">, choice: ThemeChoice): void {
   storage.setItem(themeStorageKey, choice);
+  window.dispatchEvent(new Event("garage-theme-change"));
 }
 
 export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): ResolvedTheme {
@@ -47,6 +48,22 @@ function applyResolvedTheme(root: HTMLElement, resolved: ResolvedTheme): void {
 
 export function bootTheme(root: HTMLElement, storage: Pick<Storage, "getItem">): void {
   applyResolvedTheme(root, resolveTheme(readThemeChoice(storage), prefersDark()));
+}
+
+export function useThemeSync() {
+  useEffect(() => {
+    const media = typeof window.matchMedia === "function" ? window.matchMedia(colorSchemeQuery) : null;
+    const sync = () => applyResolvedTheme(document.documentElement, resolveTheme(readThemeChoice(localStorage), media?.matches ?? false));
+    sync();
+    media?.addEventListener("change", sync);
+    window.addEventListener("garage-theme-change", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      media?.removeEventListener("change", sync);
+      window.removeEventListener("garage-theme-change", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 }
 
 export function ThemeChooser() {
@@ -75,7 +92,7 @@ export function ThemeChooser() {
       {themeOptions.map(([option, label]) => (
         <button
           key={option}
-          className="border border-ink px-3 py-1 text-left"
+          className="ui-button"
           type="button"
           aria-pressed={choice === option}
           onClick={() => {

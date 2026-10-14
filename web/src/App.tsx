@@ -34,7 +34,7 @@ import {
   useLocationHash,
   type SectionId,
 } from "./Nav";
-import { ThemeChooser } from "./theme";
+import { ThemeChooser, useThemeSync } from "./theme";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
 import { Workers } from "./Workers";
@@ -66,14 +66,14 @@ type SessionStatus = AuthStatus & {
 };
 
 function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
-  const width = wide ? "max-w-5xl px-6 pb-10" : "max-w-sm px-6 pb-10";
-  return (
-    <main className="min-h-screen bg-canvas text-ink">
-      <header className="flex flex-wrap items-center justify-between gap-3 p-6">
-        <h1 className="text-xl font-semibold">{copy("ui.garage.ui")}</h1>
-        <ThemeChooser />
-      </header>
-      <div className={width}>{children}</div>
+  return wide ? <div className="console-root">{children}</div> : (
+    <main className="auth-shell" id="main-content">
+      <div className="auth-preferences"><ThemeChooser /></div>
+      <section className="auth-card">
+        <h1 className="console-wordmark">Garage <span>UI</span></h1>
+        {children}
+        <LanguageChooser />
+      </section>
     </main>
   );
 }
@@ -90,10 +90,10 @@ function Field({
   registration: UseFormRegisterReturn;
 }) {
   return (
-    <label className="block">
+    <label className="ui-field">
       <span className="text-sm">{label}</span>
       <input
-        className="mt-1 w-full border border-line px-2 py-1"
+        className="ui-input"
         type={type}
         autoComplete={autoComplete}
         {...registration}
@@ -123,7 +123,7 @@ function SetupForm() {
   });
   return (
     <form
-      className="grid gap-3"
+      className="ui-form"
       onSubmit={form.handleSubmit((input) => setup.mutate(input))}
     >
       <Field
@@ -142,7 +142,7 @@ function SetupForm() {
       <ErrorText message={errors.password?.message} />
       <ErrorText message={setup.error instanceof Error ? setup.error.message : undefined} />
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button ui-button-primary"
         type="submit"
         disabled={setup.isPending}
       >
@@ -166,7 +166,7 @@ function LoginForm() {
   });
   return (
     <form
-      className="grid gap-3"
+      className="ui-form"
       onSubmit={form.handleSubmit((input) => login.mutate(input))}
     >
       <Field
@@ -185,7 +185,7 @@ function LoginForm() {
       <ErrorText message={errors.password?.message} />
       <ErrorText message={login.error instanceof Error ? login.error.message : undefined} />
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button ui-button-primary"
         type="submit"
         disabled={login.isPending}
       >
@@ -200,9 +200,10 @@ function useHashSection(role: string) {
   const select = (id: SectionId) => {
     const next = `#${id}`;
     if (!releaseHash(next)) {
-      return;
+      return false;
     }
     assignHash(next);
+    return true;
   };
   return { hash, section: sectionFromHash(hash, role), select };
 }
@@ -254,7 +255,7 @@ export function Breadcrumb({
   const { t } = useI18n();
   const crumbs = breadcrumbCrumbs(section, hash, t);
   return (
-    <nav aria-label={t("nav.breadcrumb")} className="flex flex-wrap items-center gap-2">
+    <nav aria-label={t("nav.breadcrumb")} className="console-breadcrumb">
       {crumbs.map((crumb, index) => (
         <span
           key={crumb.kind === "link" ? crumb.id : "current"}
@@ -340,7 +341,7 @@ function GarageBanner() {
     <>
       <p role="alert">{copy("ui.garage.admin.api.is.not.reachable")}</p>
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button ui-button-primary"
         type="button"
         onClick={() => {
           void client.refetchQueries({
@@ -362,13 +363,7 @@ function Home({ status }: { status: SessionStatus }) {
     queryFn: () => api<Health>("/healthz"),
   });
   const { hash, section, select } = useHashSection(status.role ?? "");
-  // A narrow viewport decides only the initial collapsed state. A resize listener would close Menu again after the user opens it.
-  const [menuOpen, setMenuOpen] = useState(() => {
-    if (typeof window.matchMedia !== "function") {
-      return true;
-    }
-    return !window.matchMedia("(max-width: 639px)").matches;
-  });
+  const [menuOpen, setMenuOpen] = useState(false);
   const form = useForm<PasswordChange>({
     resolver: zodResolver(passwordChange),
     defaultValues: { current_password: "", new_password: "" },
@@ -407,74 +402,53 @@ function Home({ status }: { status: SessionStatus }) {
   // An admin ignores the download bit. A read-only user sees preview and download only when that bit is set.
   const canTransfer = admin || status.can_download === true;
   return (
-    <div className="flex flex-col gap-6 sm:flex-row">
-      <Nav
-        role={status.role ?? ""}
-        section={section}
-        open={menuOpen}
-        onToggle={() => setMenuOpen((open) => !open)}
-        onSelect={select}
-      />
-      <div className="grid min-w-0 flex-1 gap-6">
-        <GarageBanner />
-        <p
-          className="inline-block w-fit border border-ink px-2 py-0.5"
-          role="status"
-          aria-label={copy("ui.health.status")}
-        >
-          {healthText}
-        </p>
-        <p>
-          {status.username} · {status.role}
-        </p>
-        <p>{garageLine(status.garage_version)}</p>
-        <Breadcrumb section={section} hash={hash} onSelect={select} />
-        {section === "overview" ? (
-          <>
-            <div className="grid max-w-sm gap-6">
-              {status.garage_write_blocked === true ? (
-                <p role="alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p>
-              ) : null}
-              {status.tls_insecure === true ? (
-                <p role="alert">{copy("ui.tls.certificate.verification.is.off")}</p>
-              ) : null}
-              <button
-                className="border border-ink px-3 py-1 text-left"
-                type="button"
-                disabled={logout.isPending}
-                onClick={() => logout.mutate()}
-              >
-                {logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}
-              </button>
-            </div>
-            {admin ? <ClusterHealth /> : null}
-          </>
-        ) : null}
+    <div className="console-layout">
+      <a href="#main-content" className="console-skip" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("nav.skip")}</a>
+      <Nav role={status.role ?? ""} section={section} open={menuOpen} onToggle={() => setMenuOpen((open) => !open)} onSelect={select} />
+      <div className="console-workspace">
+        <header className="console-topbar">
+          <Breadcrumb section={section} hash={hash} onSelect={select} />
+          <div className="console-session">
+            <span className="ui-muted">{status.username} · {status.role}</span>
+            <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button>
+          </div>
+          <div className="console-health">
+            <p className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</p>
+            <p className="ui-muted">{garageLine(status.garage_version)}</p>
+          </div>
+        </header>
+        <main id="main-content" tabIndex={-1} className={section === "settings" ? "console-content console-settings" : "console-content"}>
+          <GarageBanner />
+          {status.garage_write_blocked === true ? <p role="alert" className="ui-alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p> : null}
+          {status.tls_insecure === true ? <p role="alert" className="ui-alert">{copy("ui.tls.certificate.verification.is.off")}</p> : null}
+          {section === "overview" && admin ? <ClusterHealth /> : null}
         {section === "nodes" && admin ? <ClusterNodes /> : null}
         {section === "workers" && admin ? <Workers /> : null}
         {section === "block-errors" && admin ? <BlockErrors /> : null}
         {section === "audit" && admin ? <Audit /> : null}
         {section === "settings" ? (
-          <>
-            <LanguageChooser />
+          <div className="ui-page">
+            <header className="ui-page-header"><h2>{t("nav.settings")}</h2></header>
+            <section className="ui-panel"><h3>{t("settings.appearance")}</h3><ThemeChooser /><LanguageChooser /></section>
+            <section className="ui-panel"><h3>{copy("ui.change.password")}</h3>
             <form
-              className="grid max-w-sm gap-3"
+              className="ui-form"
               onSubmit={form.handleSubmit((input) => change.mutate(input))}
             >
-              <label className="block">
+              <label className="ui-field">
                 <span className="text-sm">{copy("ui.current.password")}</span>
                 <input
-                  className="mt-1 w-full border border-line px-2 py-1"
+                  className="ui-input"
                   type="password"
                   autoComplete="current-password"
                   {...form.register("current_password")}
                 />
               </label>
               <ErrorText message={errors.current_password?.message} />
-              <label className="block">
+              <label className="ui-field">
                 <span className="text-sm">{copy("ui.new.password")}</span>
                 <input
-                  className="mt-1 w-full border border-line px-2 py-1"
+                  className="ui-input"
                   type="password"
                   autoComplete="new-password"
                   {...form.register("new_password")}
@@ -486,14 +460,15 @@ function Home({ status }: { status: SessionStatus }) {
               />
               {passwordStatus ? <p>{passwordStatus}</p> : null}
               <button
-                className="border border-ink px-3 py-1 text-left"
+                className="ui-button ui-button-primary"
                 type="submit"
                 disabled={change.isPending}
               >
                 {copy("ui.change.password")}</button>
             </form>
+            </section>
             <About garageVersion={status.garage_version} />
-          </>
+          </div>
         ) : null}
         {section === "buckets" ? (
           <Buckets canManage={admin} canWrite={admin} canTransfer={canTransfer} />
@@ -503,6 +478,7 @@ function Home({ status }: { status: SessionStatus }) {
           <Users selfUsername={status.username} />
         ) : null}
         {section === "tokens" && admin ? <AdminTokens /> : null}
+        </main>
       </div>
     </div>
   );
@@ -525,6 +501,7 @@ function clearSignedIn(client: QueryClient): void {
 }
 
 export function App() {
+  useThemeSync();
   const client = useQueryClient();
   // A child request can return before the effect runs. Attach the hook before useQuery, and detach it on unmount.
   bindUnauthenticated(() => clearSignedIn(client));

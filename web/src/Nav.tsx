@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CopyKey } from "./copy-en";
 import { useI18n } from "./i18n";
 
@@ -252,53 +252,52 @@ export function sectionCopyKey(id: SectionId): CopyKey {
   return sectionCopy[id];
 }
 
-export function Nav({
-  role,
-  section,
-  open,
-  onToggle,
-  onSelect,
-}: {
+export function Nav({ role, section, open, onToggle, onSelect }: {
   role: string;
   section: SectionId;
   open: boolean;
   onToggle: () => void;
-  onSelect: (id: SectionId) => void;
+  onSelect: (id: SectionId) => boolean;
 }) {
   const { t } = useI18n();
-  const visible = sections.filter((item) => !item.adminOnly || role === "admin");
-  return (
-    <nav className="grid w-full content-start gap-2 sm:w-44 sm:shrink-0" aria-label={t("nav.sections")}>
-      <button
-        className="border border-ink px-3 py-1 text-left"
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        {t("nav.menu")}
-      </button>
-      {open ? (
-        <div className="grid gap-2">
-          {visible.map((item) => (
-            <a
-              key={item.id}
-              href={`#${item.id}`}
-              aria-current={section === item.id ? "page" : undefined}
-              className={
-                section === item.id
-                  ? "block border border-ink px-3 py-1 font-semibold"
-                  : "block border border-line px-3 py-1"
-              }
-              onClick={(event) => {
-                event.preventDefault();
-                onSelect(item.id);
-              }}
-            >
-              {t(sectionCopy[item.id])}
-            </a>
-          ))}
-        </div>
-      ) : null}
-    </nav>
-  );
+  const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 639px)").matches);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const menu = useRef<HTMLButtonElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 639px)");
+    const changed = () => setMobile(media.matches);
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+  useEffect(() => {
+    if (!mobile || !open) return;
+    const element = dialog.current;
+    if (!element) return;
+    if (typeof element.showModal === "function") element.showModal();
+    else element.setAttribute("open", "");
+    close.current?.focus();
+    const trigger = menu.current;
+    return () => { element.close?.(); trigger?.focus(); };
+  }, [mobile, open]);
+  const links = <nav className="console-nav" aria-label={t("nav.sections")}>
+    <div className="console-wordmark">Garage <span>UI</span></div>
+    {sections.filter((item) => !item.adminOnly || role === "admin").map((item) => <a
+      key={item.id} href={`#${item.id}`} aria-current={section === item.id ? "page" : undefined}
+      className="console-nav-link"
+      onClick={(event) => {
+        event.preventDefault();
+        if (onSelect(item.id) && mobile && open) onToggle();
+      }}
+    >{t(sectionCopy[item.id])}</a>)}
+  </nav>;
+  return <>
+    <button ref={menu} className="ui-button console-menu" type="button" aria-expanded={mobile && open} aria-controls="console-navigation" onClick={onToggle}>{t("nav.menu")}</button>
+    {mobile ? open ? <dialog ref={dialog} id="console-navigation" className="console-drawer" aria-modal="true" aria-label={t("nav.sections")}
+      onCancel={(event) => { event.preventDefault(); onToggle(); }}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onToggle(); } }}
+      onClick={(event) => { if (event.target === event.currentTarget) { const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onToggle(); } }}
+    ><button ref={close} type="button" className="ui-button console-drawer-close" onClick={onToggle}>{t("nav.close")}</button>{links}</dialog> : null : <aside id="console-navigation" className="console-sidebar">{links}</aside>}
+  </>;
 }

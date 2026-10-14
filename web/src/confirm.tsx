@@ -86,7 +86,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby={titleId}
-      className="border border-neutral-900 bg-white p-4 text-neutral-900"
+      className="ui-dialog"
       onCancel={(event) => {
         event.preventDefault();
         onCancel();
@@ -116,7 +116,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       {level === "high" ? (
         <label className="mt-2 block">
           {fill(copy("ui.type.to.confirm"), { name: name })}<input
-            className="mt-1 w-full border border-neutral-300 px-2 py-1"
+            className="ui-input"
             value={typed}
             autoComplete="off"
             spellCheck={false}
@@ -128,13 +128,13 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       ) : null}
       <button
         ref={cancelRef}
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={onCancel}
       >
         {copy("ui.cancel")}</button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button ui-button-danger"
         type="button"
         disabled={!canConfirm || pending}
         onClick={() => {

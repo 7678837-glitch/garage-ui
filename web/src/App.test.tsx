@@ -1078,17 +1078,17 @@ test("an unknown hash shows overview", async () => {
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
 });
 
-test("Menu toggles the links", async () => {
+test("mobile Menu toggles the drawer links", async () => {
+  stubNavMedia(true);
   stubSignedIn("admin");
   renderApp();
-  expect(await findSectionLink("Overview")).toBeTruthy();
+  const menu = await screen.findByRole("button", { name: "Menu" });
+  fireEvent.click(menu);
   expect(sectionsNav().getByRole("link", { name: "Buckets" })).toBeTruthy();
   expect(sectionsNav().getByRole("link", { name: "Keys" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-  expect(sectionsNav().queryByRole("link", { name: "Overview" })).toBeNull();
-  expect(sectionsNav().queryByRole("link", { name: "Buckets" })).toBeNull();
-  expect(sectionsNav().queryByRole("link", { name: "Keys" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
+  expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
+  fireEvent.click(menu);
   await chooseSection("Keys");
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(window.location.hash).toBe("#keys");
@@ -1117,7 +1117,7 @@ test("a viewport below 640px hides section links until Menu opens them", async (
   stubSignedIn("admin");
   renderApp();
   expect(await screen.findByRole("button", { name: "Menu" })).toBeTruthy();
-  expect(sectionsNav().queryByRole("link", { name: "Buckets" })).toBeNull();
+  expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Menu" }));
   expect(sectionsNav().getByRole("link", { name: "Buckets" })).toBeTruthy();
 
@@ -1137,7 +1137,8 @@ test("a signed-in page shows one breadcrumb built from the section labels", asyn
     within(overview).getByText("Overview", { selector: "[aria-current='page']" }),
   ).toBeTruthy();
   const version = screen.getAllByText("Garage v2.4.1")[0];
-  expect(version.nextElementSibling).toBe(overview);
+  expect(overview.closest("header")).toBeTruthy();
+  expect(version.closest(".console-health")).toBeTruthy();
   expect(
     overview.compareDocumentPosition(screen.getByRole("heading", { name: "Cluster health" })),
   ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -1150,8 +1151,8 @@ test("a signed-in page shows one breadcrumb built from the section labels", asyn
   expect(within(keys).queryByRole("link", { name: "Keys" })).toBeNull();
   expect(within(keys).getByText("Keys", { selector: "[aria-current='page']" })).toBeTruthy();
   const keysHeading = await screen.findByRole("heading", { name: "Keys" });
-  expect(screen.getByText("Garage v2.4.1").nextElementSibling).toBe(keys);
-  expect(keys.nextElementSibling?.contains(keysHeading)).toBe(true);
+  expect(keys.closest("header")).toBeTruthy();
+  expect(document.getElementById("main-content")?.contains(keysHeading)).toBe(true);
   fireEvent.click(within(keys).getByRole("link", { name: "Overview" }));
   expect(window.location.hash).toBe("#overview");
 

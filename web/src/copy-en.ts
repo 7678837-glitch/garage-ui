@@ -1,4 +1,15 @@
 export const en = {
+  "nav.close": "Close navigation",
+  "nav.skip": "Skip to content",
+  "settings.appearance": "Appearance",
+  "common.create": "Create",
+  "common.selectNode": "Select node",
+  "common.currentPage": "Filters apply to the current page",
+  "common.pagination": "Pagination",
+  "common.page": "Page {page}",
+  "common.previousPage": "Previous page",
+  "common.nextPage": "Next page",
+
   "nav.sections": "Sections",
   "nav.menu": "Menu",
   "nav.breadcrumb": "Breadcrumb",

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { bootTheme, readThemeChoice, resolveTheme, ThemeChooser, writeThemeChoice } from "./theme";
+import { bootTheme, readThemeChoice, resolveTheme, ThemeChooser, useThemeSync, writeThemeChoice } from "./theme";
 
 afterEach(() => {
   cleanup();
@@ -113,4 +113,15 @@ test("pressing System removes a forced dark choice when the media query is light
   expect(localStorage.getItem("garage-ui-theme")).toBe("system");
   expect(pressed("System")).toBe("true");
   expect(pressed("Dark")).toBe("false");
+});
+
+test("system theme keeps tracking while appearance controls are unmounted", () => {
+  const media = stubMedia(false);
+  function Sync() { useThemeSync(); return null; }
+  render(<Sync />);
+  expect(document.documentElement.className).toBe("light");
+  act(() => media.preferDark());
+  expect(document.documentElement.className).toBe("dark");
+  act(() => writeThemeChoice(localStorage, "light"));
+  expect(document.documentElement.className).toBe("light");
 });

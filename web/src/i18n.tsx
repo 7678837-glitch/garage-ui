@@ -185,10 +185,10 @@ export function InstantText({ value }: { value: string }) {
 export function LanguageChooser() {
   const { language, setLanguage, t } = useI18n();
   return (
-    <label className="block max-w-sm text-sm">
+    <label className="ui-field">
       {t("settings.language")}
       <select
-        className="mt-1 w-full border border-ink px-2 py-1"
+        className="ui-input"
         value={language}
         onChange={(event) => {
           const next = event.target.value === "zh-CN" ? "zh-CN" : "en";
