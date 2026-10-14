@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-// 工程没有 @types/node，不能改 lockfile。测试进程用 getBuiltinModule 读样式表原文。
+// Read the stylesheet through the test runtime without adding Node type dependencies.
 const readFileSync = (
   globalThis as unknown as {
     process: {
@@ -11,7 +11,7 @@ const readFileSync = (
   }
 ).process.getBuiltinModule("node:fs").readFileSync;
 
-// jsdom 会把 file URL 解析成 localhost，Vite 也会改写 new URL，所以只切 import.meta.url。
+// Slice import.meta.url because jsdom rewrites file URLs and Vite transforms new URL.
 function stylesheetPath(): string {
   const href = import.meta.url;
   const prefix = "file://";
@@ -25,12 +25,8 @@ function stylesheetPath(): string {
 function ruleFor(css: string, selector: string) {
   const blocks = css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g);
   for (const match of blocks) {
-    const selectors = match[1]
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    if (selectors.includes(selector)) {
-      return { selectors, body: match[2] };
+    if (match[1].trim() === selector) {
+      return { selector, body: match[2] };
     }
   }
   return undefined;
@@ -38,8 +34,11 @@ function ruleFor(css: string, selector: string) {
 
 test("links share the button focus-visible outline", () => {
   const source = readFileSync(stylesheetPath(), "utf8");
-  const rule = ruleFor(source, "button:focus-visible");
-  expect(rule?.selectors).toContain("a:focus-visible");
-  expect(rule?.body).toContain("outline: 2px solid var(--ink)");
-  expect(rule?.body).toContain("outline-offset: 2px");
+  const rule = ruleFor(
+    source,
+    ":where(a, button, input, select, textarea, summary, [tabindex]):focus-visible",
+  );
+  expect(rule).toBeDefined();
+  expect(rule?.body).toContain("outline: 2px solid var(--accent)");
+  expect(rule?.body).toContain("outline-offset: 3px");
 });

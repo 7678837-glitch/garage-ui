@@ -603,6 +603,12 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
           { status: 200 },
         );
       }
+      if (url.includes("/api/metrics")) {
+        return new Response(
+          JSON.stringify({ s3Requests: 0, s3Errors: 0, blockReadBytes: 0, blockWriteBytes: 0 }),
+          { status: 200 },
+        );
+      }
       if (url.includes("/api/cluster/status")) {
         return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
       }
@@ -844,6 +850,7 @@ test("shows a bucket id and its alias to an admin", async () => {
   await chooseSection("Buckets");
   expect(await screen.findByText("bucket-ada")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   await chooseSection("Users");
   expect(screen.getByRole("heading", { name: "Users" })).toBeTruthy();
@@ -851,7 +858,9 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(screen.getByText("ada-key")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Edit key-ada"));
   expect(screen.getByRole("button", { name: "Rename key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "View secret for key-ada" })).toBeTruthy();
@@ -1016,7 +1025,8 @@ test("the Buckets nav action sets exactly #buckets", async () => {
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   await chooseSection("Buckets");
   expect(window.location.hash).toBe("#buckets");
-  expect(await screen.findByRole("button", { name: "Create bucket" })).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   expect(screen.getByText("bucket-ada")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
 });
