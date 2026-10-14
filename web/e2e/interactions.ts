@@ -17,7 +17,10 @@ export async function openRowActions(row: Locator): Promise<void> {
 export async function selectChoice(control: Locator, label: string): Promise<void> {
   await expect(control).toHaveAttribute("role", "combobox", { timeout: 20_000 });
   await control.click();
-  const popupId = await control.getAttribute("aria-controls");
+  const openedPopup = control.page().getByRole("listbox");
+  await expect(openedPopup).toHaveCount(1);
+  await expect(openedPopup).toBeVisible();
+  const popupId = await openedPopup.getAttribute("id");
   expect(popupId).toBeTruthy();
   const popup = control.page().locator(`[role="listbox"][id="${popupId}"]`);
   await expect(popup).toBeVisible();

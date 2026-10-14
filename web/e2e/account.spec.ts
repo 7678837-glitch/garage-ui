@@ -120,11 +120,17 @@ test.describe.serial("accounts", () => {
     if (!box) throw new Error("Current password field has no visible hit target");
     expect(box.height, "Phone TextField wrapper hit target").toBeGreaterThanOrEqual(36);
     expect(await currentPassword.evaluate((input) => parseFloat(getComputedStyle(input).fontSize))).toBeGreaterThanOrEqual(16);
-    expect(await field.evaluate((wrapper) => {
+    const edge = { x: Math.floor(box.x + box.width / 2), y: Math.ceil(box.y) };
+    const hit = await field.evaluate((wrapper, point) => {
+      const target = document.elementFromPoint(point.x, point.y);
       const bounds = wrapper.getBoundingClientRect();
-      return document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 0.5) === wrapper;
-    }), "TextField border press targets the wrapper").toBe(true);
-    await field.click({ position: { x: box.width / 2, y: 0.5 } });
+      return { wrapper: target === wrapper, tag: target?.tagName,
+        bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } };
+    }, edge);
+    expect(hit.wrapper, `TextField whole-pixel border press targets the wrapper: ${JSON.stringify({ edge, ...hit })}`).toBe(true);
+    await currentPassword.evaluate((input) => input.blur());
+    await expect(currentPassword).not.toBeFocused();
+    await page.mouse.click(edge.x, edge.y);
     await expect(currentPassword, "TextField border press focuses the input").toBeFocused();
     await page.setViewportSize({ width: 1280, height: 800 });
     await currentPassword.fill(administrator.password);
