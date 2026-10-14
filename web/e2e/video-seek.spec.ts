@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, bucketIdFromRow, openNavigation, openRowActions, openUpload, selectChoice } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -420,7 +421,7 @@ async function dragLine(page: Page, startX: number, endX: number, y: number): Pr
 async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 

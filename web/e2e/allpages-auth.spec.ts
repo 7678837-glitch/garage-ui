@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertRenderedLayout } from "./layout";
 import { administrator } from "./accounts";
 import { test, expect } from '@playwright/test';
@@ -30,10 +31,10 @@ for (const width of [360, 390, 768, 1280])
         await page.screenshot({ path: `${dir}/login-${width}-viewport.png`, fullPage: false });
         await page.getByLabel('Username', { exact: true }).fill(username);
         await page.getByLabel('Password', { exact: true }).fill('incorrect-synthetic-password');
-        await page.getByRole('button', { name: 'Log in', exact: true }).click();
+        expect((await submitLogin(page)).status()).toBe(401);
         await expect(page.locator('.text-danger').first()).toBeVisible();
         await page.getByLabel('Password', { exact: true }).fill(password);
-        await page.getByRole('button', { name: 'Log in', exact: true }).click();
+        await submitLogin(page);
         await assertAuthenticated(page);
         await openAccount(page);
         await assertRenderedLayout(page, `account at ${width}`);

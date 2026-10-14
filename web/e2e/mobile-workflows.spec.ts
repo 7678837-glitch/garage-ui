@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, request, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
@@ -12,7 +13,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
     await page.goto("/");
     await page.getByLabel("Username").fill(administrator.username);
     await page.getByLabel("Password").fill(administrator.password);
-    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await submitLogin(page);
     await assertAuthenticated(page);
     await chooseTheme(page, theme);
     const cleanup = await request.newContext({ baseURL: "http://127.0.0.1:3909", storageState: await page.context().storageState(), timeout: 10_000 });

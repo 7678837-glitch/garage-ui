@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, test, request as requestContextFactory, type Locator, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,24 +40,42 @@ async function accessible(page: Page, label: string): Promise<void> {
 async function headerLayout(page: Page, label: string): Promise<void> {
   const header = page.getByRole("banner");
   const menu = header.getByRole("button", { name: /^(Menu|菜单)$/ });
-  const brand = header.locator('img[src$="/brand/garage-ui.svg"]').locator("..");
+  const context = header.locator(".console-mobile-brand");
   const summary = header.locator(".console-account-trigger");
   const account = page.getByRole("dialog").filter({ has: page.getByRole("button", { name: /^(Log out|退出)$/ }) });
-  const breadcrumb = header.getByRole("navigation", { name: /^(Breadcrumb|路径)$/ });
+  await expect(header.getByRole("navigation", { name: /^(Breadcrumb|路径)$/ })).toHaveCount(0);
+  await expect(context).toBeVisible();
+  if (new URL(page.url()).hash.startsWith("#key/")) {
+    const back = context.getByRole("link");
+    await expect(back).toBeVisible();
+    await expect(back).toHaveAttribute("href", "#keys");
+    await expect(back).toHaveText(/^← /);
+  } else {
+    await expect(context.locator('img[src$="/brand/garage-ui.svg"]')).toBeVisible();
+    await expect(context).toHaveText("Garage UI");
+  }
   await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(header.getByRole("status")).toHaveCount(0);
   expect(await summary.innerText()).not.toMatch(/Garage|Health|admin|ok ·/);
-  const boxes = await Promise.all([menu, brand, summary, breadcrumb].map((item) => item.boundingBox()));
-  if (boxes.some((box) => !box)) throw new Error("Mobile header item has no bounding box");
-  const [menuBox, brandBox, accountBox, breadcrumbBox] = boxes;
-  if (!menuBox || !brandBox || !accountBox || !breadcrumbBox) throw new Error("Mobile header boxes missing");
+  const boxes = await Promise.all([menu, context, summary].map((item) => item.boundingBox()));
+  const [menuBox, contextBox, accountBox] = boxes;
+  if (!menuBox || !contextBox || !accountBox) throw new Error("Mobile header boxes missing");
   expect(menuBox.height).toBeGreaterThanOrEqual(36);
   expect(accountBox.height).toBeGreaterThanOrEqual(36);
-  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(brandBox.x);
-  expect(brandBox.x + brandBox.width).toBeLessThanOrEqual(accountBox.x);
-  expect(accountBox.x + accountBox.width).toBeLessThanOrEqual(360);
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(contextBox.x);
+  expect(contextBox.x + contextBox.width).toBeLessThanOrEqual(accountBox.x);
+  const center = menuBox.y + menuBox.height / 2;
+  for (const box of [menuBox, contextBox, accountBox]) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+    expect(Math.abs(box.y + box.height / 2 - center)).toBeLessThanOrEqual(4);
+  }
   expect(Math.abs(menuBox.y - accountBox.y)).toBeLessThanOrEqual(4);
-  expect(breadcrumbBox.y).toBeGreaterThanOrEqual(Math.max(menuBox.y + menuBox.height, accountBox.y + accountBox.height));
+  const headerBox = await header.boundingBox();
+  if (!headerBox) throw new Error("Mobile header has no bounding box");
+  expect(headerBox.height).toBeLessThanOrEqual(60);
   writeFileSync(`${evidenceDir}/${label}-header.json`, JSON.stringify({ boxes, summaryText: await summary.innerText(), accessibleName: await summary.getAttribute("aria-label") }, null, 2));
   await page.screenshot({ path: `${evidenceDir}/${label}-viewport.png`, fullPage: false });
   await openAccount(page);
@@ -92,7 +111,7 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
     await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", /garage-ui\.svg/);
     await page.getByLabel("Username").fill(administrator.username);
     await page.getByLabel("Password").fill(administrator.password);
-    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await submitLogin(page);
     await assertAuthenticated(page);
     await chooseTheme(page, theme);
     mkdirSync(evidenceDir, { recursive: true });
@@ -189,10 +208,12 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
         expect(prompt.type()).toBe("confirm");
         await prompt.dismiss();
         await leave;
-        await expect(page.getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute("aria-selected", "true");
         const close = page.getByRole("button", { name: "Close navigation", exact: true });
         if (resize < 900) await expect(close).toBeVisible();
         if (await close.isVisible()) await close.click();
+        await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toHaveCount(0);
+        await expect.poll(() => new URL(page.url()).hash).toBe(`#key/${id}/settings`);
+        await expect(page.getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute("aria-selected", "true");
         await edit.click();
         await expect(input).toHaveValue(draft);
       }
@@ -284,7 +305,7 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
           await translated.goto("/");
           await translated.getByLabel("Username").fill(username);
           await translated.getByLabel("Password").fill(password);
-          await translated.getByRole("button", { name: "Log in", exact: true }).click();
+          await submitLogin(translated);
           await assertAuthenticated(translated);
           await chooseTheme(translated, theme);
           await openNavigation(translated);

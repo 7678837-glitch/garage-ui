@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, request, test } from "@playwright/test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
   const cleanup = await request.newContext({ baseURL: "http://127.0.0.1:3909", storageState: await page.context().storageState(), timeout: 10_000 });
   const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "garage_csrf")?.value ?? "";

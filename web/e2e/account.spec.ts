@@ -1,3 +1,4 @@
+import { requestLogin, submitLogin } from "./login";
 import { assertAuthenticated, chooseTheme, openAccount, openRowActions } from "./interactions";
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
@@ -28,7 +29,7 @@ async function logIn(page: Page, username: string, password: string): Promise<vo
   await page.goto("/");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 
@@ -53,11 +54,11 @@ test.describe.serial("accounts", () => {
     const cleanup = await playwright.request.newContext({ baseURL: testInfo.project.use.baseURL, timeout: 10_000 });
     try {
       let password = administrator.password;
-      let login = await cleanup.post("/api/auth/login", { data: { username: administrator.username, password } });
+      let login = await requestLogin(cleanup, { username: administrator.username, password });
       if (login.status() === 401) {
         expect(await login.json()).toMatchObject({ code: "invalid_credentials" });
         password = nextPassword;
-        login = await cleanup.post("/api/auth/login", { data: { username: administrator.username, password } });
+        login = await requestLogin(cleanup, { username: administrator.username, password });
       }
       expect(login.status(), "Account cleanup login").toBe(200);
       const csrf = (await cleanup.storageState()).cookies.find((cookie) => cookie.name === "garage_csrf")?.value;
@@ -80,7 +81,7 @@ test.describe.serial("accounts", () => {
             headers, data: { current_password: nextPassword, new_password: administrator.password },
           });
           expect(restored.status(), "Account cleanup administrator password").toBe(200);
-          const verified = await cleanup.post("/api/auth/login", { data: administrator });
+          const verified = await requestLogin(cleanup, administrator);
           expect(verified.status(), "Restored administrator can log in").toBe(200);
         }
       }

@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertRenderedLayout } from "./layout";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ async function login(page: Page) {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 async function navigate(page: Page, name: string) {

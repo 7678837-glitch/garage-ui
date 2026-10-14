@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, openAccount, openNavigation, selectChoice } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -25,7 +26,7 @@ test("chinese pages stay inside the viewport", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();

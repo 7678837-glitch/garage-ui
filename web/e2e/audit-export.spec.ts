@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -8,7 +9,7 @@ async function logIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 

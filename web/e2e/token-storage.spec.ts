@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, openAccount } from "./interactions";
 import { expect, type Page, type Response, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -137,7 +138,7 @@ async function logIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
   await expect(page.getByRole("heading", { name: "Cluster health" })).toBeVisible();
   await expect(page.getByText("Known nodes", { exact: true })).toBeVisible();

@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { test, expect, type Page } from "@playwright/test";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { administrator } from "./accounts";
@@ -13,7 +14,7 @@ async function login(page: Page, width: number) {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 async function nav(page: Page, name: "Buckets" | "Keys") {

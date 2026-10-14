@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertRenderedLayout } from "./layout";
 import { administrator } from "./accounts";
 import { test, expect, type Page } from '@playwright/test';
@@ -5,7 +6,7 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { assertAuthenticated, openNavigation, openAccount, openDisclosure, selectChoice, openRowActions } from './interactions';
 const dir = process.env.ALLPAGES_EVIDENCE ?? '/tmp/garage-ui-allpages-admin';
 const admin = administrator.username, password = administrator.password;
-async function login(page: Page, user = admin, pass = password) { await page.goto('/'); await page.getByLabel('Username', { exact: true }).fill(user); await page.getByLabel('Password', { exact: true }).fill(pass); await page.getByRole('button', { name: 'Log in', exact: true }).click(); await assertAuthenticated(page); }
+async function login(page: Page, user = admin, pass = password) { await page.goto('/'); await page.getByLabel('Username', { exact: true }).fill(user); await page.getByLabel('Password', { exact: true }).fill(pass); await submitLogin(page); await assertAuthenticated(page); }
 async function nav(page: Page, name: string) { await openNavigation(page); await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name, exact: true }).click(); }
 async function shot(page: Page, name: string, width: number) {
     mkdirSync(dir, { recursive: true });

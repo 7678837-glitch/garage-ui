@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, openDisclosure } from "./interactions";
 import { expect, type Locator, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -10,7 +11,7 @@ test("shows S3 and block byte counts on Cluster health", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 
   await page

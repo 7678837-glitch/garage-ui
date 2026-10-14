@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, test, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ for (const width of [1280, 360]) {
       await page.goto("/");
       await page.getByLabel("Username").fill(administrator.username);
       await page.getByLabel("Password").fill(administrator.password);
-      await page.getByRole("button", { name: "Log in" }).click();
+      await submitLogin(page);
       await assertAuthenticated(page);
       await chooseTheme(page, theme);
       mkdirSync(evidenceDir, { recursive: true });
@@ -361,7 +362,8 @@ for (const width of [1280, 360]) {
         await menu.focus();
         await page.keyboard.press("Enter");
         await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
-        await expect(menu).toHaveAttribute("aria-expanded", "true");
+        await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Menu", exact: true, includeHidden: true })).toHaveAttribute("aria-expanded", "true");
         await page.keyboard.press("Escape");
         await expect(menu).toBeFocused();
         for (const switchedWidth of [768, 1440, 360]) {
@@ -409,7 +411,7 @@ test("creation stays collapsed and long object prefix remains usable", async ({ 
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
   await navigate(page, "Buckets");
   const create = page.getByRole("button", { name: "Create bucket", exact: true });

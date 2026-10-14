@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, openAccount } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -23,7 +24,7 @@ function sections(page: Page) {
 async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 
@@ -140,8 +141,18 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
     .locator("tr", { hasText: alias })
     .getByRole("button", { name: /^Open objects \(/ })
     .click();
-  await expect(page.getByRole("navigation", { name: "Breadcrumb", exact: true }).getByRole("link", { name: "Buckets", exact: true })).toBeVisible();
+  const mobileBack = page.getByRole("banner").getByRole("link", { name: "← Buckets", exact: true });
+  await expect(mobileBack).toBeVisible();
+  await expect(mobileBack).toHaveAttribute("href", "#buckets");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const desktopBack = page.getByRole("navigation", { name: "Breadcrumb", exact: true }).getByRole("link", { name: "Buckets", exact: true });
+  await expect(desktopBack).toBeVisible();
+  await expect(desktopBack).toHaveAttribute("href", "#buckets");
+  await page.setViewportSize({ width: 360, height: 800 });
   await expect.soft(page.getByText("Global alias")).toHaveCount(0);
   await expect.soft(page.getByText("Create bucket")).toHaveCount(0);
   await recordLayout(page, "objects");
+  await mobileBack.click();
+  await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
+  await expect(page.getByText(alias, { exact: true })).toBeVisible();
 });

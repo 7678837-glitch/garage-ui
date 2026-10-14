@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -19,7 +20,7 @@ test("opens ops lists at desktop and phone widths", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 
   for (const [name, shot] of pages) {

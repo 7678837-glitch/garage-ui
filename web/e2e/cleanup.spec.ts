@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, bucketIdFromRow, openNavigation, openRowActions, selectChoice } from "./interactions";
 import { createHash, createHmac, type BinaryLike } from "node:crypto";
 import { expect, type Locator, type Page, test } from "@playwright/test";
@@ -126,7 +127,7 @@ async function logIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 

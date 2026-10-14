@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { assertAuthenticated, bucketIdFromRow, openAccount, openNavigation, openRowActions, selectChoice } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
@@ -139,7 +140,7 @@ async function logIn(page: Page, username: string, password: string): Promise<vo
   await page.goto("/");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await submitLogin(page);
   await assertAuthenticated(page);
 }
 
@@ -278,7 +279,7 @@ async function release(page: Page, alias: string, bucketId: string, keyId: strin
   if (await username.isVisible().catch(() => false)) {
     await username.fill(administrator.username);
     await page.getByLabel("Password").fill(administrator.password);
-    await page.getByRole("button", { name: "Log in" }).click();
+    await submitLogin(page);
   }
   await assertAuthenticated(page);
   await expect(account, "fixture cleanup requires an authenticated administrator").toHaveAccessibleName(`${administrator.username} · admin`);
