@@ -47,12 +47,13 @@ input:not([type="checkbox"]):not([type="radio"]), select, textarea { background:
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.ui-page > [role="tabpanel"], .ui-tabs { min-width: 0; }
 .ui-page, .ui-form { display: grid; gap: var(--space-large); min-width: 0; }
 .ui-page-header, .ui-toolbar, .ui-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-medium); }
 .ui-toolbar > :is(.ui-field, form) { flex: 1 1 18ch; min-width: min(100%, 18ch); max-width: 100%; }
 .ui-actions > .ui-field { flex: 1 1 16ch; min-width: min(100%, 16ch); }
 .ui-page-header, .ui-toolbar { justify-content: space-between; }
-.ui-page-header h2, .ui-page > h2 { font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
+.ui-page-header h2, .ui-page > h2 { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
 .ui-panel { display: grid; gap: var(--space-large); padding: 20px; min-width: 0; background: var(--surface); border: 1px solid var(--separator); border-radius: var(--control-radius); }
 .ui-panel h3 { font-size: 15px; font-weight: 600; }
 .ui-field { display: grid; gap: var(--space-small); min-width: 0; font-weight: 500; }
@@ -74,6 +75,7 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-table th { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--canvas); }
 .ui-table :is(th, td) { padding: 10px 14px; border-bottom: 1px solid var(--separator); vertical-align: middle; }
 .ui-table :is(th, td) { min-width: 10ch; }
+.ui-table td > div:not(.ui-actions) > p { white-space: nowrap; }
 .ui-table .ui-input { min-width: 14ch; }
 .ui-table .ui-disclosure { display: inline-block; vertical-align: middle; }
 .ui-table .ui-disclosure > summary { padding: var(--space-small) var(--space-medium); white-space: nowrap; }
