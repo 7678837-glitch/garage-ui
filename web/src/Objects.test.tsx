@@ -1,11 +1,31 @@
+import { Theme } from "@radix-ui/themes";
+import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderTree, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
 import { Objects } from "./Objects";
 
+function render(ui: ReactElement) {
+  return renderTree(<Theme>{ui}</Theme>);
+}
+
+function chooseOption(label: string, option: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
+function openFolderActions(trigger = screen.getByRole("button", { name: /^Actions \(/ })) {
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+}
+
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
 });
 
@@ -442,13 +462,13 @@ test("sorts the loaded rows by size or time and says only this page", async () =
   expect(await screen.findByRole("button", { name: "c.txt" })).toBeTruthy();
   expect(screen.queryByText("Only this page")).toBeNull();
   expect(rowOrder()).toEqual(["folder/", "c.txt", "b.txt", "a.txt"]);
-  fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "size" } });
+  chooseOption("Sort", "Size");
   expect(screen.getByText("Only this page")).toBeTruthy();
   expect(rowOrder()).toEqual(["folder/", "a.txt", "c.txt", "b.txt"]);
-  fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "time" } });
+  chooseOption("Sort", "Time");
   expect(screen.getByText("Only this page")).toBeTruthy();
   expect(rowOrder()).toEqual(["folder/", "b.txt", "a.txt", "c.txt"]);
-  fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "key" } });
+  chooseOption("Sort", "Key");
   expect(screen.queryByText("Only this page")).toBeNull();
   expect(rowOrder()).toEqual(["folder/", "c.txt", "b.txt", "a.txt"]);
 });
@@ -587,8 +607,8 @@ test("encodes each key segment when loading metadata", async () => {
   expect(meta).toBe("/api/buckets/bkt-1/objects/dir/a%3Fb.txt");
 });
 
-function box(name: string): HTMLInputElement {
-  return screen.getByRole("checkbox", { name }) as HTMLInputElement;
+function box(name: string): HTMLElement {
+  return screen.getByRole("checkbox", { name });
 }
 
 test("hides the copy bar until an object row is selected", async () => {
@@ -620,8 +640,8 @@ test("copies two selected object paths, one per line", async () => {
   renderObjects();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
-  expect(box("Select a.txt").checked).toBe(true);
-  expect(box("Select b.txt").checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
   fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
   expect(await screen.findByText("Copied")).toBeTruthy();
   expect(writeText).toHaveBeenCalledWith("a.txt\nb.txt");
@@ -644,9 +664,9 @@ test("shift-click selects the inclusive range of object rows", async () => {
   renderObjects();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select c.txt" }), { shiftKey: true });
-  expect(box("Select a.txt").checked).toBe(true);
-  expect(box("Select b.txt").checked).toBe(true);
-  expect(box("Select c.txt").checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select c.txt").getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("checkbox", { name: "Select folder/" })).toBeNull();
 });
 
@@ -678,8 +698,8 @@ test("select page checks object rows on this page and skips the prefix", async (
   expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Select folder/" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Select page" }));
-  expect(box("Select a.txt").checked).toBe(true);
-  expect(box("Select b.txt").checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("checkbox", { name: "Select other.txt" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Copy path" }));
   expect(await screen.findByText("Copied")).toBeTruthy();
@@ -702,7 +722,7 @@ test("clears the selection when the prefix changes", async () => {
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "photos/" }));
   expect(await screen.findByRole("checkbox", { name: "Select photos/b.txt" })).toBeTruthy();
-  expect(box("Select photos/b.txt").checked).toBe(false);
+  expect(box("Select photos/b.txt").getAttribute("aria-checked")).toBe("false");
   expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
 });
@@ -876,7 +896,7 @@ test("cancels an object delete without a request, then removes the row after 204
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
-  expect(box("Select keep.txt").checked).toBe(false);
+  expect(box("Select keep.txt").getAttribute("aria-checked")).toBe("false");
   const deletes = calls.filter((call) => call.method === "DELETE");
   expect(deletes).toEqual([
     { url: "/api/buckets/b%20k/objects/dir/a%3Fb.txt", method: "DELETE" },
@@ -904,7 +924,7 @@ test("keeps the object and shows the error when delete is forbidden", async () =
   expect(dialog.textContent).toContain("This permanently deletes a.txt.");
   expect(dialog.textContent).toContain("Not allowed to delete this object");
   expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
-  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
 });
 
 test("requires the selected count before one batch delete", async () => {
@@ -958,8 +978,8 @@ test("requires the selected count before one batch delete", async () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("9 B", { selector: "span" })).toBeTruthy();
   });
-  expect(box("Select a.txt").checked).toBe(false);
-  expect(box("Select b.txt").checked).toBe(false);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("false");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("false");
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
   expect(calls.filter((call) => call.method === "POST")).toEqual([
@@ -1006,8 +1026,8 @@ test("keeps the batch dialog open when a key fails", async () => {
   expect(open.textContent).toContain("b.txt: denied by policy");
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  expect(box("Select a.txt").checked).toBe(false);
-  expect(box("Select b.txt").checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("false");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
 });
 
 test("shows Delete folder on a prefix row and not on an object row", async () => {
@@ -1028,9 +1048,9 @@ test("shows Delete folder on a prefix row and not on an object row", async () =>
   if (!(prefixRow instanceof HTMLElement) || !(fileRow instanceof HTMLElement)) {
     throw new Error("missing object list row");
   }
-  fireEvent.click(within(prefixRow).getByText("Actions", { selector: "summary" }));
-  expect(within(prefixRow).getByRole("button", { name: /^Delete folder/ })).toBeTruthy();
-  expect(within(fileRow).queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  openFolderActions(within(prefixRow).getByRole("button", { name: "Actions (photos/)" }));
+  expect(screen.getByRole("menuitem", { name: "Delete folder (photos/)" })).toBeTruthy();
+  expect(within(fileRow).queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
 });
 
 test("requires the typed prefix before recursive delete, then drops the row after 200", async () => {
@@ -1053,8 +1073,8 @@ test("requires the typed prefix before recursive delete, then drops the row afte
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   expect(window.location.hash).toBe("");
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("Confirm a?b/");
@@ -1068,7 +1088,8 @@ test("requires the typed prefix before recursive delete, then drops the row afte
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
   expect(screen.getByRole("button", { name: prefix })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions();
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const again = screen.getByRole("dialog");
   const againConfirm = within(again).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   fireEvent.change(within(again).getByRole("textbox"), { target: { value: "a?b" } });
@@ -1083,7 +1104,7 @@ test("requires the typed prefix before recursive delete, then drops the row afte
   });
   expect(screen.getByRole("button", { name: "keep.txt" })).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(calls.filter((call) => call.method === "DELETE")).toEqual([
     { url: "/api/buckets/bkt-1/objects/a%3Fb/?recursive=true", method: "DELETE" },
   ]);
@@ -1107,8 +1128,8 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "photos/" } });
@@ -1121,7 +1142,7 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
   );
   expect(open.textContent).toContain("Not allowed to delete this prefix");
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: /^Delete folder/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Actions (photos/)" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
 });
 
@@ -1156,13 +1177,13 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
   expect(screen.getByLabelText("Search")).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   expect(screen.queryByText("secret bytes")).toBeNull();
@@ -1205,7 +1226,7 @@ test("shows the text viewer and Download for one object without write controls",
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
@@ -1214,7 +1235,7 @@ test("shows the text viewer and Download for one object without write controls",
   expect(note.tagName).toBe("PRE");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
@@ -1318,8 +1339,8 @@ test("shows Working while a prefix delete is submitting", async () => {
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   const typed = within(dialog).getByRole("textbox") as HTMLInputElement;
   fireEvent.change(typed, { target: { value: "photos/" } });
@@ -1343,7 +1364,7 @@ function rowOrder(): string[] {
     .getAllByRole("row")
     .slice(1)
     .map((row) => {
-      const button = row.querySelector("button");
+      const button = row.querySelector('button:not([role="checkbox"])');
       return button?.textContent ?? "";
     });
 }
@@ -1678,9 +1699,11 @@ test("shares one object after an admin chooses the bucket key", async () => {
   renderObjects();
   expect(await screen.findByText("no_usable_key")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Share for 1 hour" })).toBeNull();
-  fireEvent.change(await screen.findByLabelText("Bucket key"), { target: { value: "CHOSEN" } });
+  await screen.findByRole("combobox", { name: "Bucket key" });
+  chooseOption("Bucket key", "CHOSEN");
   fireEvent.click(screen.getByRole("button", { name: "Use this key" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Share" }));
   fireEvent.click(screen.getByRole("button", { name: "Share for 1 hour" }));
   expect(
     await screen.findByText("http://127.0.0.1:3901/bkt-1/a.txt?X-Amz-Expires=3600"),
@@ -1815,7 +1838,7 @@ test("left and right keys select the previous and next object in the same direct
 
   function expectSelected(key: string) {
     for (const item of keys) {
-      expect(box(`Select ${item}`).checked).toBe(item === key);
+      expect(box(`Select ${item}`).getAttribute("aria-checked")).toBe(String(item === key));
     }
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
       `/api/buckets/bkt-1/objects/${key}?download=1`,
@@ -1924,7 +1947,7 @@ test("shows a thumbnail for an allowlisted bitmap and does not request one witho
   calls.length = 0;
   renderObjects("bkt 1", { canWrite: false, canTransfer: false });
   expect(await screen.findByRole("button", { name: exactName("shot.png") })).toBeTruthy();
-  expect(document.querySelector("img, svg")).toBeNull();
+  expect(document.querySelector(".ui-objects-name img, .ui-objects-name svg")).toBeNull();
   expect(calls.some((url) => url.includes("thumbnail=1"))).toBe(false);
   for (const key of bitmap) {
     const row = screen.getByRole("button", { name: exactName(key) }).closest("tr");
@@ -1977,8 +2000,8 @@ test("refreshes a previously rendered search after prefix deletion", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("button", { name: "folder/a.txt" });
   fireEvent.click(screen.getByRole("button", { name: "Root (bkt-1)" }));
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2030,8 +2053,8 @@ test("explicit filename feedback receives focus before metadata resolves and on 
   expect(within(panel).getByRole("status")).toBeTruthy();
   release(json({ key: "a.txt", size: 4, etag: "abc", lastModified: "2026-10-11T00:00:00Z", contentType: "text/plain" }));
   expect(await within(panel).findByText("safe text body")).toBeTruthy();
-  expect((screen.getByRole("checkbox", { name: "Select a.txt" }) as HTMLInputElement).checked).toBe(true);
-  expect((screen.getByRole("checkbox", { name: "Select b.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
   const beforeRepeat = vi.mocked(HTMLElement.prototype.scrollIntoView).mock.calls.length;
   expect(beforeRepeat).toBeGreaterThan(1);
   filename.focus();
@@ -2072,9 +2095,9 @@ test.each(["ArrowLeft", "ArrowRight"])("focused text preview keeps %s for scroll
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
   fireEvent(preview, event);
   expect(event.defaultPrevented).toBe(false);
-  expect((screen.getByRole("checkbox", { name: "Select b.txt" }) as HTMLInputElement).checked).toBe(true);
-  expect((screen.getByRole("checkbox", { name: "Select a.txt" }) as HTMLInputElement).checked).toBe(false);
-  expect((screen.getByRole("checkbox", { name: "Select c.txt" }) as HTMLInputElement).checked).toBe(false);
+  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("false");
+  expect(box("Select c.txt").getAttribute("aria-checked")).toBe("false");
 });
 
 
@@ -2101,8 +2124,8 @@ test("recursive HTTP success with failed keys refreshes data and keeps retry con
     return json(page([{ kind: "prefix", prefix: "folder/" }]));
   }));
   renderObjects();
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2143,8 +2166,8 @@ test.each([{ deleted: -1, errors: [] }, { deleted: 1, errors: [{ key: "folder/a.
     return json(page([{ kind: "prefix", prefix: "folder/" }]));
   }));
   renderObjects();
-  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
+  openFolderActions(await screen.findByRole("button", { name: /^Actions \(/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2172,7 +2195,7 @@ test("clearing the visible selection restores unchecked rows and removes bulk ac
   fireEvent.click(checkbox);
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
-  expect(checkbox).toHaveProperty("checked", false);
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Clear selection" })).toBeNull();
 });
@@ -2199,4 +2222,45 @@ test("closing upload restores focus to its visible trigger without stealing init
   expect(disclosure.open).toBe(false);
   fireEvent.click(trigger);
   expect(screen.getByRole("region", { name: "Upload" })).toBe(upload);
+});
+
+
+test("share dialog locks duration and dismissal during the request, then restores focus", async () => {
+  let release: (response: Response) => void = () => {};
+  const shareRequests: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/auth/status") return json({ can_share: true, role: "admin" });
+    if (url === "/api/share") {
+      shareRequests.push(String(init?.body));
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }
+    return json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
+  }));
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  const trigger = screen.getByRole("button", { name: "Share" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: "Share" });
+  expect(within(dialog).getByText("a.txt")).toBeTruthy();
+  const hour = within(dialog).getByRole("button", { name: "Share for 1 hour" });
+  fireEvent.click(hour);
+  await within(dialog).findByRole("status");
+  for (const button of within(dialog).getAllByRole("button")) {
+    expect(button).toHaveProperty("disabled", true);
+  }
+  fireEvent.click(hour);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "Share" })).toBe(dialog);
+  expect(shareRequests).toEqual([JSON.stringify({ ttl_seconds: 3600, bucket: "bkt-1", key: "a.txt" })]);
+  release(json({ url: "https://objects.example/a.txt", expires_in: 3600, website_url: null }));
+  expect(await within(dialog).findByText("https://objects.example/a.txt")).toBeTruthy();
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveProperty("disabled", false));
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
 });

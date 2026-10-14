@@ -1,3 +1,4 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render as renderTree, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
@@ -60,6 +61,11 @@ class FakeRequest {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   FakeRequest.sent = [];
   document.cookie = "garage_csrf=csrf-token";
   vi.stubGlobal("XMLHttpRequest", FakeRequest);
@@ -96,7 +102,7 @@ function render(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  renderTree(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  renderTree(<Theme><QueryClientProvider client={client}>{ui}</QueryClientProvider></Theme>);
   return client;
 }
 
@@ -692,7 +698,7 @@ test("staying during prefix navigation retains page, selection and active upload
   fireEvent.click(screen.getByRole("button", { name: "folder/" }));
   expect(confirm).toHaveBeenCalledOnce();
   expect(screen.getByText("Page 2")).toBeTruthy();
-  expect((screen.getByRole("checkbox", { name: "Select second.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByRole("checkbox", { name: "Select second.txt" }).getAttribute("aria-checked")).toBe("true");
   expect(window.location.hash).toBe(hashForObjects("bkt-1", ""));
   expect(FakeRequest.sent[0]?.aborted).toBe(false);
   expect(within(row("active.txt")).getByRole("button", { name: "Cancel" })).toBeTruthy();
@@ -721,7 +727,7 @@ test("staying during breadcrumb navigation retains search and selection during a
   fireEvent.click(screen.getByRole("button", { name: "Root (bkt-1)" }));
   expect(confirm).toHaveBeenCalledOnce();
   expect((screen.getByLabelText("Search") as HTMLInputElement).value).toBe("search");
-  expect((screen.getByRole("checkbox", { name: "Select search.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByRole("checkbox", { name: "Select search.txt" }).getAttribute("aria-checked")).toBe("true");
   expect(window.location.search).toContain("objects=search");
   expect(screen.getByText("Queued · 1")).toBeTruthy();
   await act(async () => { deliver?.([]); });

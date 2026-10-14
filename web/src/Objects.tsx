@@ -1,3 +1,4 @@
+import { Button, Checkbox, Dialog, DropdownMenu, Select, Table, TextArea, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
@@ -629,7 +630,7 @@ function arrowMovesSelection(target: EventTarget | null): boolean {
   ) {
     return false;
   }
-  if (target instanceof Element && target.closest("dialog, pre") !== null) {
+  if (target instanceof Element && target.closest('dialog, [role="dialog"], [role="combobox"], [role="listbox"], [role="menu"], pre') !== null) {
     return false;
   }
   return true;
@@ -746,6 +747,7 @@ export function Objects({
   const [copyNote, setCopyNote] = useState<"copied" | "manual" | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [keyChoice, setKeyChoice] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
   const [shareLink, setShareLink] = useState<{
     key: string;
     url: string;
@@ -1097,17 +1099,16 @@ export function Objects({
     <section className="ui-page ui-objects" aria-label={copy("nav.objects")} aria-busy={loading}>
       {!embedded ? <header className="ui-page-header">
       <h2>{copy("nav.objects")}</h2>
-      <button
-        className="ui-button"
+      <Button size="2" variant="soft" color="gray"
         type="button"
         onClick={onBack}
       >
-        {copy("ui.back.to.buckets")}</button>
+        {copy("ui.back.to.buckets")}</Button>
       </header> : null}
       {!embedded ? <ResourceIdentity id={bucketId} /> : null}
       <nav aria-label={copy("ui.prefix")} className="ui-actions ui-objects-prefix">
-        <button
-          className={`${wrap} ui-button ui-button-quiet ui-identifier whitespace-normal text-left`}
+        <Button size="2" variant="soft" color="gray"
+          className={`${wrap} ui-identifier whitespace-normal text-left`}
           type="button"
           aria-label={`${copy("common.rootPrefix")} (${bucketId})`}
           onClick={() => {
@@ -1115,11 +1116,11 @@ export function Objects({
           }}
         >
           {copy("common.rootPrefix")}
-        </button>
+        </Button>
         {prefixSegments(prefix).map((segment) => (
-          <button
+          <Button size="2" variant="soft" color="gray"
             key={segment.prefix}
-            className={`${wrap} ui-button ui-button-quiet ui-identifier whitespace-normal text-left`}
+            className={`${wrap} ui-identifier whitespace-normal text-left`}
             type="button"
             aria-label={`${segment.label} (${segment.prefix})`}
             onClick={() => {
@@ -1127,16 +1128,16 @@ export function Objects({
             }}
           >
             {segment.label}
-          </button>
+          </Button>
         ))}
       </nav>
       <div className="ui-toolbar ui-objects-tools items-end">
-      {canWrite ? <button ref={uploadTrigger} className="ui-button ui-button-primary ui-objects-upload" type="button" aria-controls={uploadId} aria-expanded={uploadOpen} onClick={() => {
+      {canWrite ? <Button size="2" variant="solid" ref={uploadTrigger} className="ui-objects-upload" type="button" aria-controls={uploadId} aria-expanded={uploadOpen} onClick={() => {
         const panel = uploadDisclosure.current;
         if (panel === null) return;
         panel.open = true;
         panel.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
-      }}>{copy("ui.upload")}{activeUploads > 0 ? <span> · {activeUploads}</span> : null}</button> : null}
+      }}>{copy("ui.upload")}{activeUploads > 0 ? <span> · {activeUploads}</span> : null}</Button> : null}
       <form
         className="ui-actions ui-objects-search items-end"
         onSubmit={(event) => {
@@ -1161,8 +1162,7 @@ export function Objects({
         }}
       >
         <label className="ui-field">
-          {copy("ui.search")}<input
-            className="ui-input"
+          {copy("ui.search")}<TextField.Root size="2"
             value={draft}
             autoComplete="off"
             onChange={(event) => {
@@ -1170,15 +1170,13 @@ export function Objects({
             }}
           />
         </label>
-        <button className="ui-button" type="submit">
-          {copy("ui.search")}</button>
+        <Button size="2" variant="soft" color="gray" type="submit">
+          {copy("ui.search")}</Button>
       </form>
       <label className="ui-field ui-objects-sort">
-        {copy("ui.sort")}<select
-          className="ui-input"
+        {copy("ui.sort")}<Select.Root size="2"
           value={browse.sort}
-          onChange={(event) => {
-            const value = event.target.value;
+          onValueChange={(value) => {
             if (!isSortChoice(value)) {
               return;
             }
@@ -1186,10 +1184,13 @@ export function Objects({
             writeObjectQuery(browse.search ?? "", value);
           }}
         >
-          <option value="key">{copy("ui.key.2")}</option>
-          <option value="size">{copy("ui.size")}</option>
-          <option value="time">{copy("ui.time")}</option>
-        </select>
+          <Select.Trigger aria-label={copy("ui.sort")} />
+          <Select.Content>
+            <Select.Item value="key">{copy("ui.key.2")}</Select.Item>
+            <Select.Item value="size">{copy("ui.size")}</Select.Item>
+            <Select.Item value="time">{copy("ui.time")}</Select.Item>
+          </Select.Content>
+        </Select.Root>
       </label>
       </div>
       {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
@@ -1223,38 +1224,34 @@ export function Objects({
           }}
         >
           <label className="ui-field">
-            {copy("ui.bucket.key")}<select
-              className="ui-input"
+            {copy("ui.bucket.key")}<Select.Root size="2"
               value={keyChoice}
-              onChange={(event) => {
-                setKeyChoice(event.target.value);
-              }}
+              onValueChange={setKeyChoice}
+              disabled={chooseKey.isPending}
             >
-              <option value="">{copy("ui.select.a.key")}</option>
-              {(keyChoices.data ?? []).map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
+              <Select.Trigger aria-label={copy("ui.bucket.key")} placeholder={copy("ui.select.a.key")} />
+              <Select.Content>
+                {(keyChoices.data ?? []).map((id) => (
+                  <Select.Item key={id} value={id}>{id}</Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
           </label>
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="submit"
             disabled={keyChoice.length === 0 || chooseKey.isPending}
           >
-            {copy("ui.use.this.key")}</button>
+            {copy("ui.use.this.key")}</Button>
           {keyChoices.isError ? <p>{failureOf(keyChoices.error).message}</p> : null}
           {chooseKey.error instanceof Error ? <p>{chooseKey.error.message}</p> : null}
         </form>
       ) : null}
       {showFailure ? (
-        <button
-          className="ui-button"
+        <Button size="2" variant="soft" color="gray"
           type="button"
           onClick={retry}
         >
-          {copy("ui.retry")}</button>
+          {copy("ui.retry")}</Button>
       ) : null}
       {showEmpty ? (
         <p>
@@ -1267,20 +1264,18 @@ export function Objects({
       {shownPicked.length > 0 ? (
         <div className="ui-panel ui-actions ui-objects-bulk">
           <span className="ui-status">{fill(copy("ui.objects"), { used: shownPicked.length })}</span>
-          <button className="ui-button ui-button-quiet" type="button" onClick={() => {
+          <Button size="2" variant="soft" color="gray" type="button" onClick={() => {
             setCopyNote(null);
             setFeedback(null);
             setBrowse((current) => ({ ...current, picked: [], anchor: null }));
-          }}>{copy("ui.clear.selection")}</button>
-          <button
-            className="ui-button"
+          }}>{copy("ui.clear.selection")}</Button>
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={copyPaths}
           >
-            {copy("ui.copy.path")}</button>
+            {copy("ui.copy.path")}</Button>
           {canWrite ? (
-            <button
-              className="ui-button"
+            <Button size="2" variant="soft" color="red"
               type="button"
               onClick={() => {
                 // One key still uses DELETE. Two or more keys POST objects:delete. One click must not call the batch route.
@@ -1294,12 +1289,11 @@ export function Objects({
                 setPendingDelete({ kind: "batch", keys: batch.keys, totalSize: batch.totalSize });
               }}
             >
-              {copy("ui.delete.2")}</button>
+              {copy("ui.delete.2")}</Button>
           ) : null}
           {canTransfer && shownPicked.length > 1 ? (
             <>
-              <button
-                className="ui-button"
+              <Button size="2" variant="soft" color="gray"
                 type="button"
                 disabled={archiveZip.isPending}
                 onClick={() => {
@@ -1316,48 +1310,64 @@ export function Objects({
                   });
                 }}
               >
-                {copy("ui.download.zip")}</button>
+                {copy("ui.download.zip")}</Button>
               <a ref={zipAnchor} href={zipHref ?? undefined} target="_blank" rel="noopener" hidden />
               {archiveZip.error instanceof Error ? <p>{archiveZip.error.message}</p> : null}
             </>
           ) : null}
           {canTransfer && singleKey !== null ? (
-            <a
-              className="ui-button"
-              href={`${metadataPath(bucketId, singleKey)}?download=1`}
-              target="_blank"
-              rel="noopener"
-            >
-              {copy("ui.download")}</a>
+            <Button size="2" variant="soft" color="gray" asChild>
+              <a href={`${metadataPath(bucketId, singleKey)}?download=1`} target="_blank" rel="noopener">
+                {copy("ui.download")}
+              </a>
+            </Button>
           ) : null}
-          {canShare && singleKey !== null
-            ? SHARE_TIERS.map((tier) => (
-                <button
-                  key={tier.seconds}
-                  className="ui-button"
-                  type="button"
-                  onClick={() => {
-                    shareObject.reset();
-                    shareObject.mutate(tier.seconds);
-                  }}
-                >
-                  {translate(tier.label)}
-                </button>
-              ))
-            : null}
-          {shareLink !== null && shareLink.key === singleKey ? (
-            <>
-              <p>{shareLink.url}</p>
-              {shareLink.website !== null ? <p>{shareLink.website}</p> : null}
-            </>
+          {canShare && singleKey !== null ? (
+            <Dialog.Root open={shareOpen} onOpenChange={(open) => {
+              if (!shareObject.isPending) setShareOpen(open);
+            }}>
+              <Dialog.Trigger>
+                <Button size="2" variant="soft" color="gray">{copy("ui.share")}</Button>
+              </Dialog.Trigger>
+              <Dialog.Content maxWidth="480px"
+                onEscapeKeyDown={(event) => { if (shareObject.isPending) event.preventDefault(); }}
+                onPointerDownOutside={(event) => { if (shareObject.isPending) event.preventDefault(); }}
+              >
+                <Dialog.Title>{copy("ui.share")}</Dialog.Title>
+                <Dialog.Description className="ui-identifier">{singleKey}</Dialog.Description>
+                <div className="ui-form">
+                  <div className="ui-actions">
+                    {SHARE_TIERS.map((tier) => (
+                      <Button key={tier.seconds} size="2" variant="solid" disabled={shareObject.isPending}
+                        onClick={() => {
+                          shareObject.reset();
+                          shareObject.mutate(tier.seconds);
+                        }}
+                      >{translate(tier.label)}</Button>
+                    ))}
+                  </div>
+                  {shareObject.isPending ? <p role="status">{copy("ui.working")}</p> : null}
+                  {shareLink !== null && shareLink.key === singleKey ? (
+                    <div className="ui-form ui-identifier">
+                      <p>{shareLink.url}</p>
+                      {shareLink.website !== null ? <p>{shareLink.website}</p> : null}
+                    </div>
+                  ) : null}
+                  {shareObject.error instanceof Error ? <p role="alert">{shareObject.error.message}</p> : null}
+                  <div className="ui-actions">
+                    <Dialog.Close>
+                      <Button size="2" variant="soft" color="gray" disabled={shareObject.isPending}>{copy("ui.cancel")}</Button>
+                    </Dialog.Close>
+                  </div>
+                </div>
+              </Dialog.Content>
+            </Dialog.Root>
           ) : null}
-          {shareObject.error instanceof Error ? <p>{shareObject.error.message}</p> : null}
           {copyNote === "copied" ? <p>{copy("ui.copied")}</p> : null}
           {copyNote === "manual" ? (
             <>
               <p>{copy("ui.select.the.paths.and.copy.them")}</p>
-              <textarea
-                className="ui-input"
+              <TextArea size="2"
                 readOnly
                 aria-label={copy("ui.selected.paths")}
                 value={pathText}
@@ -1368,56 +1378,60 @@ export function Objects({
       ) : null}
       {showRows && visible.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.objects")} tabIndex={0}>
-          <div className="ui-objects-list-actions"><span className="ui-muted">{copy("nav.objects")}</span><button className="ui-button ui-button-quiet" type="button" onClick={selectPage}>{copy("ui.select.page")}</button></div>
-          <table className="ui-table ui-table-records ui-objects-table" role="table">
-            <thead><tr role="row">
-              <th scope="col" aria-label={copy("ui.select.page")} />
-              <th scope="col">{copy("ui.name")}</th>
-              <th scope="col">{copy("ui.size")}</th>
-              <th scope="col">{copy("ui.time")} (UTC)</th>
-              <th scope="col">{copy("ui.actions")}</th>
-            </tr></thead>
-            <tbody>
+          <div className="ui-objects-list-actions"><span className="ui-muted">{copy("nav.objects")}</span><Button size="2" variant="soft" color="gray" type="button" onClick={selectPage}>{copy("ui.select.page")}</Button></div>
+          <Table.Root size="1" className="ui-table ui-table-records ui-objects-table">
+            <Table.Header><Table.Row role="row">
+              <Table.ColumnHeaderCell scope="col" aria-label={copy("ui.select.page")} />
+              <Table.ColumnHeaderCell scope="col">{copy("ui.name")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.size")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.time")} (UTC)</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.actions")}</Table.ColumnHeaderCell>
+            </Table.Row></Table.Header>
+            <Table.Body>
               {visible.map((entry) => entry.kind === "prefix" ? (
-                <tr key={`prefix:${entry.prefix}`} role="row" className="ui-objects-folder">
+                <Table.Row key={`prefix:${entry.prefix}`} role="row" className="ui-objects-folder">
                   <DataCell label={copy("ui.select.page")} kind="selection" />
                   <DataCell label={copy("ui.name")} kind="identity">
-                    <button className="ui-button ui-button-quiet ui-object-name" type="button" aria-label={entry.prefix} onClick={() => openPrefix(entry.prefix)}><span className="ui-objects-folder-icon" aria-hidden="true" /><span>{entry.prefix}</span><span className="ui-objects-chevron" aria-hidden="true" /></button>
+                    <Button size="2" variant="soft" color="gray" className="ui-object-name" type="button" aria-label={entry.prefix} onClick={() => openPrefix(entry.prefix)}><span className="ui-objects-folder-icon" aria-hidden="true" /><span>{entry.prefix}</span><span className="ui-objects-chevron" aria-hidden="true" /></Button>
                   </DataCell>
                   <DataCell label={copy("ui.size")} className="ui-objects-empty" />
                   <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-empty" />
                   <DataCell label={copy("ui.actions")} kind="actions">
-                    {canWrite ? <details className="ui-disclosure">
-                      <summary aria-label={`${copy("ui.actions")} (${entry.prefix})`}>{copy("ui.actions")}</summary>
-                      <button className="ui-button ui-button-danger" type="button" aria-label={`${copy("ui.delete.folder")} (${entry.prefix})`} onClick={() => {
-                        removePrefix.reset();
-                        setPendingDelete({ kind: "prefix", name: entry.prefix });
-                      }}>{copy("ui.delete.folder")}</button>
-                    </details> : null}
+                    {canWrite ? <DropdownMenu.Root>
+                      <DropdownMenu.Trigger>
+                        <Button size="2" variant="soft" color="gray" aria-label={`${copy("ui.actions")} (${entry.prefix})`}>{copy("ui.actions")}</Button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Content>
+                        <DropdownMenu.Item color="red" aria-label={`${copy("ui.delete.folder")} (${entry.prefix})`} onSelect={() => {
+                          removePrefix.reset();
+                          setPendingDelete({ kind: "prefix", name: entry.prefix });
+                        }}>{copy("ui.delete.folder")}</DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Root> : null}
                   </DataCell>
-                </tr>
+                </Table.Row>
               ) : (
-                <tr key={`object:${entry.key}`} role="row">
+                <Table.Row key={`object:${entry.key}`} role="row">
                   <DataCell label={copy("ui.select.page")} kind="selection">
-                    <label className="ui-objects-selection-label"><input
-                      aria-label={fill(copy("ui.select"), { key: entry.key })} type="checkbox" checked={shownPicked.includes(entry.key)}
-                      onChange={(event) => pick(entry.key, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)}
+                    <label className="ui-objects-selection-label"><Checkbox size="2"
+                      aria-label={fill(copy("ui.select"), { key: entry.key })} checked={shownPicked.includes(entry.key)}
+                      onClick={(event) => pick(entry.key, event.shiftKey)}
                     /></label>
                   </DataCell>
                   <DataCell label={copy("ui.name")} kind="identity">
                     <div className="ui-actions ui-objects-name">
                       {canTransfer && bitmapKey(entry.key) ? <ObjectThumb src={thumbnailPath(bucketId, entry.key)} /> : <span className="ui-objects-file-icon" aria-hidden="true" />}
-                      <button className="ui-button ui-button-quiet ui-object-name" type="button" onClick={() => {
+                      <Button size="2" variant="soft" color="gray" className="ui-object-name" type="button" onClick={() => {
                         setBrowse((current) => ({ ...current, selected: entry.key }));
                         setFeedback({ kind: "preview", key: entry.key });
-                      }}>{entry.key}</button>
+                      }}>{entry.key}</Button>
                     </div>
                     <ObjectRowSummary entry={entry} />
                   </DataCell>
                   <DataCell label={copy("ui.size")} className="ui-objects-size"><CompactCapacityText digits={String(entry.size)} /></DataCell>
                   <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-time"><ReadableInstantText value={entry.lastModified} /></DataCell>
                   <DataCell label={copy("ui.actions")} kind="actions">
-                    <button className="ui-button ui-button-quiet" aria-label={`${copy("ui.details")} (${entry.key})`} type="button" onClick={() => {
+                    <Button size="2" variant="soft" color="gray" aria-label={`${copy("ui.details")} (${entry.key})`} type="button" onClick={() => {
                       if (canManage) {
                         setInspectKey(entry.key);
                         setFeedback({ kind: "inspect", key: entry.key });
@@ -1425,12 +1439,12 @@ export function Objects({
                         setBrowse((current) => ({ ...current, selected: entry.key }));
                         setFeedback({ kind: "preview", key: entry.key });
                       }
-                    }}>{copy("ui.details")}</button>
+                    }}>{copy("ui.details")}</Button>
                   </DataCell>
-                </tr>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table.Root>
         </div>
       ) : null}
       {!searching && showRows ? (
@@ -1455,7 +1469,7 @@ export function Objects({
       {preview || (feedback?.kind === "preview" && selected === feedback.key) ? (
         <section ref={previewPanel} tabIndex={-1} className="ui-panel ui-object-preview" aria-label={copy("ui.object.details")}>
           {previewMeta.isPending ? <p role="status">{copy("ui.working")}</p> : null}
-          {previewFailure ? <><p>{previewFailure.message}</p>{previewFailure.code ? <p>{previewFailure.code}</p> : null}<button className="ui-button" onClick={() => { void previewMeta.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {previewFailure ? <><p>{previewFailure.message}</p>{previewFailure.code ? <p>{previewFailure.code}</p> : null}<Button size="2" variant="soft" color="gray" onClick={() => { void previewMeta.refetch(); }}>{copy("ui.retry")}</Button></> : null}
           {preview ? <>
           <h3 className="ui-identifier">{preview.key}</h3>
           <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
@@ -1464,7 +1478,7 @@ export function Objects({
           <div>
             {copy("ui.last.modified")} <ReadableInstantText value={preview.lastModified} />
           </div>
-          {previewText.isError ? <><p>{failureOf(previewText.error).message}</p><button className="ui-button" onClick={() => { void previewText.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {previewText.isError ? <><p>{failureOf(previewText.error).message}</p><Button size="2" variant="soft" color="gray" onClick={() => { void previewText.refetch(); }}>{copy("ui.retry")}</Button></> : null}
           {kind === "text" && previewText.isPending ? <p role="status">{copy("ui.working")}</p> : null}
           {kind !== null ? (
             <InlineBody
@@ -1484,7 +1498,7 @@ export function Objects({
             <p>{copy("ui.last.modified")} <ReadableInstantText value={inspectedEntry.lastModified} /></p>
           </div> : null}
           {inspect.isPending ? <p role="status">{copy("ui.working")}</p> : null}
-          {inspectFailure ? <><p>{inspectFailure.message}</p>{inspectFailure.code ? <p>{inspectFailure.code}</p> : null}<button className="ui-button" onClick={() => { void inspect.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {inspectFailure ? <><p>{inspectFailure.message}</p>{inspectFailure.code ? <p>{inspectFailure.code}</p> : null}<Button size="2" variant="soft" color="gray" onClick={() => { void inspect.refetch(); }}>{copy("ui.retry")}</Button></> : null}
           {inspect.data && inspect.data.key === inspected ? <>
           <h3 className="ui-identifier">{inspected}</h3>
           {inspect.data.versions.map((version) => (

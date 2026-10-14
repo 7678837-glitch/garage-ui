@@ -1,3 +1,4 @@
+import { Button } from "@radix-ui/themes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { setFormDirty } from "./unsaved";
@@ -499,7 +500,7 @@ export function UploadPanel({
       <p className="ui-muted">{copy("ui.drop.files.here")}</p>
       {pendingDrops > 0 ? <div className="ui-actions">
         <span className="ui-status">{copy("ui.queued")} · {pendingDrops}</span>
-        <button className="ui-button" type="button" onClick={cancelAll}>{copy("ui.cancel")}</button>
+        <Button size="2" variant="soft" color="gray" type="button" onClick={cancelAll}>{copy("ui.cancel")}</Button>
       </div> : null}
       {dropError !== null ? <p className="ui-alert" role="alert">{dropError}</p> : null}
       <div className="ui-toolbar items-end">
@@ -527,8 +528,8 @@ export function UploadPanel({
         />
       </label>
       </div>
-      <button className="ui-button" type="button" onClick={clearFinished}>
-        {copy("ui.clear.finished")}</button>
+      <Button size="2" variant="soft" color="gray" type="button" onClick={clearFinished}>
+        {copy("ui.clear.finished")}</Button>
       <ul className="grid gap-2" aria-live="polite">
         {rows.map((row) => {
           const prompt = row.phase.kind === "queued" && needsPrompt(row, rows, keys);
@@ -547,51 +548,46 @@ export function UploadPanel({
               ) : null}
               {prompt ? (
                 <>
-                  <button
-                    className="ui-button"
+                  <Button size="2" variant="soft" color="red"
                     type="button"
                     onClick={() => {
                       overwrite(row.id, false);
                     }}
                   >
-                    {copy("ui.overwrite")}</button>
-                  <button
-                    className="ui-button"
+                    {copy("ui.overwrite")}</Button>
+                  <Button size="2" variant="soft" color="gray"
                     type="button"
                     onClick={() => {
                       skip(row.id);
                     }}
                   >
-                    {copy("ui.skip")}</button>
-                  <button
-                    className="ui-button"
+                    {copy("ui.skip")}</Button>
+                  <Button size="2" variant="soft" color="red"
                     type="button"
                     onClick={() => {
                       overwrite(row.id, true);
                     }}
                   >
-                    {copy("ui.overwrite.all")}</button>
+                    {copy("ui.overwrite.all")}</Button>
                 </>
               ) : null}
               {row.phase.kind === "queued" || row.phase.kind === "uploading" || row.phase.kind === "checking" ? (
-                <button
-                  className="ui-button"
+                <Button size="2" variant="soft" color="gray"
                   type="button"
                   onClick={() => {
                     cancel(row.id);
                   }}
                 >
-                  {copy("ui.cancel")}</button>
+                  {copy("ui.cancel")}</Button>
               ) : null}
               {row.phase.kind === "failed" || row.phase.kind === "cancelled" ? (
-                <button
-                  className="ui-button"
+                <Button size="2" variant="soft" color="gray"
                   type="button"
                   onClick={() => {
                     retry(row.id);
                   }}
                 >
-                  {copy("ui.retry")}</button>
+                  {copy("ui.retry")}</Button>
               ) : null}
             </li>
           );
