@@ -178,7 +178,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
   );
   renderBuckets();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
-  fireEvent.click(await screen.findByRole("button", { name: "Objects for bkt-1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open objects (bkt-1)" }));
   const objectButton = await screen.findByRole("button", { name: "photos/a.txt" });
   const summary = screen.getByText("Upload", { selector: "summary" });
   const disclosure = summary.closest("details");
@@ -254,18 +254,18 @@ test("opens a bucket, shows the chosen object's type, and returns to the table",
     }),
   );
   renderBuckets();
-  fireEvent.click(await screen.findByRole("button", { name: "Objects for bkt-1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open objects (bkt-1)" }));
   expect(await screen.findByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "photos/a.txt" })).toBeTruthy();
   expect(screen.getByText("12 B", { selector: "span" })).toBeTruthy();
   expect(screen.getByText("2026-10-11T00:00:00Z")).toBeTruthy();
   expect(screen.queryByText("east")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open objects (bkt-1)" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "photos/a.txt" }));
   expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
   expect(await screen.findByText("east")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Open objects (bkt-1)" })).toBeTruthy();
   expect(screen.queryByText("Content type text/plain")).toBeNull();
   expect(screen.queryByRole("button", { name: "photos/a.txt" })).toBeNull();
 });

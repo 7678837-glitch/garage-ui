@@ -2,7 +2,7 @@ import type { CopyKey } from "./copy-en";
 
 export const zh = {
   "ux.bucketQuotas": "配额",
-  "ux.bucketCors": "CORS",
+  "ux.bucketCors": "跨域资源共享 (CORS)",
   "ux.bucketLifecycle": "生命周期",
   "ux.openObjects": "打开对象",
   "ux.revoke": "撤销",
