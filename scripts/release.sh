@@ -1,11 +1,23 @@
 #!/bin/sh
+# Usage: scripts/release.sh [output-directory]
+# Creates two static Linux binaries, their SBOM and SHA256SUMS, without signing.
 # ldd exits 1 when the file is not a dynamic executable. That output is success.
 set -eu
+if [ "$#" -gt 1 ]; then
+  echo "Usage: $0 [output-directory]" >&2
+  exit 1
+fi
+caller_dir=$PWD
 cd "$(dirname "$0")/.."
-
-out=/tmp/p6-release/out
-keys=/tmp/p6-release/keys
-mkdir -p "$out" "$keys"
+version=$(cat VERSION)
+out=${1:-/tmp/garage-ui-release/$version}
+case "$out" in
+  /*) ;;
+  *) out=$caller_dir/$out ;;
+esac
+# An existing destination may contain a previous release; never overwrite it.
+mkdir -p "$(dirname "$out")"
+mkdir "$out"
 
 export BUILDKIT_PROGRESS=plain
 
@@ -133,10 +145,7 @@ dest.write_text(json.dumps(doc, indent=2) + "\n")
 print(f"sbom packages cargo={counts['cargo']} bun={counts['bun']} total={len(packages)}")
 PY
 
-docker buildx build --platform linux/amd64 --no-cache --load \
-  -f deploy/Dockerfile -t garage-ui:release-amd64 .
-docker buildx build --platform linux/arm64 --no-cache --load \
-  -f deploy/Dockerfile -t garage-ui:release-arm64 .
+scripts/build.sh --images
 
 copy_bin() {
   platform=$1
@@ -150,8 +159,8 @@ copy_bin() {
   docker rm "$cid" >/dev/null
 }
 
-copy_bin linux/amd64 garage-ui:release-amd64 "$out/garage-ui-linux-amd64"
-copy_bin linux/arm64 garage-ui:release-arm64 "$out/garage-ui-linux-arm64"
+copy_bin linux/amd64 "garage-ui:$version-amd64" "$out/garage-ui-linux-amd64"
+copy_bin linux/arm64 "garage-ui:$version-arm64" "$out/garage-ui-linux-arm64"
 
 # The Dockerfile pins a multi-arch index. Pulling that index digest for a second
 # platform fails with "cannot overwrite digest", so ldd uses the platform manifest.
@@ -218,7 +227,7 @@ import sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
-names = ["garage-ui-linux-amd64", "garage-ui-linux-arm64"]
+names = ["garage-ui-linux-amd64", "garage-ui-linux-arm64", "sbom.spdx.json"]
 lines = []
 for name in names:
     digest = hashlib.sha256((out / name).read_bytes()).hexdigest()
@@ -228,11 +237,4 @@ text = "\n".join(lines) + "\n"
 sys.stdout.write(text)
 PY
 
-openssl genpkey -algorithm ED25519 -out "$keys/ed25519.pem"
-openssl pkey -in "$keys/ed25519.pem" -pubout -out "$keys/ed25519.pub"
-openssl pkeyutl -sign -inkey "$keys/ed25519.pem" -rawin \
-  -in "$out/SHA256SUMS" -out "$out/SHA256SUMS.sig"
-verify=$(openssl pkeyutl -verify -pubin -inkey "$keys/ed25519.pub" -rawin \
-  -in "$out/SHA256SUMS" -sigfile "$out/SHA256SUMS.sig")
-printf '%s\n' "$verify"
-printf '%s\n' "$verify" | grep -q 'Verified'
+printf 'Release artifacts: %s\n' "$out"
