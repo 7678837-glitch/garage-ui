@@ -7,7 +7,7 @@ trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 mkdir -p "$fixture/crates/garage-ui" "$fixture/web/dist"
 printf '<html></html>\n' > "$fixture/web/dist/index.html"
 printf '20261015.1\n' > "$fixture/VERSION"
-rustc crates/garage-ui/build.rs -o "$fixture/build-script"
+rustc --edition=2024 crates/garage-ui/build.rs -o "$fixture/build-script"
 commit=0123456789abcdef0123456789abcdef01234567
 output=$(cd "$fixture" && CARGO_MANIFEST_DIR="$fixture/crates/garage-ui" GIT_COMMIT="$commit" "$fixture/build-script")
 printf '%s\n' "$output" | rg -q "^cargo:rustc-env=GARAGE_UI_COMMIT=$commit$" || {
