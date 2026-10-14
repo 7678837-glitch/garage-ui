@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, noteUnauthenticated } from "./api/client";
+import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
 import { DetailTabs } from "./DetailTabs";
@@ -342,24 +342,26 @@ function bucketListFailure(error: unknown): BucketListFailure {
 }
 
 async function loadPage(offset: number): Promise<BucketPage> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(`/api/buckets?offset=${offset}&limit=${PAGE_LIMIT}`, {
     credentials: "include",
   });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new BucketListError(failure);
   }
   return parsePage(text);
 }
 
 async function loadBucket(id: string): Promise<Bucket> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(bucketUrl(id), { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new BucketListError(failure);
   }
   const bucket = parseBucket(JSON.parse(quoteCountLiterals(text)) as unknown);

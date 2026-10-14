@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
 import { CompactCapacityText, ReadableInstantText, copy, fill, translate } from "./i18n";
-import { ApiError, api, noteUnauthenticated } from "./api/client";
+import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
@@ -417,6 +417,7 @@ type TextPreview = {
 };
 
 async function readPreviewText(path: string, signal: AbortSignal): Promise<TextPreview> {
+  const requestGeneration = captureAuthGeneration();
   // api() parses the response as JSON, so a plain-text preview has to read the body itself.
   const response = await fetch(path, {
     credentials: "include",
@@ -425,7 +426,7 @@ async function readPreviewText(path: string, signal: AbortSignal): Promise<TextP
   });
   if (!response.ok) {
     const text = await response.text();
-    noteUnauthenticated(response.status, codeOf(text));
+    noteUnauthenticated(response.status, codeOf(text), requestGeneration);
     throw new Error(unavailableMessage());
   }
   return {

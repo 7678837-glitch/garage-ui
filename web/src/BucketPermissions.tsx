@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { api, noteUnauthenticated } from "./api/client";
+import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
 import { copy, fill, translate } from "./i18n";
@@ -112,11 +112,12 @@ function permissionFailure(error: unknown): PermissionFailure {
 }
 
 async function loadBucketKeys(bucketId: string): Promise<BucketKeyGrant[]> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(bucketUrl(bucketId), { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new PermissionListError(failure);
   }
   return parseKeys(text ? (JSON.parse(text) as unknown) : undefined);

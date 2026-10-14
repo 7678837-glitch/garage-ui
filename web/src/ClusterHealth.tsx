@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ApiError, api, noteUnauthenticated } from "./api/client";
+import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { CompactCapacityText, useI18n, type Language, copy, fill, translate, phrase } from "./i18n";
 
@@ -310,6 +310,7 @@ function shownCode(error: unknown): string | null {
 }
 
 async function loadStatistics(): Promise<ClusterStatistics> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch("/api/cluster/statistics", {
     method: "GET",
     credentials: "include",
@@ -317,7 +318,7 @@ async function loadStatistics(): Promise<ClusterStatistics> {
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     // Statistics are parsed from the response text, not through api(). The banner only reads error.code.
     throw new ApiError(failure.message, failure.code);
   }

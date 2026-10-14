@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, noteUnauthenticated } from "./api/client";
+import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
 import { DetailTabs } from "./DetailTabs";
@@ -154,22 +154,24 @@ function yesNo(flag: boolean): string {
 }
 
 async function loadKeyBuckets(keyId: string): Promise<KeyBucket[]> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(keyUrl(keyId), { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new KeyListError(failure);
   }
   return parseKeyBuckets(text ? (JSON.parse(text) as unknown) : undefined);
 }
 
 async function loadKey(id: string): Promise<AccessKey> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(keyUrl(id), { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new KeyListError(failure);
   }
   const body = JSON.parse(text) as Record<string, unknown>;
@@ -293,13 +295,14 @@ function keyListFailure(error: unknown): KeyListFailure {
 }
 
 async function loadPage(offset: number): Promise<KeyPage> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(`/api/keys?offset=${offset}&limit=${PAGE_LIMIT}`, {
     credentials: "include",
   });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new KeyListError(failure);
   }
   return parsePage(text ? (JSON.parse(text) as unknown) : undefined);

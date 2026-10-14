@@ -1,8 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
 import { setFormDirty } from "./unsaved";
+import { api } from "./api/client";
+
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+});
+afterAll(() => {
+  if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+});
 
 afterEach(() => {
   cleanup();
@@ -848,7 +858,7 @@ test("shows a bucket id and its alias to an admin", async () => {
   );
   renderApp();
   await chooseSection("Buckets");
-  expect(await screen.findByText("bucket-ada")).toBeTruthy();
+  expect(await screen.findByText("bucket-ada", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
@@ -860,11 +870,11 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
-  fireEvent.click(screen.getByLabelText("Edit key-ada"));
-  expect(screen.getByRole("button", { name: "Rename key-ada" })).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Actions (key-ada)"));
+  expect(screen.getByRole("button", { name: "Save name (key-ada)" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Show secret (key-ada)" })).toBeTruthy();
-  expect(screen.getByRole("checkbox", { name: "Allow create bucket for key-ada" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Allow bucket creation (key-ada)" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETADA");
 });
 
@@ -918,7 +928,7 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
   expect(sectionsNav().queryByRole("link", { name: "Users" })).toBeNull();
   await chooseSection("Buckets");
-  expect(await screen.findByText("bucket-bea")).toBeTruthy();
+  expect(await screen.findByText("bucket-bea", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("west")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete bucket-bea" })).toBeNull();
@@ -1027,7 +1037,7 @@ test("the Buckets nav action sets exactly #buckets", async () => {
   expect(window.location.hash).toBe("#buckets");
   fireEvent.click(await screen.findByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
-  expect(screen.getByText("bucket-ada")).toBeTruthy();
+  expect(screen.getByText("bucket-ada", { selector: "code" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
 });
 
@@ -1035,11 +1045,11 @@ test("choosing Keys hides the buckets section and sets the hash", async () => {
   window.location.hash = "#buckets";
   stubSignedIn("admin");
   renderApp();
-  expect(await screen.findByText("bucket-ada")).toBeTruthy();
+  expect(await screen.findByText("bucket-ada", { selector: "code" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Buckets" })).toBeTruthy();
   await chooseSection("Keys");
   expect(screen.queryByRole("heading", { name: "Buckets" })).toBeNull();
-  expect(screen.queryByText("bucket-ada")).toBeNull();
+  expect(screen.queryByText("bucket-ada", { selector: "code" })).toBeNull();
   expect(await screen.findByText("key-ada")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(window.location.hash).toBe("#keys");
@@ -1315,7 +1325,7 @@ test("a viewer without download does not see preview or write controls", async (
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.getByLabelText("Search")).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
@@ -1323,7 +1333,7 @@ test("a viewer without download does not see preview or write controls", async (
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   expect(screen.queryByText("plain body of a.txt")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
-  expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   expect(screen.queryByText("plain body of a.txt")).toBeNull();
 });
 
@@ -1341,7 +1351,7 @@ test("a viewer with download sees preview and download but not write controls", 
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("rel")).toBe("noopener");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
 });
 
@@ -1478,7 +1488,8 @@ test("an admin with the download bit off still sees upload, delete, preview, and
   window.location.hash = "#buckets/bucket-bea/";
   vi.stubGlobal("fetch", objectBrowserResponse("admin", false));
   renderApp();
-  expect(await screen.findByRole("button", { name: "Delete folder" })).toBeTruthy();
+  fireEvent.click(await screen.findByLabelText("Actions (photos/)"));
+  expect(screen.getByRole("button", { name: "Delete folder (photos/)" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Upload" })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
@@ -1525,6 +1536,111 @@ test("returns to the login form when a signed-in request is unauthenticated", as
   renderApp();
   expect(await screen.findByRole("button", { name: "Log in" })).toBeTruthy();
   expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
+});
+
+test.each(["before expiry", "after expiry"])("keeps a new login when an old 401 body finishes %s", async (requestTiming) => {
+  let finishOldBody!: (body: string) => void;
+  const oldBody = new Promise<string>((resolve) => { finishOldBody = resolve; });
+  const session = {
+    initialized: true, authenticated: true, username: "Ada", role: "admin",
+    can_download: true, can_share: true, garage_version: "v2.4.1", garage_write_blocked: false,
+  };
+  const failure = JSON.stringify({ code: "unauthenticated", message: "Login required" });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/auth/status") return new Response(JSON.stringify(session));
+    if (url === "/api/auth/login") return new Response(null, { status: 204 });
+    if (url === "/api/test/expire") return new Response(failure, { status: 401 });
+    if (url === "/api/test/old") {
+      const response = new Response(null, { status: 401 });
+      vi.spyOn(response, "text").mockImplementation(() => oldBody);
+      return response;
+    }
+    if (url.includes("/api/capabilities")) return capabilitiesResponse();
+    if (url === "/api/cluster/status") return new Response(JSON.stringify({ nodes: [] }));
+    return new Response(JSON.stringify({ status: "ok", version: "test" }));
+  }));
+  renderApp();
+  await screen.findByRole("navigation", { name: "Sections" });
+  let oldRequest: Promise<unknown>;
+  if (requestTiming === "before expiry") oldRequest = api("/api/test/old").catch((error: unknown) => error);
+  await act(async () => { await api("/api/test/expire").catch(() => undefined); });
+  await screen.findByRole("button", { name: "Log in" });
+  if (requestTiming === "after expiry") oldRequest = api("/api/test/old").catch((error: unknown) => error);
+  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "Ada" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "correct-password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+  await screen.findByRole("navigation", { name: "Sections" });
+  await act(async () => {
+    finishOldBody(failure);
+    expect(await oldRequest).toBeInstanceOf(Error);
+  });
+  expect(screen.getByRole("navigation", { name: "Sections" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+  await act(async () => { await api("/api/test/expire").catch(() => undefined); });
+  expect(await screen.findByRole("button", { name: "Log in" })).toBeTruthy();
+});
+
+test("a delayed raw key-list 401 cannot clear a new login", async () => {
+  window.location.hash = "#keys";
+  let finishOldBody!: (body: string) => void;
+  const oldBody = new Promise<string>((resolve) => { finishOldBody = resolve; });
+  let keysStarted = false;
+  const failure = JSON.stringify({ code: "unauthenticated", message: "Login required" });
+  stubSignedIn("admin");
+  const signedInFetch = fetch;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("/api/keys?") && !keysStarted) {
+      keysStarted = true;
+      const response = new Response(null, { status: 401 });
+      vi.spyOn(response, "text").mockImplementation(() => oldBody);
+      return response;
+    }
+    if (url === "/api/test/expire") return new Response(failure, { status: 401 });
+    if (url === "/api/auth/login") return new Response(null, { status: 204 });
+    return signedInFetch(input, init);
+  }));
+  renderApp();
+  await waitFor(() => { expect(keysStarted).toBe(true); });
+  await act(async () => { await api("/api/test/expire").catch(() => undefined); });
+  fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "Ada" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "correct-password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+  await screen.findByRole("navigation", { name: "Sections" });
+  await act(async () => { finishOldBody(failure); await oldBody; });
+  expect(screen.getByRole("navigation", { name: "Sections" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+});
+
+test("changing the password preserves the replacement session when an old request returns 401", async () => {
+  let finishOldBody!: (body: string) => void;
+  const oldBody = new Promise<string>((resolve) => { finishOldBody = resolve; });
+  stubSignedIn("viewer");
+  const signedInFetch = fetch;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/test/old") {
+      const response = new Response(null, { status: 401 });
+      vi.spyOn(response, "text").mockImplementation(() => oldBody);
+      return response;
+    }
+    if (url === "/api/auth/change-password") return new Response(null, { status: 204 });
+    return signedInFetch(input, init);
+  }));
+  renderApp();
+  await chooseSection("Settings");
+  const oldRequest = api("/api/test/old").catch((error: unknown) => error);
+  fireEvent.change(await screen.findByLabelText("Current password"), { target: { value: "current secret" } });
+  fireEvent.change(screen.getByLabelText("New password"), { target: { value: "correct horse" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  await waitFor(() => { expect((screen.getByLabelText("Current password") as HTMLInputElement).value).toBe(""); });
+  await act(async () => {
+    finishOldBody(JSON.stringify({ code: "unauthenticated", message: "Login required" }));
+    expect(await oldRequest).toBeInstanceOf(Error);
+  });
+  expect(screen.getByRole("navigation", { name: "Sections" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
 });
 
 test("keeps the change-password form when the current password is rejected", async () => {
@@ -1590,7 +1706,7 @@ test("viewer overview has guarded Buckets and Keys entry points in the main work
     confirm.mockReturnValue(true);
     fireEvent.click(buckets);
     expect(window.location.hash).toBe("#buckets");
-    expect(await screen.findByText("bucket-ada")).toBeTruthy();
+    expect(await screen.findByText("bucket-ada", { selector: "code" })).toBeTruthy();
   } finally {
     setFormDirty("viewer-overview-regression", false);
   }

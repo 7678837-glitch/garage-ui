@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { noteUnauthenticated } from "./api/client";
+import { captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { copy, fill } from "./i18n";
 
@@ -91,11 +91,12 @@ function failureOf(error: Error): CapabilitiesFailure {
 
 // api() keeps only message. About also shows the response code, so read the body here.
 async function loadCapabilities(): Promise<Capabilities> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch("/api/capabilities", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new CapabilitiesError(failure);
   }
   return parseCapabilities(text);

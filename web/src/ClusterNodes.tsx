@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, api, noteUnauthenticated } from "./api/client";
+import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { CapacityField } from "./CapacityField";
 import { ConfirmDialog } from "./confirm";
 import { DetailTabs } from "./DetailTabs";
@@ -586,11 +586,12 @@ function failureFrom(text: string, status: number): { message: string; code: str
 }
 
 async function loadNodes(): Promise<ClusterStatus> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch("/api/cluster/status", { credentials: "include" });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     // The node list is parsed from the raw text and does not go through api(). The banner only recognizes error.code.
     throw new ApiError(failure.message, failure.code);
   }

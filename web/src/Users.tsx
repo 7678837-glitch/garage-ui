@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, noteUnauthenticated } from "./api/client";
+import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { copy, fill, translate } from "./i18n";
 
@@ -257,13 +257,14 @@ function userListFailure(error: unknown): UserListFailure {
 }
 
 async function loadUsers(offset: number): Promise<UserPage> {
+  const requestGeneration = captureAuthGeneration();
   const response = await fetch(`/api/users?offset=${offset}&limit=100`, {
     credentials: "include",
   });
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new UserListError(failure);
   }
   return parseUserPage(text ? (JSON.parse(text) as unknown) : undefined);

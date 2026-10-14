@@ -24,15 +24,25 @@ function csrfToken(): string {
 type UnauthenticatedHook = (status: number, code: string | null) => void;
 
 let unauthenticatedHook: UnauthenticatedHook | null = null;
+let authGeneration = 0;
+
+export function captureAuthGeneration(): number {
+  return authGeneration;
+}
+
+export function advanceAuthGeneration(): void {
+  authGeneration += 1;
+}
 
 export function bindUnauthenticated(hook: UnauthenticatedHook | null): void {
   unauthenticatedHook = hook;
 }
 
-export function noteUnauthenticated(status: number, code: string | null): void {
-  if (status !== 401 || code !== "unauthenticated") {
+export function noteUnauthenticated(status: number, code: string | null, requestGeneration: number): void {
+  if (status !== 401 || code !== "unauthenticated" || requestGeneration !== authGeneration) {
     return;
   }
+  advanceAuthGeneration();
   unauthenticatedHook?.(status, code);
 }
 
@@ -68,6 +78,7 @@ function failureFrom(text: string, status: number): { message: string; code: str
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const requestGeneration = captureAuthGeneration();
   const headers = new Headers(init.headers);
   const method = (init.method ?? "GET").toUpperCase();
   if (init.body && !headers.has("content-type")) {
@@ -88,7 +99,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text();
   if (!response.ok) {
     const failure = failureFrom(text, response.status);
-    noteUnauthenticated(response.status, failure.code);
+    noteUnauthenticated(response.status, failure.code, requestGeneration);
     throw new ApiError(failure.message, failure.code);
   }
   if (!text) {
@@ -124,6 +135,7 @@ export function putObject(input: {
   contentType: string;
   onProgress: (progress: { percent: number | null; loaded: number }) => void;
 }): { promise: Promise<void>; abort: () => void } {
+  const requestGeneration = captureAuthGeneration();
   const xhr = new XMLHttpRequest();
   let aborted = false;
   xhr.open(
@@ -153,7 +165,7 @@ export function putObject(input: {
         return;
       }
       const failure = failureFrom(xhr.responseText, xhr.status);
-      noteUnauthenticated(xhr.status, failure.code);
+      noteUnauthenticated(xhr.status, failure.code, requestGeneration);
       reject(new Error(fill(copy("ui.request.failed"), { status: xhr.status })));
     };
     xhr.onerror = () => {

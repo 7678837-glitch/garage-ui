@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
-import { api, bindUnauthenticated, type AuthStatus } from "./api/client";
+import { api, advanceAuthGeneration, bindUnauthenticated, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { About, garageLine } from "./About";
 import { AdminTokens } from "./AdminTokens";
@@ -118,6 +118,7 @@ function SetupForm() {
     mutationFn: (input: Credentials) =>
       api("/api/setup", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async () => {
+      advanceAuthGeneration();
       await client.invalidateQueries({ queryKey: ["auth", "status"] });
     },
   });
@@ -161,6 +162,7 @@ function LoginForm() {
     mutationFn: (input: Credentials) =>
       api("/api/auth/login", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: async () => {
+      advanceAuthGeneration();
       await client.invalidateQueries({ queryKey: ["auth", "status"] });
     },
   });
@@ -388,12 +390,14 @@ function Home({ status }: { status: SessionStatus }) {
     mutationFn: (input: PasswordChange) =>
       api("/api/auth/change-password", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: () => {
+      advanceAuthGeneration();
       form.reset({ current_password: "", new_password: "" });
     },
   });
   const logout = useMutation({
     mutationFn: () => api("/api/auth/logout", { method: "POST" }),
     onSuccess: async () => {
+      advanceAuthGeneration();
       await client.invalidateQueries({ queryKey: ["auth", "status"] });
     },
   });
