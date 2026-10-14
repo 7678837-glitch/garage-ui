@@ -179,9 +179,16 @@ test.describe.serial("accounts", () => {
     await expect(users.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
   });
 
-  test("restores the administrator password", async ({ page }) => {
+  test("restores the administrator password and viewer permissions", async ({ page }) => {
     test.setTimeout(120_000);
     await logIn(page, administrator.username, nextPassword);
+    await sections(page).getByRole("link", { name: "Users", exact: true }).click();
+    const share = page.getByRole("checkbox", { name: `Share for ${readOnlyUser.username}` });
+    const download = page.getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` });
+    await share.click();
+    await expect(share).not.toBeChecked();
+    await download.click();
+    await expect(download).not.toBeChecked();
     await sections(page).getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
     await page.getByLabel("Current password").fill(nextPassword);

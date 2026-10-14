@@ -40,6 +40,9 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
   let bucketId = "";
   let keyId = "";
   let bodyError: unknown;
+  let bodyFailed = false;
+  let cleanupError: unknown;
+  let cleanupFailed = false;
   const hits: PreviewHit[] = [];
   let objectPuts = 0;
 
@@ -77,6 +80,7 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
     await openObjects(page, bucketId);
     const objects = page.getByRole("region", { name: "Objects" });
     await bindKey(objects, keyId);
+    await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
 
     await objects.getByLabel("Choose files").setInputFiles(clipPath);
     const upload = page.getByRole("region", { name: "Upload" });
@@ -119,17 +123,24 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
     await assertWidth(page, "video-seek", 360);
   } catch (error) {
     bodyError = error;
-    throw error;
+    bodyFailed = true;
   } finally {
     rmSync(work, { recursive: true, force: true });
     try {
       await release(page, alias, bucketId, keyId);
     } catch (cleanup) {
-      if (bodyError === undefined) {
-        throw cleanup;
+      cleanupError = cleanup;
+      cleanupFailed = true;
+      if (bodyFailed) {
+        console.error(cleanup);
       }
-      console.error(cleanup);
     }
+  }
+  if (bodyFailed) {
+    throw bodyError;
+  }
+  if (cleanupFailed) {
+    throw cleanupError;
   }
 });
 

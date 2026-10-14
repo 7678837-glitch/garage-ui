@@ -1,8 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { garageTarget } from "./garage-target";
 
-export const evidenceDir =
-  "/Users/xjoker/Library/Application Support/Cursor/AgentStores/cursor_agent_stores/b67f97fb-d6cf-48cf-83d6-495be989e3ec/files/orchestrate/garage-ui/evidence/e2e";
+export const evidenceDir = fileURLToPath(
+  new URL(`../../evidence/e2e/${garageTarget().version}/`, import.meta.url),
+);
 
 const widths = [1280, 360] as const;
 

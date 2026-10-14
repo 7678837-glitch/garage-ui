@@ -49,6 +49,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     await grantKey(page, alias, bucketId, keyId);
     await openObjects(page, bucketId);
     await bindKey(objects, keyId);
+    await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
 
     await test.step("prefix, inline text, and download", async () => {
       await objects.getByLabel("Choose folder").setInputFiles(notesRoot);

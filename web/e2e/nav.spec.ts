@@ -38,7 +38,22 @@ async function expectSections(page: Page, visible: boolean): Promise<void> {
   }
 }
 
+let createdBucketId = "";
+
+test.afterEach(async ({ page }) => {
+  if (createdBucketId.length === 0) {
+    return;
+  }
+  const cookies = await page.context().cookies();
+  const csrf = cookies.find((cookie) => cookie.name === "garage_csrf")?.value ?? "";
+  const response = await page.request.delete(`/api/buckets/${createdBucketId}`, {
+    headers: { "x-csrf-token": csrf },
+  });
+  expect(response.ok(), `cleanup bucket failed with status ${response.status()}`).toBe(true);
+});
+
 test("logs in, collapses the narrow menu, and opens objects", async ({ page }) => {
+  createdBucketId = "";
   test.setTimeout(120_000);
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
@@ -73,12 +88,39 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   await expect(page.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
   await expectSections(page, false);
 
+  let releaseSnapshot!: () => void;
+  let markSnapshot!: () => void;
+  const snapshotCaptured = new Promise<void>((resolve) => { markSnapshot = resolve; });
+  const snapshotReleased = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+  let delayed = false;
+  await page.route(/\/api\/buckets\?/, async (route) => {
+    if (delayed) {
+      await route.continue();
+      return;
+    }
+    delayed = true;
+    const response = await route.fetch();
+    markSnapshot();
+    await snapshotReleased;
+    await route.fulfill({ response });
+  });
   await page.getByRole("button", { name: "Menu" }).click();
   await sections(page).getByRole("link", { name: "Buckets", exact: true }).click();
+  await snapshotCaptured;
   await expect(page.getByRole("heading", { name: "Buckets" })).toBeVisible();
   const alias = `e2e-252-${Date.now().toString(36)}`;
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
+  const createdResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/api/buckets",
+  );
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
+  const created = await createdResponse;
+  expect(created.ok()).toBe(true);
+  const body: unknown = await created.json();
+  expect(body).toHaveProperty("id");
+  createdBucketId = String((body as { id: unknown }).id);
+  expect(createdBucketId).toMatch(/^[0-9a-f]{64}$/);
+  releaseSnapshot();
   await expect(page.getByText("Bucket created")).toBeVisible();
   await expect(page.getByText(alias, { exact: true })).toBeVisible();
   await recordLayout(page, "buckets");
