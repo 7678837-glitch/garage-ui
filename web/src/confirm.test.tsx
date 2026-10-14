@@ -120,7 +120,7 @@ test("high confirmation accepts only the typed target name", () => {
   expect(confirmed).toEqual(["photos", "photos"]);
 });
 
-test("pending confirmation reads Working, stays disabled, and keeps Cancel focused", () => {
+test("pending confirmation blocks confirmation and every dismissal path", async () => {
   const confirmed: string[] = [];
   const cancelled: string[] = [];
   function Probe() {
@@ -155,8 +155,12 @@ test("pending confirmation reads Working, stays disabled, and keeps Cancel focus
   fireEvent.keyDown(dialog, { key: "Enter" });
   expect(confirmed).toEqual([]);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(cancelled).toEqual(["cancel"]);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  fireEvent.pointerDown(document.body);
+  fireEvent.click(document.body);
+  expect(cancelled).toEqual([]);
+  expect(screen.getByRole("dialog")).toBe(dialog);
   expect(confirmed).toEqual([]);
 });
 
@@ -187,7 +191,36 @@ test("pending high confirmation keeps the typed name and does not confirm", () =
   fireEvent.click(working);
   expect(confirmed).toEqual([]);
   const cancel = screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
-  expect(cancel.disabled).toBe(false);
+  expect(cancel.getAttribute("aria-disabled")).toBe("true");
   expect(cancel.textContent).toBe("Cancel");
   expect(document.activeElement).toBe(cancel);
+});
+
+
+test("confirmation returns focus to its opener after dismissal", async () => {
+  function Probe() {
+    const [open, setOpen] = useState(false);
+    return <><button onClick={() => setOpen(true)}>Delete photo</button>{open ? <ConfirmDialog action="delete-object" name="photo.jpg" consequence="Deletes this object." onCancel={() => setOpen(false)} onConfirm={() => {}} /> : null}</>;
+  }
+  render(<Probe />);
+  const opener = screen.getByRole("button", { name: "Delete photo" });
+  opener.focus();
+  fireEvent.click(opener);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.activeElement).toBe(opener);
+});
+
+
+test("dialog traps keyboard focus and restores page interactivity after unmount", () => {
+  const { unmount } = render(<ConfirmDialog action="delete-object" name="photo.jpg" consequence="Deletes this photo." onCancel={() => {}} onConfirm={() => {}} />);
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  const confirm = screen.getByRole("button", { name: "Confirm" });
+  fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(confirm);
+  fireEvent.keyDown(confirm, { key: "Tab" });
+  expect(document.activeElement).toBe(cancel);
+  expect(document.body.style.pointerEvents).toBe("none");
+  unmount();
+  expect(document.body.style.pointerEvents).toBe("");
 });

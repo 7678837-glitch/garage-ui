@@ -1,4 +1,5 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { Button, Dialog, Flex, TextField } from "@radix-ui/themes";
+import { useRef, useState } from "react";
 import { copy, fill } from "./i18n";
 
 const RISK = {
@@ -51,100 +52,45 @@ export function riskOf(action: string): RiskLevel {
   return RISK[action];
 }
 
-function openDialog(dialog: HTMLDialogElement) {
-  if (typeof dialog.showModal === "function") {
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-    return;
-  }
-  dialog.setAttribute("open", "");
-}
-
 export function ConfirmDialog(props: ConfirmDialogProps) {
   const { action, name, consequence, onCancel, onConfirm, pending = false } = props;
   const level = RISK[action];
   const scope = "scope" in props ? props.scope : null;
   const [typed, setTyped] = useState("");
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
+  const [opener] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const matched = typed === name;
   const canConfirm = level === "medium" || matched;
 
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    openDialog(dialog);
-    cancelRef.current?.focus();
-  }, [name]);
-
   return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby={titleId}
-      className="ui-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !pending) onCancel(); }}>
+      <Dialog.Content size={{ initial: "2", sm: "3" }} maxWidth="480px" maxHeight="calc(100dvh - 48px)" aria-busy={pending}
+        onOpenAutoFocus={(event) => { event.preventDefault(); cancelRef.current?.focus(); }}
+        onCloseAutoFocus={(event) => { event.preventDefault(); if (opener?.isConnected) opener.focus(); }}
+        onEscapeKeyDown={(event) => { if (pending) event.preventDefault(); }}
+        onInteractOutside={(event) => { if (pending) event.preventDefault(); }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || level !== "high" || !(event.target instanceof HTMLInputElement)) return;
           event.preventDefault();
-          onCancel();
-          return;
-        }
-        if (event.key !== "Enter" || level !== "high") {
-          return;
-        }
-        if (!(event.target instanceof HTMLInputElement)) {
-          return;
-        }
-        event.preventDefault();
-        if (matched && !pending) {
-          onConfirm();
-        }
-      }}
-    >
-      <h3 id={titleId} className="font-medium">
-        {fill(copy("ui.confirm"), { name: name })}</h3>
-      <p>{consequence}</p>
-      {scope !== null ? <p>{scope}</p> : null}
-      {level === "high" ? (
-        <label className="mt-2 block">
-          {fill(copy("ui.type.to.confirm"), { name: name })}<input
-            className="ui-input"
-            value={typed}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => {
-              setTyped(event.target.value);
-            }}
-          />
-        </label>
-      ) : null}
-      <button
-        ref={cancelRef}
-        className="ui-button"
-        type="button"
-        onClick={onCancel}
-      >
-        {copy("ui.cancel")}</button>
-      <button
-        className="ui-button ui-button-danger"
-        type="button"
-        disabled={!canConfirm || pending}
-        onClick={() => {
-          if (canConfirm && !pending) {
-            onConfirm();
-          }
-        }}
-      >
-        {pending ? copy("ui.working") : copy("ui.confirm.2")}
-      </button>
-    </dialog>
+          if (matched && !pending) onConfirm();
+        }}>
+        <Dialog.Title>{fill(copy("ui.confirm"), { name })}</Dialog.Title>
+        <Dialog.Description>{consequence}</Dialog.Description>
+        {scope !== null ? <p className="ui-confirm-scope">{scope}</p> : null}
+        {level === "high" ? <label className="ui-field ui-confirm-name">
+          {fill(copy("ui.type.to.confirm"), { name })}
+          <TextField.Root size="2" value={typed} autoComplete="off" spellCheck={false}
+            onChange={(event) => setTyped(event.target.value)} />
+        </label> : null}
+        <Flex gap="3" mt="5" justify="end" wrap="wrap">
+          <Button ref={cancelRef} size="2" color="gray" variant="soft" type="button" aria-disabled={pending}
+            onClick={() => { if (!pending) onCancel(); }}>{copy("ui.cancel")}</Button>
+          <Button size="2" color="red" type="button" disabled={!canConfirm || pending}
+            onClick={() => { if (canConfirm && !pending) onConfirm(); }}>
+            {pending ? copy("ui.working") : copy("ui.confirm.2")}
+          </Button>
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }

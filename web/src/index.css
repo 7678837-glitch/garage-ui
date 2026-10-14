@@ -43,11 +43,11 @@
   --color-danger: var(--danger);
 }
 body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-input:not([type="checkbox"]):not([type="radio"]), select, textarea { background: var(--surface); color: var(--ink); }
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+input:not([type="checkbox"]):not([type="radio"]):not(.rt-TextFieldInput), select, textarea:not(.rt-TextAreaInput) { background: var(--surface); color: var(--ink); }
+:where(a, button, input, select, textarea, summary, [tabindex]):not([class*="rt-"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button { cursor: pointer; }
-button:disabled { cursor: default; opacity: .55; }
-button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+button:not(.rt-reset):disabled { cursor: default; opacity: .55; }
+button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); color: var(--accent); }
 .ui-page > [role="tabpanel"], .ui-tabs { min-width: 0; }
 .ui-page { container-type: inline-size; }
 .ui-page, .ui-form { display: grid; gap: var(--space-large); min-width: 0; }
@@ -138,12 +138,12 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-settings-section h3 { font-size: 15px; line-height: 22px; font-weight: 600; }
 .ui-settings-section header p { margin-top: 8px; font-weight: 400; }
 .ui-settings-controls { min-width: 0; display: grid; align-content: start; gap: 12px; }
-.ui-settings-controls > .ui-button { justify-self: start; }
+.ui-settings-controls > :is(.ui-button, .rt-Button) { justify-self: start; }
 .ui-settings-controls .ui-input { max-width: 480px; }
 .ui-settings-controls textarea.ui-input { max-width: none; }
 .ui-settings-controls .ui-form { justify-items: stretch; }
 .ui-settings-controls .ui-form > div { min-width: 0; }
-.ui-settings-controls .ui-form .ui-button { justify-self: start; }
+.ui-settings-controls .ui-form :is(.ui-button, .rt-Button) { justify-self: start; }
 .ui-settings-controls pre { min-width: 0; max-width: 100%; overflow-x: auto; }
 .ui-settings-controls .ui-field { width: 100%; overflow-wrap: anywhere; }
 .ui-settings-danger h3 { color: var(--danger); }
@@ -313,3 +313,39 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
   .ui-audit-table :is(.ui-audit-result, .ui-audit-ip, .ui-audit-method, .ui-audit-status) .ui-data-value { white-space: normal; overflow-wrap: anywhere; }
   .ui-audit-table .ui-value-text { overflow-wrap: anywhere; }
 }
+
+/* Layout tokens also apply to themed portals; legacy controls retain their transition styles. */
+.radix-themes {
+  --default-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --canvas: var(--gray-1);
+  --surface: var(--color-panel-solid);
+  --ink: var(--gray-12);
+  --muted: var(--gray-11);
+  --separator: var(--gray-5);
+  --line: var(--gray-8);
+  --accent: var(--accent-11);
+  --accent-ink: var(--accent-contrast);
+  --accent-soft: var(--accent-3);
+  --danger: var(--red-11);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ui-detail-tabs { min-width: 0; overflow-x: auto; }
+.ui-detail-tabs .rt-TabsTrigger { flex-shrink: 0; text-decoration: none; }
+.ui-confirm-name, .ui-confirm-scope { margin-top: 16px; }
+.rt-Button[aria-disabled="true"] { cursor: default; opacity: .55; }
+.ui-field > :is(.rt-TextFieldRoot, .rt-TextAreaRoot, .rt-SelectTrigger) { width: 100%; min-width: 0; }
+.ui-form > .rt-Button { justify-self: start; }
+.ui-settings-controls .rt-TextFieldRoot { max-width: 480px; }
+.ui-table.rt-TableRoot { width: 100%; }
+.ui-table .rt-TableRootTable { width: 100%; }
+.ui-table.rt-TableRoot .rt-ScrollAreaViewport { border-radius: inherit; }
+.ui-object-name.rt-Button { height: auto; min-height: var(--control-height); box-shadow: none; }
+.ui-object-name.rt-Button:hover { background: transparent; }
+.ui-objects-name > .ui-object-name.rt-Button { white-space: normal; }
+.ui-objects-table tbody tr:has([role="checkbox"][data-state="checked"]) { background: var(--accent-soft); }
+
+.ui-detail-panel { margin-top: var(--space-large); min-width: 0; }
+
+/* Portal forms need their own width container for responsive settings rows. */
+.rt-DialogContent { container-type: inline-size; max-height: calc(100dvh - 48px); overflow: auto; }

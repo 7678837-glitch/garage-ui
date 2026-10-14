@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { bootTheme, readThemeChoice, resolveTheme, ThemeChooser, useThemeSync, writeThemeChoice } from "./theme";
+import { ConfirmDialog } from "./confirm";
+import { bootTheme, readThemeChoice, resolveTheme, ThemeChooser, GarageTheme, useThemeSync, writeThemeChoice } from "./theme";
 
 afterEach(() => {
   cleanup();
@@ -124,4 +125,25 @@ test("system theme keeps tracking while appearance controls are unmounted", () =
   expect(document.documentElement.className).toBe("dark");
   act(() => writeThemeChoice(localStorage, "light"));
   expect(document.documentElement.className).toBe("light");
+});
+
+
+test("Radix root and dialog portals synchronize local, storage, and system theme changes", () => {
+  const media = stubMedia(false);
+  const { container } = render(<GarageTheme><ThemeChooser /><ConfirmDialog action="delete-object" name="photo.jpg" consequence="Deletes this photo." onCancel={() => {}} onConfirm={() => {}} /></GarageTheme>);
+  const root = container.querySelector(".radix-themes");
+  const portal = screen.getByRole("dialog").closest(".radix-themes");
+  expect(root?.getAttribute("data-accent-color")).toBe("orange");
+  expect(root?.getAttribute("data-gray-color")).toBe("gray");
+  expect(root?.getAttribute("data-radius")).toBe("medium");
+  act(() => writeThemeChoice(localStorage, "dark"));
+  expect(root?.classList.contains("dark")).toBe(true);
+  expect(portal?.classList.contains("dark")).toBe(true);
+  act(() => { localStorage.setItem("garage-ui-theme", "light"); window.dispatchEvent(new Event("storage")); });
+  expect(root?.classList.contains("light")).toBe(true);
+  expect(portal?.classList.contains("light")).toBe(true);
+  act(() => writeThemeChoice(localStorage, "system"));
+  act(() => media.preferDark());
+  expect(root?.classList.contains("dark")).toBe(true);
+  expect(portal?.classList.contains("dark")).toBe(true);
 });

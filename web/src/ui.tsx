@@ -1,3 +1,4 @@
+import { Button, Table } from "@radix-ui/themes";
 import { useId, useState, type ReactNode, type TdHTMLAttributes } from "react";
 import { fill, useI18n } from "./i18n";
 
@@ -12,8 +13,8 @@ export function Pagination({ page, hasPrevious, hasNext, pending = false, onPrev
   const { t } = useI18n();
   return <nav className="ui-pagination" aria-label={t("common.pagination")}>
     <span className="ui-muted">{fill(t("common.page"), { page })}</span>
-    <button className="ui-button" type="button" disabled={!hasPrevious || pending} onClick={onPrevious}>{t("common.previousPage")}</button>
-    <button className="ui-button" type="button" disabled={!hasNext || pending} onClick={onNext}>{t("common.nextPage")}</button>
+    <Button size="2" color="gray" variant="soft" type="button" disabled={!hasPrevious || pending} onClick={onPrevious}>{t("common.previousPage")}</Button>
+    <Button size="2" color="gray" variant="soft" type="button" disabled={!hasNext || pending} onClick={onNext}>{t("common.nextPage")}</Button>
   </nav>;
 }
 
@@ -21,11 +22,11 @@ export function ResourceIdentity({ id, name, compact = false }: { id: string; na
   const { t } = useI18n();
   const [result, setResult] = useState<"copied" | "failed" | null>(null);
   const abbreviated = id.length > 15 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
-  const copyButton = <button type="button" className="ui-button ui-button-quiet" onClick={async () => {
+  const copyButton = <Button size="2" variant="ghost" type="button" onClick={async () => {
     setResult(null);
     try { await navigator.clipboard.writeText(id); setResult("copied"); }
     catch { setResult("failed"); }
-  }}>{t("common.copyId")}</button>;
+  }}>{t("common.copyId")}</Button>;
   return <div className={`ui-resource-identity${compact ? " ui-resource-identity-compact" : ""}`}>
     {name ? <span className="ui-resource-name">{name}</span> : null}
     <div className="ui-actions">
@@ -51,11 +52,11 @@ export function SettingsSection({ title, description, danger = false, children }
   </section>;
 }
 
-export function DataCell({ label, kind = "metadata", children, className = "", ...props }: TdHTMLAttributes<HTMLTableCellElement> & {
+export function DataCell({ label, kind = "metadata", children, className = "", width, ...props }: TdHTMLAttributes<HTMLTableCellElement> & {
   label: ReactNode; kind?: "selection" | "identity" | "metadata" | "actions";
 }) {
-  return <td {...props} role="cell" data-kind={kind} className={`ui-data-cell ${className}`}>
+  return <Table.Cell {...props} width={width === undefined ? undefined : String(width)} role="cell" data-kind={kind} className={`ui-data-cell ${className}`}>
     <span className="ui-data-label" aria-hidden="true">{label}</span>
     <div className="ui-data-value">{children}</div>
-  </td>;
+  </Table.Cell>;
 }

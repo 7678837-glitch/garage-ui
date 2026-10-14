@@ -3,7 +3,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { LanguageProvider } from "./i18n";
-import { bootTheme } from "./theme";
+import { bootTheme, GarageTheme } from "./theme";
+import "@radix-ui/themes/styles.css";
 import "./index.css";
 import "./mobile.css";
 
@@ -19,7 +20,7 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
-        <App />
+        <GarageTheme><App /></GarageTheme>
       </LanguageProvider>
     </QueryClientProvider>
   </StrictMode>,

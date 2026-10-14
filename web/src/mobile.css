@@ -53,3 +53,15 @@
   .ui-user-list [data-kind="actions"]:has(details[open]) { grid-column: 1 / -1; grid-row: 3; }
   .ui-user-list [data-kind="actions"]:has(details[open]) .ui-data-value, .ui-user-list [data-kind="actions"]:has(details[open]) .ui-disclosure { width: 100%; }
 }
+
+@media (max-width: 639px) {
+  .radix-themes :is(.rt-Button, .rt-IconButton, .rt-SelectTrigger, .rt-TextFieldRoot, .rt-TextAreaRoot, .rt-TabsTrigger) { min-height: 36px; }
+  .radix-themes :is(.rt-TextFieldInput, .rt-TextAreaInput) { font-size: 16px; }
+  .ui-table-records.rt-TableRoot .rt-ScrollAreaViewport > div { display: block !important; }
+  .ui-table-records .rt-TableRootTable { display: block; }
+}
+@container (max-width: 48rem) {
+  :is(.ui-objects-table, .ui-audit-table).rt-TableRoot .rt-ScrollAreaViewport > div { display: block !important; }
+  :is(.ui-objects-table, .ui-audit-table) .rt-TableRootTable { display: block; }
+  .ui-objects-table [data-kind="actions"] .rt-Button { min-height: var(--touch-control-height); min-width: var(--touch-control-height); white-space: nowrap; }
+}

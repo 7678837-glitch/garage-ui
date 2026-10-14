@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Button, Theme } from "@radix-ui/themes";
+import { useEffect, useState, type ReactNode } from "react";
 import type { CopyKey } from "./copy-en";
 import { useI18n } from "./i18n";
 
@@ -50,10 +51,12 @@ export function bootTheme(root: HTMLElement, storage: Pick<Storage, "getItem">):
   applyResolvedTheme(root, resolveTheme(readThemeChoice(storage), prefersDark()));
 }
 
-export function useThemeSync() {
+function useThemeState() {
+  const [choice, setChoice] = useState<ThemeChoice>(() => readThemeChoice(localStorage));
+  const [dark, setDark] = useState(prefersDark);
   useEffect(() => {
     const media = typeof window.matchMedia === "function" ? window.matchMedia(colorSchemeQuery) : null;
-    const sync = () => applyResolvedTheme(document.documentElement, resolveTheme(readThemeChoice(localStorage), media?.matches ?? false));
+    const sync = () => { setChoice(readThemeChoice(localStorage)); setDark(media?.matches ?? false); };
     sync();
     media?.addEventListener("change", sync);
     window.addEventListener("garage-theme-change", sync);
@@ -64,44 +67,29 @@ export function useThemeSync() {
       window.removeEventListener("storage", sync);
     };
   }, []);
+  const resolved = resolveTheme(choice, dark);
+  useEffect(() => { applyResolvedTheme(document.documentElement, resolved); }, [resolved]);
+  return { choice, resolved };
+}
+
+export function useThemeSync() {
+  return useThemeState().resolved;
+}
+
+export function GarageTheme({ children }: { children: ReactNode }) {
+  const resolved = useThemeSync();
+  return <Theme appearance={resolved} accentColor="orange" grayColor="gray" radius="medium">{children}</Theme>;
 }
 
 export function ThemeChooser() {
-  const [choice, setChoice] = useState<ThemeChoice>(() => readThemeChoice(localStorage));
-  const [prefersDarkScheme, setPrefersDarkScheme] = useState(prefersDark);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") {
-      return;
-    }
-    const media = window.matchMedia(colorSchemeQuery);
-    const onChange = () => {
-      setPrefersDarkScheme(media.matches);
-    };
-    media.addEventListener("change", onChange);
-    return () => {
-      media.removeEventListener("change", onChange);
-    };
-  }, []);
+  const { choice } = useThemeState();
   const { t } = useI18n();
-  const resolved = resolveTheme(choice, prefersDarkScheme);
-  useEffect(() => {
-    applyResolvedTheme(document.documentElement, resolved);
-  }, [resolved]);
   return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label={t("theme.group")}>
+    <div className="ui-actions" role="group" aria-label={t("theme.group")}>
       {themeOptions.map(([option, label]) => (
-        <button
-          key={option}
-          className="ui-button"
-          type="button"
-          aria-pressed={choice === option}
-          onClick={() => {
-            writeThemeChoice(localStorage, option);
-            setChoice(option);
-          }}
-        >
-          {t(label)}
-        </button>
+        <Button key={option} size="2" color={choice === option ? "orange" : "gray"}
+          variant={choice === option ? "solid" : "soft"} type="button" aria-pressed={choice === option}
+          onClick={() => writeThemeChoice(localStorage, option)}>{t(label)}</Button>
       ))}
     </div>
   );
