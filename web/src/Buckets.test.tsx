@@ -1568,3 +1568,40 @@ test("bucket settings show one named title and independent readable sections", a
   expect(screen.getByText(id, { selector: "code" })).toBeTruthy();
   expect(screen.getByRole("button", { name: `Delete ${id}` })).toBeTruthy();
 });
+
+
+test.each([
+  { shape: "documented detail keys", localAliases: undefined },
+  { shape: "detail and list alias objects", localAliases: [{ alias: "site", accessKeyId: "GK1" }] },
+  { shape: "detail and keyless list aliases", localAliases: ["site"] },
+])("detail local aliases keep their access key without duplicates: $shape", async ({ localAliases }) => {
+  window.location.hash = "#bucket/bkt-1/settings";
+  const calls: Call[] = [];
+  let bucketLocalAliases = ["site"];
+  let listedAliases = localAliases;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const call = recordedCall(input, init);
+    calls.push(call);
+    if (call.url.endsWith("/cors")) return json({ corsRules: [] });
+    if (call.url.endsWith("/lifecycle")) return json({ lifecycleRules: [] });
+    if (call.url.endsWith("/aliases") && call.method === "DELETE") {
+      bucketLocalAliases = [];
+      listedAliases = undefined;
+      return json({});
+    }
+    if (call.url === "/api/buckets/bkt-1") return json({
+      id: "bkt-1", globalAliases: ["east"], localAliases: listedAliases,
+      keys: [{ accessKeyId: "GK1", name: "Storage key", bucketLocalAliases,
+        permissions: { owner: true, read: true, write: true } }],
+    });
+    return json({ items: [], hasMore: false });
+  }));
+  renderBuckets(true);
+  const remove = await screen.findByRole("button", { name: "Remove local alias site for GK1" });
+  expect(screen.getAllByText("site", { exact: true })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Remove local alias site for GK1" })).toHaveLength(1);
+  fireEvent.click(remove);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove local alias site for GK1" })).toBeNull());
+  expect(calls.find(call => call.url === "/api/buckets/bkt-1/aliases" && call.method === "DELETE")?.body)
+    .toEqual({ localAlias: "site", accessKeyId: "GK1" });
+});

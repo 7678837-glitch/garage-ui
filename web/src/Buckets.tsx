@@ -110,9 +110,25 @@ function parseBucket(value: unknown): Bucket {
   if (typeof row.id !== "string" || row.id.length === 0) {
     throw new Error(copy("ui.buckets.are.unavailable"));
   }
+  const localAliases = parseAliases(row.localAliases, "local");
+  if (Array.isArray(row.keys)) {
+    for (const value of row.keys) {
+      if (typeof value !== "object" || value === null) continue;
+      const key = value as Record<string, unknown>;
+      if (typeof key.accessKeyId !== "string") continue;
+      for (const alias of parseAliases(key.bucketLocalAliases, "local")) {
+        const index = localAliases.findIndex((listed) => listed.scope === "local"
+          && listed.name === alias.name
+          && (listed.accessKeyId === null || listed.accessKeyId === key.accessKeyId));
+        const detailed: Alias = { scope: "local", name: alias.name, accessKeyId: key.accessKeyId };
+        if (index < 0) localAliases.push(detailed);
+        else localAliases[index] = detailed;
+      }
+    }
+  }
   return {
     id: row.id,
-    aliases: [...parseAliases(row.globalAliases, "global"), ...parseAliases(row.localAliases, "local")],
+    aliases: [...parseAliases(row.globalAliases, "global"), ...localAliases],
     objects: digitsOf(row.objects),
     bytes: digitsOf(row.bytes),
     quotas: parseQuotas(row.quotas),
