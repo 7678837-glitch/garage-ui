@@ -183,7 +183,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
   const summary = screen.getByText("Upload", { selector: "summary" });
   const disclosure = summary.closest("details");
   expect(disclosure?.open).toBe(false);
-  fireEvent.click(summary);
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   expect(disclosure?.open).toBe(true);
   const upload = screen.getByRole("region", { name: "Upload" });
   const prefixButton = screen.getByRole("button", { name: "photos/" });
@@ -257,7 +257,7 @@ test("opens a bucket, shows the chosen object's type, and returns to the table",
   fireEvent.click(await screen.findByRole("button", { name: "Objects for bkt-1" }));
   expect(await screen.findByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "photos/a.txt" })).toBeTruthy();
-  expect(screen.getByText("12")).toBeTruthy();
+  expect(screen.getByText("12 B", { selector: "span" })).toBeTruthy();
   expect(screen.getByText("2026-10-11T00:00:00Z")).toBeTruthy();
   expect(screen.queryByText("east")).toBeNull();
   expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
@@ -295,9 +295,9 @@ test("moves into a prefix and a breadcrumb segment sets that prefix", async () =
   fireEvent.click(await screen.findByRole("button", { name: "photos/2024/" }));
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/2024/");
   expect(await screen.findByRole("button", { name: "photos/2024/a.txt" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "photos" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "2024" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "photos" }));
+  expect(screen.getByRole("button", { name: "photos (photos/)" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "2024 (photos/2024/)" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "photos (photos/)" }));
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   expect(await screen.findByRole("button", { name: "photos/b.txt" })).toBeTruthy();
   expect(prefixes).toContain("photos/2024/");
@@ -328,7 +328,7 @@ test("opens the prefix from the address and follows hashchange", async () => {
   expect(prefixes).toContain("photos/");
 });
 
-test("wraps a 64-character bucket id and object key", async () => {
+test("keeps the full long bucket id and object key accessible", async () => {
   const bucketId = "b".repeat(64);
   const key = "k".repeat(64);
   window.location.hash = `#buckets/${bucketId}`;
@@ -337,14 +337,14 @@ test("wraps a 64-character bucket id and object key", async () => {
     vi.fn(async () => json(page([objectRow(key, 1, "2026-10-11T00:00:00Z")]))),
   );
   renderObjects(bucketId);
-  const idButton = await screen.findByRole("button", { name: bucketId });
+  const idButton = await screen.findByRole("button", { name: `Root (${bucketId})` });
   const keyButton = await screen.findByRole("button", { name: key });
-  expect(idButton.className).toContain("break-all");
-  expect(idButton.className).toContain("min-w-0");
-  expect(idButton.className).toContain("max-w-full");
-  expect(keyButton.className).toContain("break-all");
-  expect(keyButton.className).toContain("min-w-0");
-  expect(keyButton.className).toContain("max-w-full");
+  expect(idButton).toBeTruthy();
+  expect(keyButton.textContent).toBe(key);
+  const identitySummary = screen.getByText("Full ID").closest("summary");
+  if (!identitySummary) throw new Error("missing identity disclosure");
+  fireEvent.click(identitySummary);
+  expect(screen.getByText(bucketId, { selector: "code" })).toBeTruthy();
 });
 
 test("requests the next token and shows that page", async () => {
@@ -955,7 +955,7 @@ test("requires the selected count before one batch delete", async () => {
   fireEvent.click(confirm);
   await waitFor(() => {
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("9")).toBeTruthy();
+    expect(screen.getByText("9 B", { selector: "span" })).toBeTruthy();
   });
   expect(box("Select a.txt").checked).toBe(false);
   expect(box("Select b.txt").checked).toBe(false);
@@ -1027,8 +1027,9 @@ test("shows Delete folder on a prefix row and not on an object row", async () =>
   if (!(prefixRow instanceof HTMLElement) || !(fileRow instanceof HTMLElement)) {
     throw new Error("missing object list row");
   }
-  expect(within(prefixRow).getByRole("button", { name: "Delete folder" })).toBeTruthy();
-  expect(within(fileRow).queryByRole("button", { name: "Delete folder" })).toBeNull();
+  fireEvent.click(within(prefixRow).getByText("Actions", { selector: "summary" }));
+  expect(within(prefixRow).getByRole("button", { name: /^Delete folder/ })).toBeTruthy();
+  expect(within(fileRow).queryByRole("button", { name: /^Delete folder/ })).toBeNull();
 });
 
 test("requires the typed prefix before recursive delete, then drops the row after 200", async () => {
@@ -1051,7 +1052,8 @@ test("requires the typed prefix before recursive delete, then drops the row afte
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   expect(window.location.hash).toBe("");
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("Confirm a?b/");
@@ -1065,7 +1067,7 @@ test("requires the typed prefix before recursive delete, then drops the row afte
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
   expect(screen.getByRole("button", { name: prefix })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const again = screen.getByRole("dialog");
   const againConfirm = within(again).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   fireEvent.change(within(again).getByRole("textbox"), { target: { value: "a?b" } });
@@ -1080,7 +1082,7 @@ test("requires the typed prefix before recursive delete, then drops the row afte
   });
   expect(screen.getByRole("button", { name: "keep.txt" })).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(calls.filter((call) => call.method === "DELETE")).toEqual([
     { url: "/api/buckets/bkt-1/objects/a%3Fb/?recursive=true", method: "DELETE" },
   ]);
@@ -1104,7 +1106,8 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "photos/" } });
@@ -1117,7 +1120,7 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
   );
   expect(open.textContent).toContain("Not allowed to delete this prefix");
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Delete folder" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /^Delete folder/ })).toBeTruthy();
   expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
 });
 
@@ -1152,13 +1155,13 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
   expect(screen.getByLabelText("Search")).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   expect(screen.queryByText("secret bytes")).toBeNull();
@@ -1201,7 +1204,7 @@ test("shows the text viewer and Download for one object without write controls",
   expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
@@ -1210,7 +1213,7 @@ test("shows the text viewer and Download for one object without write controls",
   expect(note.tagName).toBe("PRE");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Delete folder/ })).toBeNull();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
@@ -1314,7 +1317,8 @@ test("shows Working while a prefix delete is submitting", async () => {
     }),
   );
   renderObjects();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   const typed = within(dialog).getByRole("textbox") as HTMLInputElement;
   fireEvent.change(typed, { target: { value: "photos/" } });
@@ -1348,7 +1352,9 @@ async function expectFields(contentType: string, size: number) {
   expect(details.textContent).toContain(`Size ${size}`);
   expect(details.textContent).toContain(`Content type ${contentType}`);
   expect(details.textContent).toContain("ETag abc");
-  expect(details.textContent).toContain("Last modified 2026-10-11T00:00:00Z");
+  expect(details.textContent).toContain("Last modified");
+  expect(details.querySelector("time")?.dateTime).toBe("2026-10-11T00:00:00Z");
+  expect(details.textContent).toContain("2026-10-11T00:00:00Z");
   return details;
 }
 
@@ -1721,10 +1727,11 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   );
   renderObjects();
   expect(await screen.findByRole("button", { name: "photos/cat.jpg" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Object details (photos/cat.jpg)" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Details (photos/cat.jpg)" })).toBeTruthy();
+  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
   cleanup();
   renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
-  const inspect = await screen.findByRole("button", { name: "Object details (photos/cat.jpg)" });
+  const inspect = await screen.findByRole("button", { name: "Details (photos/cat.jpg)" });
   expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   fireEvent.click(inspect);
@@ -1965,8 +1972,9 @@ test("refreshes a previously rendered search after prefix deletion", async () =>
   fireEvent.change(screen.getByLabelText("Search"), { target: { value: "txt" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("button", { name: "folder/a.txt" });
-  fireEvent.click(screen.getByRole("button", { name: "bkt-1" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(screen.getByRole("button", { name: "Root (bkt-1)" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2039,7 +2047,7 @@ test("explicit inspect feedback is focused while loading and shows a failure in 
     return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]));
   }));
   renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
-  const inspect = await screen.findByRole("button", { name: "Object details (a.txt)" });
+  const inspect = await screen.findByRole("button", { name: "Details (a.txt)" });
   fireEvent.click(inspect);
   const panel = screen.getByRole("region", { name: "Inspect a.txt" });
   expect(document.activeElement).toBe(panel);
@@ -2089,7 +2097,8 @@ test("recursive HTTP success with failed keys refreshes data and keeps retry con
     return json(page([{ kind: "prefix", prefix: "folder/" }]));
   }));
   renderObjects();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2112,7 +2121,7 @@ test("deleting an object clears its explicit preview while retaining another ins
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
   fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
   await screen.findByText("deleted body");
-  fireEvent.click(screen.getByRole("button", { name: "Object details (b.txt)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Details (b.txt)" }));
   await screen.findByRole("region", { name: "Inspect b.txt" });
   fireEvent.click(screen.getByRole("button", { name: "Delete" }));
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }));
@@ -2130,7 +2139,8 @@ test.each([{ deleted: -1, errors: [] }, { deleted: 1, errors: [{ key: "folder/a.
     return json(page([{ kind: "prefix", prefix: "folder/" }]));
   }));
   renderObjects();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  fireEvent.click(await screen.findByText("Actions", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Delete folder/ }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -2146,7 +2156,6 @@ test("embedded objects keeps prefix browsing and uploads under the parent's sing
   await screen.findByRole("button", { name: "folder/" });
   expect(screen.queryByRole("heading", { name: "Objects" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "bkt-1" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Root" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Root (bkt-1)" })).toBeTruthy();
   expect(screen.getByText("Upload", { selector: "summary" })).toBeTruthy();
 });

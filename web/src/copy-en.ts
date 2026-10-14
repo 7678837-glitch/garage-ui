@@ -46,6 +46,7 @@ export const en = {
   "admin.userList": "User list",
   "admin.tokenList": "Admin token list",
   "audit.events": "Audit events",
+  "operations.activity": "Activity",
   "operations.allNodes": "All nodes",
   "operations.layoutVersion": "Layout version",
   "operations.nodeList": "Node list",

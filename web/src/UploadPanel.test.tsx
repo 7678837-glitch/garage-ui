@@ -718,7 +718,7 @@ test("staying during breadcrumb navigation retains search and selection during a
   dropEntries([{ isFile: false, isDirectory: true, name: "docs", createReader: () => ({ readEntries(done) { deliver = done; } }) }]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   // Leaving the current prefix must guard before clearing local search state.
-  fireEvent.click(screen.getByRole("button", { name: "bkt-1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Root (bkt-1)" }));
   expect(confirm).toHaveBeenCalledOnce();
   expect((screen.getByLabelText("Search") as HTMLInputElement).value).toBe("search");
   expect((screen.getByRole("checkbox", { name: "Select search.txt" }) as HTMLInputElement).checked).toBe(true);

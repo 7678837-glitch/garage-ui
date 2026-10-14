@@ -48,6 +48,7 @@ export const zh = {
   "admin.userList": "用户列表",
   "admin.tokenList": "管理令牌列表",
   "audit.events": "审计事件",
+  "operations.activity": "活动",
   "operations.allNodes": "所有节点",
   "operations.layoutVersion": "布局版本",
   "operations.nodeList": "节点列表",

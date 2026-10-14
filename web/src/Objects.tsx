@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
-import { InstantText, copy, fill, translate } from "./i18n";
+import { CompactCapacityText, ReadableInstantText, copy, fill, translate } from "./i18n";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
 import { releaseHash } from "./unsaved";
-import { Pagination } from "./ui";
+import { DataCell, Pagination, ResourceIdentity } from "./ui";
 import { UploadPanel } from "./UploadPanel";
 
 type ObjectEntry = {
@@ -723,6 +723,9 @@ export function Objects({
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
   const [pageIndex, setPageIndex] = useState(0);
   const [activeUploads, setActiveUploads] = useState(0);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const uploadDisclosure = useRef<HTMLDetailsElement>(null);
+  const uploadId = useId();
   const [draft, setDraft] = useState(() => readObjectQuery().filter);
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
@@ -1086,21 +1089,24 @@ export function Objects({
       >
         {copy("ui.back.to.buckets")}</button>
       </header> : null}
-      <nav aria-label={copy("ui.prefix")} className="ui-actions">
+      {!embedded ? <ResourceIdentity id={bucketId} /> : null}
+      <nav aria-label={copy("ui.prefix")} className="ui-actions ui-objects-prefix">
         <button
-          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
+          className={`${wrap} ui-button ui-button-quiet ui-identifier whitespace-normal text-left`}
           type="button"
+          aria-label={`${copy("common.rootPrefix")} (${bucketId})`}
           onClick={() => {
             openPrefix("");
           }}
         >
-          {embedded ? copy("common.rootPrefix") : bucketId}
+          {copy("common.rootPrefix")}
         </button>
         {prefixSegments(prefix).map((segment) => (
           <button
             key={segment.prefix}
-            className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
+            className={`${wrap} ui-button ui-button-quiet ui-identifier whitespace-normal text-left`}
             type="button"
+            aria-label={`${segment.label} (${segment.prefix})`}
             onClick={() => {
               openPrefix(segment.prefix);
             }}
@@ -1109,9 +1115,15 @@ export function Objects({
           </button>
         ))}
       </nav>
-      <div className="ui-toolbar items-end">
+      <div className="ui-toolbar ui-objects-tools items-end">
+      {canWrite ? <button className="ui-button ui-button-primary ui-objects-upload" type="button" aria-controls={uploadId} aria-expanded={uploadOpen} onClick={() => {
+        const panel = uploadDisclosure.current;
+        if (panel === null) return;
+        panel.open = true;
+        panel.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
+      }}>{copy("ui.upload")}</button> : null}
       <form
-        className="ui-actions items-end"
+        className="ui-actions ui-objects-search items-end"
         onSubmit={(event) => {
           event.preventDefault();
           const q = draft.trim();
@@ -1146,7 +1158,7 @@ export function Objects({
         <button className="ui-button" type="submit">
           {copy("ui.search")}</button>
       </form>
-      <label className="ui-field">
+      <label className="ui-field ui-objects-sort">
         {copy("ui.sort")}<select
           className="ui-input"
           value={browse.sort}
@@ -1167,7 +1179,7 @@ export function Objects({
       </div>
       {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
       {canWrite ? (
-        <details className="ui-disclosure">
+        <details ref={uploadDisclosure} id={uploadId} className="ui-disclosure" onToggle={(event) => setUploadOpen(event.currentTarget.open)}>
           <summary>
             {copy("ui.upload")}
             {activeUploads > 0 ? <span className="ui-status ml-3">{copy("ui.uploading")} · {activeUploads}</span> : null}
@@ -1332,107 +1344,66 @@ export function Objects({
       ) : null}
       {showRows && visible.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.objects")} tabIndex={0}>
-          <table className="ui-table">
-            <thead>
-              <tr>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  <button
-                    className="ui-button"
-                    type="button"
-                    onClick={selectPage}
-                  >
-                    {copy("ui.select.page")}</button>
-                </th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.key.2")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.size")}</th>
-                <th className="py-2 font-medium" scope="col">
-                  {copy("ui.time")}</th>
-              </tr>
-            </thead>
+          <div className="ui-objects-list-actions"><button className="ui-button ui-button-quiet" type="button" onClick={selectPage}>{copy("ui.select.page")}</button></div>
+          <table className="ui-table ui-table-records ui-objects-table" role="table">
+            <thead><tr role="row">
+              <th scope="col" aria-label={copy("ui.select.page")} />
+              <th scope="col">{copy("ui.name")}</th>
+              <th scope="col">{copy("ui.size")}</th>
+              <th scope="col">{copy("ui.time")} (UTC)</th>
+              <th scope="col">{copy("ui.actions")}</th>
+            </tr></thead>
             <tbody>
-              {visible.map((entry) =>
-                entry.kind === "prefix" ? (
-                  <tr key={`prefix:${entry.prefix}`}>
-                    <td />
-                    <td className="min-w-0 max-w-full break-all">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
-                          type="button"
-                          onClick={() => {
-                            openPrefix(entry.prefix);
-                          }}
-                        >
-                          {entry.prefix}
-                        </button>
-                        {canWrite ? (
-                          <button
-                            className="ui-button"
-                            type="button"
-                            onClick={() => {
-                              removePrefix.reset();
-                              setPendingDelete({ kind: "prefix", name: entry.prefix });
-                            }}
-                          >
-                            {copy("ui.delete.folder")}</button>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td />
-                    <td />
-                  </tr>
-                ) : (
-                  <tr key={`object:${entry.key}`}>
-                    <td className="py-2 pr-3">
-                      <input
-                        aria-label={fill(copy("ui.select"), { key: entry.key })}
-                        type="checkbox"
-                        checked={shownPicked.includes(entry.key)}
-                        onChange={(event) => {
-                          const shift =
-                            event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey;
-                          pick(entry.key, shift);
-                        }}
-                      />
-                    </td>
-                    <td className="min-w-0 max-w-full break-all">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {canTransfer && bitmapKey(entry.key) ? (
-                          <ObjectThumb src={thumbnailPath(bucketId, entry.key)} />
-                        ) : null}
-                        <button
-                          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
-                          type="button"
-                          onClick={() => {
-                            setBrowse((current) => ({ ...current, selected: entry.key }));
-                            setFeedback({ kind: "preview", key: entry.key });
-                          }}
-                        >
-                          {entry.key}
-                        </button>
-                        {canManage ? (
-                          <button
-                            className="ui-button"
-                            aria-label={`${copy("ui.object.details")} (${entry.key})`}
-                            type="button"
-                            onClick={() => {
-                              setInspectKey(entry.key);
-                              setFeedback({ kind: "inspect", key: entry.key });
-                            }}
-                          >
-                            {copy("ui.object.details")}</button>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="py-2 pr-3">{entry.size}</td>
-                    <td className="py-2">
-                      <InstantText value={entry.lastModified} />
-                    </td>
-                  </tr>
-                ),
-              )}
+              {visible.map((entry) => entry.kind === "prefix" ? (
+                <tr key={`prefix:${entry.prefix}`} role="row" className="ui-objects-folder">
+                  <DataCell label={copy("ui.select.page")} kind="selection" />
+                  <DataCell label={copy("ui.name")} kind="identity">
+                    <button className="ui-button ui-button-quiet ui-object-name" type="button" onClick={() => openPrefix(entry.prefix)}>{entry.prefix}</button>
+                  </DataCell>
+                  <DataCell label={copy("ui.size")} className="ui-objects-empty" />
+                  <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-empty" />
+                  <DataCell label={copy("ui.actions")} kind="actions">
+                    {canWrite ? <details className="ui-disclosure">
+                      <summary aria-label={`${copy("ui.actions")} (${entry.prefix})`}>{copy("ui.actions")}</summary>
+                      <button className="ui-button ui-button-danger" type="button" aria-label={`${copy("ui.delete.folder")} (${entry.prefix})`} onClick={() => {
+                        removePrefix.reset();
+                        setPendingDelete({ kind: "prefix", name: entry.prefix });
+                      }}>{copy("ui.delete.folder")}</button>
+                    </details> : null}
+                  </DataCell>
+                </tr>
+              ) : (
+                <tr key={`object:${entry.key}`} role="row">
+                  <DataCell label={copy("ui.select.page")} kind="selection">
+                    <label className="ui-objects-selection-label"><input
+                      aria-label={fill(copy("ui.select"), { key: entry.key })} type="checkbox" checked={shownPicked.includes(entry.key)}
+                      onChange={(event) => pick(entry.key, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)}
+                    /></label>
+                  </DataCell>
+                  <DataCell label={copy("ui.name")} kind="identity">
+                    <div className="ui-actions ui-objects-name">
+                      {canTransfer && bitmapKey(entry.key) ? <ObjectThumb src={thumbnailPath(bucketId, entry.key)} /> : null}
+                      <button className="ui-button ui-button-quiet ui-object-name" type="button" onClick={() => {
+                        setBrowse((current) => ({ ...current, selected: entry.key }));
+                        setFeedback({ kind: "preview", key: entry.key });
+                      }}>{entry.key}</button>
+                    </div>
+                  </DataCell>
+                  <DataCell label={copy("ui.size")} className="ui-objects-size"><CompactCapacityText digits={String(entry.size)} /></DataCell>
+                  <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-time"><ReadableInstantText value={entry.lastModified} /></DataCell>
+                  <DataCell label={copy("ui.actions")} kind="actions">
+                    <button className="ui-button ui-button-quiet" aria-label={`${copy("ui.details")} (${entry.key})`} type="button" onClick={() => {
+                      if (canManage) {
+                        setInspectKey(entry.key);
+                        setFeedback({ kind: "inspect", key: entry.key });
+                      } else {
+                        setBrowse((current) => ({ ...current, selected: entry.key }));
+                        setFeedback({ kind: "preview", key: entry.key });
+                      }
+                    }}>{copy("ui.details")}</button>
+                  </DataCell>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -1465,9 +1436,9 @@ export function Objects({
           <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
           <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
           <p>{fill(copy("ui.etag"), { etag: preview.etag })}</p>
-          <p>
-            {copy("ui.last.modified")} <InstantText value={preview.lastModified} />
-          </p>
+          <div>
+            {copy("ui.last.modified")} <ReadableInstantText value={preview.lastModified} />
+          </div>
           {previewText.isError ? <><p>{failureOf(previewText.error).message}</p><button className="ui-button" onClick={() => { void previewText.refetch(); }}>{copy("ui.retry")}</button></> : null}
           {kind === "text" && previewText.isPending ? <p role="status">{copy("ui.working")}</p> : null}
           {kind !== null ? (
