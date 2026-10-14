@@ -3,24 +3,19 @@ import type { CopyKey } from "./copy-en";
 import { useI18n } from "./i18n";
 
 const sections = [
-  { id: "overview", label: "Overview", adminOnly: false },
-  { id: "buckets", label: "Buckets", adminOnly: false },
-  { id: "keys", label: "Keys", adminOnly: false },
-  { id: "nodes", label: "Nodes and layout", adminOnly: true },
-  { id: "workers", label: "Workers", adminOnly: true },
-  { id: "block-errors", label: "Block errors", adminOnly: true },
-  { id: "audit", label: "Audit", adminOnly: true },
-  { id: "tokens", label: "Admin tokens", adminOnly: true },
-  { id: "users", label: "Users", adminOnly: true },
-  { id: "settings", label: "Settings", adminOnly: false },
+  { id: "overview", adminOnly: false },
+  { id: "buckets", adminOnly: false },
+  { id: "keys", adminOnly: false },
+  { id: "nodes", adminOnly: true },
+  { id: "workers", adminOnly: true },
+  { id: "block-errors", adminOnly: true },
+  { id: "audit", adminOnly: true },
+  { id: "tokens", adminOnly: true },
+  { id: "users", adminOnly: true },
+  { id: "settings", adminOnly: false },
 ] as const;
 
 export type SectionId = (typeof sections)[number]["id"];
-
-export function sectionTitle(id: SectionId): string {
-  const match = sections.find((section) => section.id === id);
-  return match ? match.label : id;
-}
 
 export type BucketLocation =
   | { kind: "list" }
@@ -143,6 +138,40 @@ export function nodeTabs(): typeof nodeDetailTabs {
   return nodeDetailTabs;
 }
 
+const detailTabCopy = {
+  bucket: {
+    overview: "nav.overview",
+    objects: "nav.objects",
+    permissions: "tab.permissions",
+    settings: "nav.settings",
+  },
+  key: {
+    overview: "nav.overview",
+    buckets: "nav.buckets",
+    settings: "nav.settings",
+  },
+  node: {
+    information: "tab.information",
+    statistics: "tab.statistics",
+    maintenance: "tab.maintenance",
+  },
+} as const satisfies {
+  bucket: Record<BucketDetailTab, CopyKey>;
+  key: Record<KeyDetailTab, CopyKey>;
+  node: Record<NodeDetailTab, CopyKey>;
+};
+
+export function detailTabCopyKey(address: DetailAddress): CopyKey {
+  switch (address.resource) {
+    case "bucket":
+      return detailTabCopy.bucket[address.tab];
+    case "key":
+      return detailTabCopy.key[address.tab];
+    case "node":
+      return detailTabCopy.node[address.tab];
+  }
+}
+
 export function sectionForDetail(resource: DetailAddress["resource"]): SectionId {
   switch (resource) {
     case "bucket":
@@ -151,22 +180,6 @@ export function sectionForDetail(resource: DetailAddress["resource"]): SectionId
       return "keys";
     case "node":
       return "nodes";
-  }
-}
-
-function labelOf<T extends string>(tabs: readonly { id: T; label: string }[], id: T): string {
-  const found = tabs.find((tab) => tab.id === id);
-  return found ? found.label : id;
-}
-
-export function detailTabLabel(address: DetailAddress): string {
-  switch (address.resource) {
-    case "bucket":
-      return labelOf(bucketDetailTabs, address.tab);
-    case "key":
-      return labelOf(keyDetailTabs, address.tab);
-    case "node":
-      return labelOf(nodeDetailTabs, address.tab);
   }
 }
 
@@ -234,6 +247,10 @@ const sectionCopy = {
   users: "nav.users",
   settings: "nav.settings",
 } as const satisfies Record<SectionId, CopyKey>;
+
+export function sectionCopyKey(id: SectionId): CopyKey {
+  return sectionCopy[id];
+}
 
 export function Nav({
   role,

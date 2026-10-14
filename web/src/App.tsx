@@ -20,16 +20,17 @@ import { BlockErrors } from "./BlockErrors";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
+import type { CopyKey } from "./copy-en";
 import { LanguageChooser, useI18n } from "./i18n";
 import { Keys } from "./Keys";
 import {
   Nav,
   bucketLocationFromHash,
   detailAddressFromHash,
-  detailTabLabel,
+  detailTabCopyKey,
+  sectionCopyKey,
   sectionForDetail,
   sectionFromHash,
-  sectionTitle,
   useLocationHash,
   type SectionId,
 } from "./Nav";
@@ -209,34 +210,38 @@ type Crumb =
   | { kind: "link"; id: SectionId; label: string }
   | { kind: "current"; label: string };
 
-function breadcrumbCrumbs(section: SectionId, hash: string): Crumb[] {
+function breadcrumbCrumbs(
+  section: SectionId,
+  hash: string,
+  label: (key: CopyKey) => string,
+): Crumb[] {
   const detail = detailAddressFromHash(hash);
   if (detail && section === sectionForDetail(detail.resource)) {
     const parent = sectionForDetail(detail.resource);
     return [
-      { kind: "link", id: "overview", label: sectionTitle("overview") },
-      { kind: "link", id: parent, label: sectionTitle(parent) },
-      { kind: "current", label: detailTabLabel(detail) },
+      { kind: "link", id: "overview", label: label(sectionCopyKey("overview")) },
+      { kind: "link", id: parent, label: label(sectionCopyKey(parent)) },
+      { kind: "current", label: label(detailTabCopyKey(detail)) },
     ];
   }
   const objects = section === "buckets" && bucketLocationFromHash(hash).kind === "objects";
   if (objects) {
     return [
-      { kind: "link", id: "overview", label: sectionTitle("overview") },
-      { kind: "link", id: "buckets", label: sectionTitle("buckets") },
-      { kind: "current", label: "Objects" },
+      { kind: "link", id: "overview", label: label(sectionCopyKey("overview")) },
+      { kind: "link", id: "buckets", label: label(sectionCopyKey("buckets")) },
+      { kind: "current", label: label("nav.objects") },
     ];
   }
   if (section === "overview") {
-    return [{ kind: "current", label: sectionTitle("overview") }];
+    return [{ kind: "current", label: label(sectionCopyKey("overview")) }];
   }
   return [
-    { kind: "link", id: "overview", label: sectionTitle("overview") },
-    { kind: "current", label: sectionTitle(section) },
+    { kind: "link", id: "overview", label: label(sectionCopyKey("overview")) },
+    { kind: "current", label: label(sectionCopyKey(section)) },
   ];
 }
 
-function Breadcrumb({
+export function Breadcrumb({
   section,
   hash,
   onSelect,
@@ -245,9 +250,10 @@ function Breadcrumb({
   hash: string;
   onSelect: (id: SectionId) => void;
 }) {
-  const crumbs = breadcrumbCrumbs(section, hash);
+  const { t } = useI18n();
+  const crumbs = breadcrumbCrumbs(section, hash, t);
   return (
-    <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2">
+    <nav aria-label={t("nav.breadcrumb")} className="flex flex-wrap items-center gap-2">
       {crumbs.map((crumb, index) => (
         <span
           key={crumb.kind === "link" ? crumb.id : "current"}
