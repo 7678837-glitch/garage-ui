@@ -81,7 +81,7 @@ pub fn confirmed(headers: &HeaderMap) -> bool {
         == Some("yes")
 }
 
-// 转发需要身份、方法和上游请求材料，少一项就组不出请求。
+// Forwarding requires the actor, method, and upstream request parameters together.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch(
     app: &App,
@@ -142,8 +142,8 @@ pub async fn dispatch(
         }
     }
     let filtered = forwarded_query(name, query);
-    let response = match send(app, name, method, &filtered, body).await {
-        Ok(response) => response,
+    let (response, succeeded) = match send_outcome(app, name, method, &filtered, body).await {
+        Ok(outcome) => outcome,
         Err(error) => {
             if endpoint.writes {
                 audit(
@@ -162,19 +162,27 @@ pub async fn dispatch(
             return Err(error);
         }
     };
-    if response.status().is_success()
-        && let Some(mutation) = credential_mutation(name, &filtered, body)
-    {
-        app.clear_credential_cache(&mutation).await;
+    if succeeded {
+        lists::invalidate_catalogs(app, name);
+        if let Some(mutation) = credential_mutation(name, &filtered, body) {
+            app.clear_credential_cache(&mutation).await;
+        }
     }
     if endpoint.audit {
         let status = i64::from(response.status().as_u16());
+        let (result, reason) = if succeeded {
+            ("success", "ok")
+        } else if response.status().is_success() {
+            ("error", "upstream_node_error")
+        } else {
+            ("error", "upstream_error")
+        };
         audit(
             app,
             user,
             ip,
-            "success",
-            "ok",
+            result,
+            reason,
             method.as_str(),
             path,
             name,
@@ -185,7 +193,7 @@ pub async fn dispatch(
     Ok(response)
 }
 
-// 收到任意 HTTP 响应即视为已应答。不读版本，避免把旧 Garage 当成未就绪。
+// Any HTTP response proves reachability, including responses from older Garage versions.
 pub(crate) async fn garage_answered(app: &App) -> bool {
     exchange(app, "GetNodeInfo", &Method::GET, "node=self", &[])
         .await
@@ -218,7 +226,7 @@ async fn probe_node_info(app: &App) -> GarageLink {
     GarageLink::from_reported(reported_garage_version(&value))
 }
 
-// v2.4.1 的 GetNodeInfo 是 MultiResponse，garageVersion 在 success 的节点对象里。
+// Garage v2.4.1 returns GetNodeInfo versions inside the MultiResponse success nodes.
 fn reported_garage_version(value: &Value) -> Option<&str> {
     if let Some(version) = value.get("garageVersion").and_then(Value::as_str) {
         return Some(version);
@@ -350,7 +358,29 @@ async fn send(
     query: &str,
     body: &[u8],
 ) -> Result<Response<Body>, ApiError> {
+    send_outcome(app, name, method, query, body)
+        .await
+        .map(|(response, _)| response)
+}
+
+async fn send_outcome(
+    app: &App,
+    name: &str,
+    method: &Method,
+    query: &str,
+    body: &[u8],
+) -> Result<(Response<Body>, bool), ApiError> {
     let upstream = present(exchange(app, name, method, query, body).await?);
+    let node_errors = serde_json::from_slice::<Value>(&upstream.bytes)
+        .ok()
+        .is_some_and(|value| {
+            value.get("success").is_some_and(Value::is_object)
+                && value
+                    .get("error")
+                    .and_then(Value::as_object)
+                    .is_some_and(|errors| !errors.is_empty())
+        });
+    let succeeded = upstream.status.is_success() && !node_errors;
     let mut response = Response::new(Body::from(upstream.bytes));
     *response.status_mut() = upstream.status;
     if let Some(content_type) = upstream.content_type
@@ -358,7 +388,7 @@ async fn send(
     {
         response.headers_mut().insert("content-type", value);
     }
-    Ok(response)
+    Ok((response, succeeded))
 }
 
 struct UpstreamBody {
@@ -478,7 +508,7 @@ fn garage_down() -> ApiError {
     ApiError::unavailable("garage_unavailable", "Garage admin API is not reachable")
 }
 
-// reqwest 错误正文可能含管理地址，响应里不保留它。
+// Transport errors can contain the admin URL, so exclude their text from responses.
 fn admin_transport(error: reqwest::Error) -> ApiError {
     if error.is_timeout() {
         ApiError::new(
@@ -504,7 +534,7 @@ fn credential_mutation(
         "DenyBucketKey" => Some(KeyMutation::DenyBucketKey {
             bucket_id: json_string(body, "bucketId")?,
         }),
-        // DeleteKey 与 UpdateKey 的 id 在 query，OpenAPI 没有把这个字段放进 body。
+        // DeleteKey and UpdateKey identify the key in the query, as specified by OpenAPI.
         "DeleteKey" => Some(KeyMutation::DeleteKey {
             key_id: query_value(query, "id")?,
         }),
@@ -528,7 +558,7 @@ fn query_value(query: &str, key: &str) -> Option<String> {
     })
 }
 
-// api 接入前库目标看不到分页入口，整段会变成死代码。
+// Library targets do not reach these pagination entry points before API integration.
 #[allow(dead_code)]
 mod lists {
     use std::collections::HashMap;
@@ -588,6 +618,7 @@ mod lists {
     struct Slot {
         probe: Probe,
         resume: HashMap<u64, String>,
+        generation: u64,
     }
 
     impl Default for Slot {
@@ -595,11 +626,12 @@ mod lists {
             Self {
                 probe: Probe::Unknown,
                 resume: HashMap::new(),
+                generation: 0,
             }
         }
     }
 
-    // 每个管理地址的探测只记确定结果。连接失败不能记成接口不存在。
+    // Cache only definitive capability results; transport failure does not prove absence.
     static PROBES: LazyLock<Mutex<HashMap<String, Slot>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -694,19 +726,69 @@ mod lists {
         }
     }
 
-    fn remember_resume(key: &str, next_offset: u64, last_id: &str) {
+    pub(super) fn invalidate_catalogs(app: &App, name: &str) {
+        let (buckets, keys) = match name {
+            "CreateBucket" | "DeleteBucket" | "UpdateBucket" => (true, false),
+            "CreateKey" | "ImportKey" | "UpdateKey" => (false, true),
+            "DeleteKey" | "AllowBucketKey" | "DenyBucketKey" | "AddBucketAlias"
+            | "RemoveBucketAlias" => (true, true),
+            _ => return,
+        };
+        let Some(base) = app.settings.garage_admin_url.as_deref() else {
+            return;
+        };
         let mut probes = PROBES.lock().expect("probe cache");
-        let slot = probes.entry(key.to_string()).or_default();
-        slot.resume
-            .entry(next_offset)
-            .or_insert_with(|| last_id.to_string());
+        for (invalidate, catalog) in [(buckets, BUCKETS), (keys, KEYS)] {
+            if invalidate {
+                let slot = probes.entry(probe_key(base, catalog.info)).or_default();
+                slot.resume.clear();
+                slot.generation = slot.generation.wrapping_add(1);
+            }
+        }
     }
 
-    fn resume_for(key: &str, offset: u64) -> (u64, Option<String>) {
-        let probes = PROBES.lock().expect("probe cache");
-        let Some(slot) = probes.get(key) else {
-            return (0, None);
+    fn remember_resume(key: &str, generation: u64, at: u64, items: &[Value]) -> u64 {
+        let mut probes = PROBES.lock().expect("probe cache");
+        let slot = probes.entry(key.to_string()).or_default();
+        if slot.generation != generation {
+            return generation;
+        }
+        let Some(last_id) = items.last().and_then(item_id) else {
+            if slot.resume.keys().any(|offset| *offset > at) {
+                slot.resume.retain(|offset, _| *offset <= at);
+                slot.generation = slot.generation.wrapping_add(1);
+            }
+            return slot.generation;
         };
+        let next_offset = at.saturating_add(u64::try_from(items.len()).unwrap_or(u64::MAX));
+        let matches_boundary = |offset: u64, id: &str| {
+            items
+                .get(usize::try_from(offset - at - 1).unwrap_or(usize::MAX))
+                .and_then(|item| item.get("id"))
+                .and_then(Value::as_str)
+                == Some(id)
+        };
+        let changed = slot
+            .resume
+            .get(&next_offset)
+            .is_none_or(|old| old != &last_id)
+            || slot.resume.iter().any(|(offset, id)| {
+                *offset > at && *offset <= next_offset && !matches_boundary(*offset, id)
+            });
+        if changed {
+            slot.resume.retain(|offset, id| {
+                *offset <= at || (*offset <= next_offset && matches_boundary(*offset, id))
+            });
+            // Earlier in-flight pages must not restore boundaries from the prior catalog.
+            slot.generation = slot.generation.wrapping_add(1);
+        }
+        slot.resume.insert(next_offset, last_id);
+        slot.generation
+    }
+
+    fn resume_for(key: &str, offset: u64) -> (u64, Option<String>, u64) {
+        let mut probes = PROBES.lock().expect("probe cache");
+        let slot = probes.entry(key.to_string()).or_default();
         let mut found: Option<(u64, String)> = None;
         for (at, id) in &slot.resume {
             if *at > offset {
@@ -718,8 +800,8 @@ mod lists {
             }
         }
         match found {
-            Some((at, id)) if at > 0 => (at, Some(id)),
-            _ => (0, None),
+            Some((at, id)) if at > 0 => (at, Some(id), slot.generation),
+            _ => (0, None, slot.generation),
         }
     }
 
@@ -730,14 +812,18 @@ mod lists {
         offset: u64,
         limit: usize,
     ) -> Result<Page, ProbeMiss> {
-        let (mut at, mut cursor) = resume_for(key, offset);
+        let (mut at, mut cursor, mut generation) = resume_for(key, offset);
         loop {
-            let (items, more) = fetch_window(app, catalog, key, cursor.as_deref(), limit).await?;
+            let gap = usize::try_from(offset - at).unwrap_or(usize::MAX);
+            let window_limit = if gap < limit {
+                limit.saturating_add(gap)
+            } else {
+                limit
+            };
+            let (items, more) =
+                fetch_window(app, catalog, key, cursor.as_deref(), window_limit).await?;
             let last_id = items.last().and_then(item_id);
-            if let Some(id) = last_id.as_deref() {
-                let next_at = at.saturating_add(u64::try_from(items.len()).unwrap_or(u64::MAX));
-                remember_resume(key, next_at, id);
-            }
+            generation = remember_resume(key, generation, at, &items);
             if at == offset {
                 return Ok(Page { items, more });
             }
@@ -772,7 +858,7 @@ mod lists {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<(Vec<Value>, bool), ProbeMiss> {
-        // Garage 的 offset 是这一页第一条的 id，包含它自己。下一页要多取一条再丢掉重复的。
+        // Garage offsets are inclusive IDs, so fetch one extra row and discard the repeated cursor.
         let query = match cursor {
             None => format!("limit={limit}"),
             Some(id) => format!(
@@ -787,7 +873,7 @@ mod lists {
         if upstream.status == StatusCode::NOT_FOUND {
             return Err(ProbeMiss::Absent);
         }
-        // v2.4.1 对未发布的列表接口回 400，正文含这句，和 404 一样表示接口不存在。
+        // Garage v2.4.1 reports unpublished list endpoints with this HTTP 400 message instead of 404.
         const UNKNOWN_ENDPOINT: &[u8] = b"Unknown API endpoint";
         if upstream.status == StatusCode::BAD_REQUEST
             && upstream
@@ -847,10 +933,10 @@ mod lists {
         }
         let mut items = fetch_details(app, catalog.detail, ids).await?;
         if catalog.ids == BUCKETS.ids {
-            // v2.3 的 GetBucketInfo 没有 localAliases，别名只在 ListBuckets 行上。
+            // Garage v2.3 exposes local aliases only on ListBuckets rows, not GetBucketInfo.
             keep_list_local_aliases(&all, &mut items);
         }
-        // 回退路径手里是完整 id 列表。满页而且正好到末尾时，后面没有下一行。
+        // The complete fallback ID list distinguishes a full final page from another page.
         let more = start.saturating_add(items.len()) < all.len();
         Ok(Page { items, more })
     }
@@ -936,7 +1022,7 @@ mod lists {
         Ok(ensure_item_id(value))
     }
 
-    // GetKeyInfo 用 accessKeyId，没有 id。列表行仍要有 id，后面的改名和删除才能指到这条密钥。
+    // GetKeyInfo uses accessKeyId; list rows need id so rename and delete can target the key.
     pub(super) fn ensure_item_id(mut value: Value) -> Value {
         let missing = value.get("id").and_then(Value::as_str).is_none();
         if missing
@@ -979,7 +1065,7 @@ mod lists {
 #[allow(dead_code, unused_imports)]
 pub use lists::{ListProbes, Page, Probe, list_buckets, list_keys, list_probes};
 
-// 参数就是审计表的列。
+// These parameters correspond to the audit table columns.
 #[allow(clippy::too_many_arguments)]
 pub async fn audit(
     app: &App,
@@ -1470,6 +1556,10 @@ mod tests {
         release: AtomicBool,
         info_failures_left: AtomicUsize,
         opts: MockOpts,
+        catalog_ids: Mutex<Option<Vec<String>>>,
+        hold_info: AtomicBool,
+        info_started: tokio::sync::Notify,
+        info_release: tokio::sync::Notify,
     }
 
     impl Drop for Mock {
@@ -1491,6 +1581,10 @@ mod tests {
                 release: AtomicBool::new(!opts.hold_details),
                 info_failures_left: AtomicUsize::new(opts.info_failures),
                 opts,
+                catalog_ids: Mutex::new(None),
+                hold_info: AtomicBool::new(false),
+                info_started: tokio::sync::Notify::new(),
+                info_release: tokio::sync::Notify::new(),
             });
             let serve_inner = Arc::clone(&inner);
             let task = tokio::spawn(async move {
@@ -1550,6 +1644,12 @@ mod tests {
             }
         }
         let (status, body) = route(&inner, path, &target).await;
+        if (path.ends_with("ListBucketsInfo") || path.ends_with("ListKeysInfo"))
+            && inner.hold_info.swap(false, Ordering::SeqCst)
+        {
+            inner.info_started.notify_one();
+            inner.info_release.notified().await;
+        }
         write_json(&mut socket, status, &body).await?;
         let _ = socket.shutdown().await;
         Ok(())
@@ -1559,8 +1659,38 @@ mod tests {
         match path {
             "/health" | "/metrics" => ("200 OK", r#"{"ok":true}"#.to_string()),
             "/v2/GetNodeInfo" => ("200 OK", r#"{"garageVersion":"v2.4.1"}"#.to_string()),
+            "/v2/ListBucketsInfo" | "/v2/ListKeysInfo"
+                if inner.catalog_ids.lock().expect("catalog IDs").is_some() =>
+            {
+                let ids = inner
+                    .catalog_ids
+                    .lock()
+                    .expect("catalog IDs")
+                    .clone()
+                    .unwrap();
+                let offset = query(target, "offset");
+                let limit = query(target, "limit").unwrap().parse::<usize>().unwrap();
+                let rows: Vec<_> = ids
+                    .iter()
+                    .filter(|id| offset.as_ref().is_none_or(|offset| *id >= offset))
+                    .take(limit)
+                    .map(|id| json!({"id": id}))
+                    .collect();
+                ("200 OK", serde_json::to_string(&rows).unwrap())
+            }
             "/v2/ListBucketsInfo" => info_page(inner.opts.bucket_info, inner.opts.buckets, target),
             "/v2/ListKeysInfo" => info_page(inner.opts.key_info, inner.opts.keys, target),
+            "/v2/CreateBucket"
+            | "/v2/DeleteBucket"
+            | "/v2/UpdateBucket"
+            | "/v2/CreateKey"
+            | "/v2/ImportKey"
+            | "/v2/DeleteKey"
+            | "/v2/UpdateKey"
+            | "/v2/AddBucketAlias"
+            | "/v2/RemoveBucketAlias"
+            | "/v2/AllowBucketKey"
+            | "/v2/DenyBucketKey" => ("200 OK", "{}".to_string()),
             "/v2/ListBuckets" => (
                 "200 OK",
                 id_page(inner.opts.buckets, inner.opts.local_alias.as_deref()),
@@ -1593,7 +1723,7 @@ mod tests {
                 r#"{"message":"Unknown API endpoint"}"#.to_string(),
             );
         }
-        // 422 只给测试用：线上仍是 400，但 message 不含未知端点，不能当成接口不存在。
+        // This fixture marker returns HTTP 400 without the unknown-endpoint message; it must not trigger fallback.
         if status == 422 {
             return (
                 "400 Bad Request",
@@ -1712,6 +1842,250 @@ mod tests {
             .iter()
             .map(|item| item["id"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    async fn mutable_catalog() -> Mock {
+        let mock = Mock::start(MockOpts {
+            buckets: 8,
+            keys: 8,
+            bucket_info: 200,
+            key_info: 200,
+            hold_details: false,
+            info_failures: 0,
+            local_alias: None,
+        })
+        .await;
+        *mock.inner.catalog_ids.lock().expect("catalog IDs") = Some((0..8).map(row_id).collect());
+        mock
+    }
+
+    async fn catalog_page(app: &App, keys: bool, offset: u64) -> Page {
+        if keys {
+            list_keys(app, offset, 2).await.unwrap()
+        } else {
+            list_buckets(app, offset, 2).await.unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn refreshed_catalog_boundary_discards_later_offsets_after_insert_or_delete() {
+        for keys in [false, true] {
+            for insert in [false, true] {
+                let mock = mutable_catalog().await;
+                let app = app_at(&mock.url).await;
+                catalog_page(&app, keys, 0).await;
+                catalog_page(&app, keys, 2).await;
+                {
+                    let mut ids = mock.inner.catalog_ids.lock().expect("catalog IDs");
+                    if insert {
+                        ids.as_mut().unwrap().insert(1, "00000a".to_string());
+                    } else {
+                        ids.as_mut().unwrap().remove(0);
+                    }
+                }
+                let first = catalog_page(&app, keys, 0).await;
+                let second = catalog_page(&app, keys, 2).await;
+                let third = catalog_page(&app, keys, 4).await;
+                let expected = mock
+                    .inner
+                    .catalog_ids
+                    .lock()
+                    .expect("catalog IDs")
+                    .as_ref()
+                    .unwrap()[..6]
+                    .to_vec();
+                let actual: Vec<_> = [&first, &second, &third]
+                    .into_iter()
+                    .flat_map(ids_of)
+                    .collect();
+                assert_eq!(actual, expected, "keys={keys}, insert={insert}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_refresh_limit_discards_stale_catalog_offsets() {
+        for keys in [false, true] {
+            let mock = mutable_catalog().await;
+            let app = app_at(&mock.url).await;
+            catalog_page(&app, keys, 0).await;
+            catalog_page(&app, keys, 2).await;
+            mock.inner
+                .catalog_ids
+                .lock()
+                .expect("catalog IDs")
+                .as_mut()
+                .unwrap()
+                .remove(0);
+            let refreshed = if keys {
+                list_keys(&app, 0, 3).await.unwrap()
+            } else {
+                list_buckets(&app, 0, 3).await.unwrap()
+            };
+            assert_eq!(ids_of(&refreshed), vec![row_id(1), row_id(2), row_id(3)]);
+            assert_eq!(
+                ids_of(&catalog_page(&app, keys, 4).await),
+                vec![row_id(5), row_id(6)],
+                "keys={keys}"
+            );
+            assert_eq!(
+                ids_of(&catalog_page(&app, keys, 2).await),
+                vec![row_id(3), row_id(4)],
+                "keys={keys}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_catalog_mutations_invalidate_cached_offsets() {
+        for (name, keys, insert) in [
+            ("CreateBucket", false, true),
+            ("DeleteBucket", false, false),
+            ("UpdateBucket", false, false),
+            ("AddBucketAlias", false, false),
+            ("RemoveBucketAlias", false, false),
+            ("CreateKey", true, true),
+            ("ImportKey", true, true),
+            ("DeleteKey", true, false),
+            ("UpdateKey", true, false),
+            ("AllowBucketKey", false, false),
+            ("DenyBucketKey", true, false),
+        ] {
+            let mock = mutable_catalog().await;
+            let app = app_at(&mock.url).await;
+            let user = admin_user(&app).await;
+            catalog_page(&app, keys, 0).await;
+            {
+                let mut ids = mock.inner.catalog_ids.lock().expect("catalog IDs");
+                if insert {
+                    ids.as_mut().unwrap().insert(1, "00000a".to_string());
+                } else {
+                    ids.as_mut().unwrap().remove(0);
+                }
+            }
+            let response = post_admin(
+                &app,
+                &user,
+                &format!("v2/{name}"),
+                Some("id=00000"),
+                br#"{"bucketId":"00000"}"#,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let page = catalog_page(&app, keys, 2).await;
+            let expected = mock
+                .inner
+                .catalog_ids
+                .lock()
+                .expect("catalog IDs")
+                .as_ref()
+                .unwrap()[2..4]
+                .to_vec();
+            assert_eq!(ids_of(&page), expected, "mutation={name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn inflight_catalog_response_cannot_restore_invalidated_offsets() {
+        let mock = mutable_catalog().await;
+        let app = Arc::new(app_at(&mock.url).await);
+        let user = admin_user(&app).await;
+        mock.inner.hold_info.store(true, Ordering::SeqCst);
+        let task_app = Arc::clone(&app);
+        let old = tokio::spawn(async move { catalog_page(&task_app, false, 0).await });
+        tokio::time::timeout(Duration::from_secs(2), mock.inner.info_started.notified())
+            .await
+            .unwrap();
+        mock.inner
+            .catalog_ids
+            .lock()
+            .expect("catalog IDs")
+            .as_mut()
+            .unwrap()
+            .remove(0);
+        let response = post_admin(&app, &user, "v2/DeleteBucket", Some("id=00000"), b"").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        mock.inner.info_release.notify_one();
+        old.await.unwrap();
+        assert_eq!(
+            ids_of(&catalog_page(&app, false, 2).await),
+            vec![row_id(3), row_id(4)]
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_upstream_mutations_are_audited_as_errors_without_raw_details() {
+        for (status, expected_status) in [
+            ("400 Bad Request", StatusCode::BAD_REQUEST),
+            ("403 Forbidden", StatusCode::FORBIDDEN),
+            ("409 Conflict", StatusCode::CONFLICT),
+            (
+                "500 Internal Server Error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            let body = json!({"error": CACHED_SECRET, "token": ADMIN_TOKEN})
+                .to_string()
+                .into_bytes();
+            let upstream = Scripted::start(vec![(
+                "DeleteBucket",
+                Reply {
+                    status,
+                    content_type: "application/json",
+                    body: body.clone(),
+                },
+            )])
+            .await;
+            let app = app_at(&upstream.url).await;
+            let user = admin_user(&app).await;
+            let response = post_admin(&app, &user, "v2/DeleteBucket", Some("id=00000"), b"").await;
+            let (actual_status, _, actual_body) = taken(response).await;
+            assert_eq!(actual_status, expected_status);
+            assert_eq!(actual_body, body);
+            let rows = db::recent_audit(&app.db).await.unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].result, "error", "status={status}");
+            assert_ne!(rows[0].reason, "ok");
+            assert_eq!(rows[0].status, i64::from(expected_status.as_u16()));
+            let evidence = format!("{:?}", rows[0]);
+            assert!(!evidence.contains(CACHED_SECRET));
+            assert!(!evidence.contains(ADMIN_TOKEN));
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_node_mutation_is_audited_as_error_and_preserves_response() {
+        let body = json!({"success": {"node-a": {}}, "error": {"node-b": CACHED_SECRET}})
+            .to_string()
+            .into_bytes();
+        let upstream = Scripted::start(vec![(
+            "CreateMetadataSnapshot",
+            Reply {
+                status: "200 OK",
+                content_type: "application/json",
+                body: body.clone(),
+            },
+        )])
+        .await;
+        let app = app_at(&upstream.url).await;
+        let user = admin_user(&app).await;
+        let response = post_admin(
+            &app,
+            &user,
+            "v2/CreateMetadataSnapshot",
+            Some("node=*"),
+            b"{}",
+        )
+        .await;
+        let (status, _, actual_body) = taken(response).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(actual_body, body);
+        let rows = db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].result, "error");
+        assert_ne!(rows[0].reason, "ok");
+        assert_eq!(rows[0].status, 200);
+        assert!(!format!("{:?}", rows[0]).contains(CACHED_SECRET));
     }
 
     #[tokio::test]
