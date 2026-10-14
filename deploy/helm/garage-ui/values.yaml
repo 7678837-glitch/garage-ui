@@ -10,6 +10,13 @@ image:
 # Garage admin API base URL. Leave empty until that URL is known.
 garageAdminUrl: ""
 
+# Server-reachable Garage S3 API endpoint and its configured region.
+# Set both for Garage v2.3/v2.4, which cannot discover them through the admin API.
+s3EndpointUrl: ""
+s3Region: ""
+# Optional browser-reachable endpoint for presigned share links.
+s3PublicEndpointUrl: ""
+
 persistence:
   size: 1Gi
 

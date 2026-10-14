@@ -1,5 +1,5 @@
 services:
-  # 具名卷默认属主是 root，进程 uid 是 65532。
+  # Named volumes start as root; the UI process runs as uid 65532.
   garage-ui-init:
     image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
     user: "0:0"
@@ -14,10 +14,23 @@ services:
     depends_on:
       garage-ui-init:
         condition: service_completed_successfully
+      garage-init:
+        condition: service_completed_successfully
+      garage:
+        condition: service_started
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      API_ADMIN_KEY_FILE: /secrets/admin_token
+      METRICS_TOKEN_FILE: /secrets/metrics_token
+      S3_ENDPOINT_URL: http://garage:3900
+      S3_REGION: garage
+      # This demo is published only on loopback over HTTP. Use secure cookies with HTTPS.
+      COOKIE_SECURE: "false"
     ports:
       - "127.0.0.1:3909:3909"
     volumes:
       - garage-ui-data:/data
+      - garage-ui-secrets:/secrets:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -26,6 +39,7 @@ services:
     image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
     volumes:
       - garage-config:/config
+      - garage-ui-secrets:/ui-secrets
       - ./garage-entrypoint.sh:/garage-entrypoint.sh:ro
     entrypoint: ["/bin/sh", "/garage-entrypoint.sh"]
 
@@ -49,4 +63,5 @@ services:
 volumes:
   garage-ui-data:
   garage-config:
+  garage-ui-secrets:
   garage-data:

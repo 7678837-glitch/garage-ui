@@ -1,0 +1,34 @@
+# UI only. Export the connection settings for your existing Garage before starting.
+services:
+  garage-ui-init:
+    image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+    user: "0:0"
+    volumes:
+      - garage-ui-data:/data
+    command: ["chown", "65532:65532", "/data"]
+
+  garage-ui:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      garage-ui-init:
+        condition: service_completed_successfully
+    environment:
+      GARAGE_ADMIN_URL: ${GARAGE_ADMIN_URL:?Set the server-reachable Garage admin API URL}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?Set the Garage admin API token}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:?Set the server-reachable Garage S3 API URL}
+      S3_REGION: ${S3_REGION:?Set the region from the Garage configuration}
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-}
+      # Keep true for HTTPS. Set false only for explicitly local HTTP development.
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    ports:
+      - "127.0.0.1:3909:3909"
+    volumes:
+      - garage-ui-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  garage-ui-data:

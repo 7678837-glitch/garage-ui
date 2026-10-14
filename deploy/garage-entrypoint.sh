@@ -1,6 +1,6 @@
 #!/bin/sh
-# 在带 shell 的初始化容器里生成 Garage 配置。官方镜像是 scratch，不能在里面跑脚本。
-# 密钥只写入卷，不打印。已有文件则沿用，避免每次启动换密钥。
+# Generate configuration in a shell-equipped init container; the Garage image has no shell.
+# Keep secrets in volumes and reuse existing tokens across restarts.
 set -eu
 umask 077
 mkdir -p /config
@@ -19,6 +19,14 @@ write_if_missing() {
 write_if_missing /config/rpc_secret
 write_if_missing /config/admin_token
 write_if_missing /config/metrics_token
+
+# Share only API tokens with the non-root UI; keep the RPC secret and config private.
+mkdir -p /ui-secrets
+cp /config/admin_token /ui-secrets/admin_token
+cp /config/metrics_token /ui-secrets/metrics_token
+chown -R 65532:65532 /ui-secrets
+chmod 700 /ui-secrets
+chmod 600 /ui-secrets/admin_token /ui-secrets/metrics_token
 
 rpc_secret=$(cat /config/rpc_secret)
 admin_token=$(cat /config/admin_token)

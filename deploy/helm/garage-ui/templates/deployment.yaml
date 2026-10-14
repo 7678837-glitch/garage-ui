@@ -51,6 +51,18 @@ spec:
             - name: GARAGE_ADMIN_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.s3EndpointUrl }}
+            - name: S3_ENDPOINT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.s3Region }}
+            - name: S3_REGION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.s3PublicEndpointUrl }}
+            - name: S3_PUBLIC_ENDPOINT_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.secrets.garageAdminToken }}
             - name: GARAGE_ADMIN_TOKEN
               value: {{ . | quote }}
@@ -76,8 +88,9 @@ spec:
               value: /etc/garage-ui/ca.crt
             {{- end }}
           readinessProbe:
-            exec:
-              command: ["/garage-ui", "-health"]
+            httpGet:
+              path: /readyz
+              port: http
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
