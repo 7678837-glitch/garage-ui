@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
+import { setFormDirty } from "./unsaved";
 
 afterEach(() => {
   cleanup();
@@ -616,6 +617,7 @@ test("shows a blocking notice when Garage is older than v2.3.0", async () => {
   expect(screen.queryAllByRole("alert")).toHaveLength(1);
   await chooseSection("Keys");
   expect(await screen.findByText("Keys are unavailable")).toBeTruthy();
+  expect(screen.queryByText("Garage v2.3.0 or newer is required")).toBeNull();
 });
 
 test("shows a TLS warning while verification is off", async () => {
@@ -656,6 +658,9 @@ test("shows a TLS warning while verification is off", async () => {
 
   await signIn(true);
   expect(screen.getByRole("alert").textContent).toBe("TLS certificate verification is off.");
+
+  await chooseSection("Buckets");
+  expect(screen.queryByText("TLS certificate verification is off.")).toBeNull();
 
   await signIn(false);
   expect(screen.queryByRole("alert")).toBeNull();
@@ -1554,4 +1559,33 @@ test("keeps the change-password form when the current password is rejected", asy
   expect(await screen.findByText("Invalid credentials")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+});
+
+test("viewer overview has guarded Buckets and Keys entry points in the main work area", async () => {
+  stubSignedIn("viewer");
+  renderApp();
+  await screen.findByText("Bea · viewer");
+  const main = within(screen.getByRole("main"));
+  expect(main.getByRole("heading", { name: "Overview" })).toBeTruthy();
+  const buckets = main.getByRole("link", { name: "Buckets" });
+  expect(buckets.getAttribute("href")).toBe("#buckets");
+  expect(main.getByRole("link", { name: "Keys" }).getAttribute("href")).toBe("#keys");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  setFormDirty("viewer-overview-regression", true);
+  try {
+    fireEvent.click(buckets);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(window.location.hash).toBe("");
+    expect(main.getByRole("heading", { name: "Overview" })).toBeTruthy();
+    confirm.mockReturnValue(true);
+    fireEvent.click(buckets);
+    expect(window.location.hash).toBe("#buckets");
+    expect(await screen.findByText("bucket-ada")).toBeTruthy();
+  } finally {
+    setFormDirty("viewer-overview-regression", false);
+  }
+  await chooseSection("Overview");
+  fireEvent.click(within(screen.getByRole("main")).getByRole("link", { name: "Keys" }));
+  expect(window.location.hash).toBe("#keys");
+  expect(await screen.findByText("key-ada")).toBeTruthy();
 });

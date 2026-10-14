@@ -419,9 +419,23 @@ function Home({ status }: { status: SessionStatus }) {
         </header>
         <main id="main-content" tabIndex={-1} className={section === "settings" ? "console-content console-settings" : "console-content"}>
           <GarageBanner />
-          {status.garage_write_blocked === true ? <p role="alert" className="ui-alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p> : null}
-          {status.tls_insecure === true ? <p role="alert" className="ui-alert">{copy("ui.tls.certificate.verification.is.off")}</p> : null}
-          {section === "overview" && admin ? <ClusterHealth /> : null}
+          {section === "overview" && status.garage_write_blocked === true ? <p role="alert" className="ui-alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p> : null}
+          {section === "overview" && status.tls_insecure === true ? <p role="alert" className="ui-alert">{copy("ui.tls.certificate.verification.is.off")}</p> : null}
+          {section === "overview" ? admin ? <ClusterHealth /> : (
+            <section className="ui-page">
+              <header className="ui-page-header"><h2>{t("nav.overview")}</h2></header>
+              <div className="ui-panel">
+                <div className="ui-actions">
+                  {(["buckets", "keys"] as const).map((id) => (
+                    <a key={id} href={`#${id}`} className="ui-button" onClick={(event) => {
+                      event.preventDefault();
+                      select(id);
+                    }}>{t(sectionCopyKey(id))}</a>
+                  ))}
+                </div>
+              </div>
+            </section>
+          ) : null}
         {section === "nodes" && admin ? <ClusterNodes /> : null}
         {section === "workers" && admin ? <Workers /> : null}
         {section === "block-errors" && admin ? <BlockErrors /> : null}
