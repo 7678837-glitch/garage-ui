@@ -86,11 +86,15 @@ test.describe.serial("accounts", () => {
     await nav.getByRole("link", { name: "Buckets", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Buckets" })).toBeVisible();
     await page.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Create bucket", exact: true })).toBeVisible();
+    const bucketCreator = page.getByRole("dialog", { name: "Create bucket", exact: true });
+    await expect(bucketCreator.getByRole("button", { name: "Create bucket", exact: true })).toBeVisible();
+    await bucketCreator.getByRole("button", { name: "Cancel", exact: true }).click();
     await nav.getByRole("link", { name: "Keys", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Keys" })).toBeVisible();
     await page.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Create key", exact: true })).toBeVisible();
+    const keyCreator = page.getByRole("dialog", { name: "Create key", exact: true });
+    await expect(keyCreator.getByRole("button", { name: "Create key", exact: true })).toBeVisible();
+    await keyCreator.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await nav.getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
