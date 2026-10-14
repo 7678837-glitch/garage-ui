@@ -317,6 +317,52 @@ test("explains an empty list and lets an admin create a bucket with only a globa
   expect(JSON.stringify(post?.body)).not.toContain("localAlias");
 });
 
+test("refreshes after creating a bucket while the initial list response is pending", async () => {
+  let releaseInitial: (response: Response) => void = () => {};
+  let listCalls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      if (call.method === "POST" && call.url === "/api/buckets") {
+        return Promise.resolve(json({ id: "bucket-new" }));
+      }
+      if (call.url.startsWith("/api/buckets?")) {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseInitial = resolve;
+          });
+        }
+        return Promise.resolve(json({
+          items: [{ id: "bucket-new", globalAliases: ["photos"] }],
+          hasMore: false,
+        }));
+      }
+      if (call.url.endsWith("/cors")) {
+        return Promise.resolve(json({ corsRules: [] }));
+      }
+      if (call.url.endsWith("/lifecycle")) {
+        return Promise.resolve(json({ lifecycleRules: [] }));
+      }
+      return Promise.resolve(json({}));
+    }),
+  );
+  renderBuckets(true);
+  expect(screen.getByLabelText("Loading buckets")).toBeTruthy();
+  expect(listCalls).toBe(1);
+  fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
+  expect(await screen.findByText("Bucket created")).toBeTruthy();
+  await act(async () => {
+    releaseInitial(json({ items: [], hasMore: false }));
+  });
+  expect(await screen.findByText("bucket-new")).toBeTruthy();
+  expect(screen.getByText("photos")).toBeTruthy();
+  expect(screen.queryByText("There are no buckets. Create the first bucket.")).toBeNull();
+  expect(listCalls).toBe(2);
+});
+
 test("omits globalAlias when the create form is blank and keeps the value when create fails", async () => {
   const calls: Call[] = [];
   vi.stubGlobal(

@@ -1389,6 +1389,8 @@ function CreateBucketForm() {
     onSuccess: async () => {
       setGlobalAlias("");
       setNote(copy("ui.bucket.created"));
+      // Invalidation reuses an initial fetch with no cached data; cancel its stale snapshot first.
+      await client.cancelQueries({ queryKey: ["buckets"], exact: true });
       await client.invalidateQueries({ queryKey: ["buckets"] });
     },
   });
