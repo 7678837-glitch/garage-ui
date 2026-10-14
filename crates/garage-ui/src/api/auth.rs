@@ -168,24 +168,31 @@ pub(crate) async fn login(
         .unwrap_or_else(|| (*app.dummy_hash).clone());
     let matches = password::verify_async(body.password, hash).await;
     let user = found.filter(|user| !user.disabled);
-    if !matches || user.is_none() {
-        record(
-            &app,
-            &body.username,
-            &ip.0,
-            "failure",
-            "invalid_credentials",
-            "POST",
-            "/api/auth/login",
-            "",
-            401,
-        )
-        .await?;
-        return Err(ApiError::invalid_credentials());
-    }
+    let response = match user.as_ref().filter(|_| matches) {
+        Some(user) => login_response(&app, user, cookie(&headers, "garage_session")).await,
+        None => Err(ApiError::invalid_credentials()),
+    };
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            if error.code() == "invalid_credentials" {
+                record(
+                    &app,
+                    &body.username,
+                    &ip.0,
+                    "failure",
+                    "invalid_credentials",
+                    "POST",
+                    "/api/auth/login",
+                    "",
+                    401,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
+    };
     let user = user.ok_or_else(ApiError::invalid_credentials)?;
-    let presented = cookie(&headers, "garage_session");
-    let response = login_response(&app, &user, presented).await?;
     record(
         &app,
         &user.username,
@@ -400,9 +407,15 @@ async fn login_response(
     user: &User,
     replace: Option<&str>,
 ) -> Result<Response, ApiError> {
-    let (id, csrf, ttl) = session::issue_session(app, user.id, replace).await?;
-    let mut response = user_response(user);
-    apply_login_cookies(response.headers_mut(), &app.settings, &id, &csrf, ttl);
+    let (session, user) = session::issue_session(app, user, replace).await?;
+    let mut response = user_response(&user);
+    apply_login_cookies(
+        response.headers_mut(),
+        &app.settings,
+        &session.id,
+        &session.csrf_token,
+        app.settings.session_absolute.as_secs(),
+    );
     Ok(response)
 }
 
@@ -429,4 +442,167 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/auth/change-password", post(change_password))
         .route("/api/config", get(public_config))
         .route("/api/capabilities", get(capabilities))
+}
+
+#[cfg(test)]
+mod login_proof_tests {
+    use super::*;
+
+    async fn verified_user(app: &App) -> User {
+        let hash = password::hash_async("original password".into(), 4)
+            .await
+            .unwrap();
+        let id = db::insert_user(&app.db, "Original", &hash, "admin", false, false)
+            .await
+            .unwrap();
+        let user = db::find_user_by_id(&app.db, id).await.unwrap().unwrap();
+        assert!(
+            password::verify_async("original password".into(), user.password_hash.clone()).await
+        );
+        user
+    }
+
+    async fn existing_session(app: &App, user_id: i64) -> db::Session {
+        let session = session::new_session(app, user_id).unwrap();
+        db::insert_session(
+            &app.db,
+            &session.id,
+            user_id,
+            &session.csrf_token,
+            &session.key_id,
+            session.last_seen_at,
+            session.expires_at,
+        )
+        .await
+        .unwrap();
+        session
+    }
+
+    async fn assert_rejected(app: &App, proof: &User, existing: &db::Session) {
+        let response = login_response(app, proof, Some(&existing.id)).await;
+        assert!(
+            response.is_err(),
+            "a stale password proof issued a login response"
+        );
+        let response = response.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!response.headers().contains_key("set-cookie"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["code"],
+            "invalid_credentials"
+        );
+        assert!(
+            db::load_session(&app.db, &existing.id)
+                .await
+                .unwrap()
+                .is_some(),
+            "rejected proof deleted the presented session"
+        );
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "rejected proof inserted a session");
+    }
+
+    #[tokio::test]
+    async fn password_reset_rejects_verified_login_proof_without_rotating_session() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let proof = verified_user(&app).await;
+        let hash = password::hash_async("reset password".into(), 4)
+            .await
+            .unwrap();
+        assert!(
+            db::reset_user_password(&app.db, proof.id, &hash)
+                .await
+                .unwrap()
+        );
+        let existing = existing_session(&app, proof.id).await;
+        assert_rejected(&app, &proof, &existing).await;
+    }
+
+    #[tokio::test]
+    async fn recycled_user_id_rejects_verified_login_proof_without_rotating_session() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let proof = verified_user(&app).await;
+        db::delete_user(&app.db, proof.id).await.unwrap();
+        // Reusing the same hash isolates identity validation from password validation.
+        let id = db::insert_user(
+            &app.db,
+            "Replacement",
+            &proof.password_hash,
+            "admin",
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(id, proof.id, "SQLite did not recycle the highest user ID");
+        let existing = existing_session(&app, id).await;
+        assert_rejected(&app, &proof, &existing).await;
+    }
+
+    #[tokio::test]
+    async fn disabled_user_rejects_verified_login_proof_without_rotating_session() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let proof = verified_user(&app).await;
+        db::update_user(&app.db, proof.id, "admin", false, false, true, None)
+            .await
+            .unwrap();
+        let existing = existing_session(&app, proof.id).await;
+        assert_rejected(&app, &proof, &existing).await;
+    }
+
+    #[tokio::test]
+    async fn accepted_login_proof_rotates_session_and_returns_current_permissions() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let proof = verified_user(&app).await;
+        let existing = existing_session(&app, proof.id).await;
+        db::update_user(&app.db, proof.id, "viewer", true, false, false, None)
+            .await
+            .unwrap();
+        let response = login_response(&app, &proof, Some(&existing.id))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut headers = HeaderMap::new();
+        let session_cookie = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .find(|value| value.starts_with("garage_session="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        headers.insert("cookie", session_cookie.parse().unwrap());
+        let current = session::authenticate(&app, &headers, "127.0.0.1")
+            .await
+            .unwrap();
+        assert_eq!(current.user.id, proof.id);
+        assert_eq!(current.user.role, "viewer");
+        assert!(current.user.can_download);
+        assert!(!current.user.can_share);
+        assert!(
+            db::load_session(&app.db, &existing.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["role"], "viewer");
+        assert_eq!(body["can_download"], true);
+        assert_eq!(body["can_share"], false);
+    }
 }

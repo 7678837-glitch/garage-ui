@@ -352,6 +352,53 @@ pub async fn delete_user(pool: &SqlitePool, id: i64) -> Result<(), sqlx::Error> 
     Ok(())
 }
 
+pub async fn insert_login_session(
+    pool: &SqlitePool,
+    proof: &User,
+    replacement: &Session,
+    replace_id: Option<&str>,
+) -> Result<Option<User>, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    // Acquire the write lock while checking the password proof, before rotating any session.
+    let inserted = sqlx::query(
+        "INSERT INTO sessions (id, user_id, csrf_token, key_id, created_at, last_seen_at, expires_at)
+         SELECT ?, id, ?, ?, ?, ?, ? FROM users
+         WHERE id = ? AND username = ? AND password_hash = ? AND disabled = 0",
+    )
+    .bind(&replacement.id)
+    .bind(&replacement.csrf_token)
+    .bind(&replacement.key_id)
+    .bind(replacement.last_seen_at)
+    .bind(replacement.last_seen_at)
+    .bind(replacement.expires_at)
+    .bind(proof.id)
+    .bind(&proof.username)
+    .bind(&proof.password_hash)
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        transaction.rollback().await?;
+        return Ok(None);
+    }
+    if let Some(old) = replace_id {
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(old)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    let row = sqlx::query(
+        "SELECT id, username, password_hash, role, can_download, can_share, disabled
+         FROM users WHERE id = ?",
+    )
+    .bind(proof.id)
+    .fetch_one(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(Some(user_from_row(&row)))
+}
+
+#[cfg(test)]
 pub async fn insert_session(
     pool: &SqlitePool,
     id: &str,

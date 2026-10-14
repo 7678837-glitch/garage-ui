@@ -96,31 +96,15 @@ pub async fn authenticate(app: &App, headers: &HeaderMap, ip: &str) -> Result<Cu
 
 pub async fn issue_session(
     app: &App,
-    user_id: i64,
+    proof: &User,
     replace_id: Option<&str>,
-) -> Result<(String, String, u64), ApiError> {
-    if let Some(old) = replace_id {
-        db::delete_session(&app.db, old)
-            .await
-            .map_err(|_| ApiError::internal())?;
-    }
-    let session = new_session(app, user_id)?;
-    db::insert_session(
-        &app.db,
-        &session.id,
-        user_id,
-        &session.csrf_token,
-        &session.key_id,
-        session.last_seen_at,
-        session.expires_at,
-    )
-    .await
-    .map_err(|_| ApiError::internal())?;
-    Ok((
-        session.id,
-        session.csrf_token,
-        app.settings.session_absolute.as_secs(),
-    ))
+) -> Result<(db::Session, User), ApiError> {
+    let session = new_session(app, proof.id)?;
+    let user = db::insert_login_session(&app.db, proof, &session, replace_id)
+        .await
+        .map_err(|_| ApiError::internal())?
+        .ok_or_else(ApiError::invalid_credentials)?;
+    Ok((session, user))
 }
 
 pub(crate) fn new_session(app: &App, user_id: i64) -> Result<db::Session, ApiError> {
