@@ -21,6 +21,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+
 const UPSTREAM_ID = "tok-prefix-9f3a";
 const SECRET = "fake-secret-9f3a";
 
@@ -49,6 +51,7 @@ function renderTokens(expandCreate = true) {
   if (expandCreate) {
     fireEvent.click(screen.getByText("Create token", { selector: "summary" }));
   }
+  return client;
 }
 
 function installApi() {
@@ -972,4 +975,50 @@ test("canceling token creation clears the draft and closes its disclosure", asyn
   expect(create.closest("details")?.open).toBe(false);
   fireEvent.click(create);
   expect((within(form).getByLabelText("Name") as HTMLInputElement).value).toBe("");
+});
+
+test("scope search preserves hidden selected endpoints and group selection semantics", async () => {
+  installApi();
+  renderTokens();
+  await screen.findByRole("cell", { name: "issued-reader" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
+  const search = screen.getByRole("searchbox", { name: "Filter scope" });
+  fireEvent.change(search, { target: { value: "getclusterhealth" } });
+  expect(screen.queryByRole("checkbox", { name: "ListBuckets" })).toBeNull();
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Cluster" }));
+  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByText("6 selected")).toBeTruthy();
+  fireEvent.change(search, { target: { value: "bucket" } });
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.change(search, { target: { value: "no-matching-endpoint" } });
+  expect(screen.getByText("No matching scopes.")).toBeTruthy();
+  fireEvent.change(search, { target: { value: "" } });
+  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+});
+
+test("editing focuses its name field once and Cancel returns focus to its Edit trigger", async () => {
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
+  installApi();
+  const client = renderTokens(false);
+  const row = await screen.findByRole("row", { name: /issued-reader/ });
+  fireEvent.click(within(row).getByText("Actions", { selector: "summary" }));
+  const trigger = within(row).getByRole("button", { name: "Edit" });
+  fireEvent.click(trigger);
+  const form = screen.getByRole("button", { name: "Update token" }).closest("form");
+  if (!form) throw new Error("Missing token edit form");
+  const name = within(form).getByLabelText("Name");
+  expect(document.activeElement).toBe(name);
+  expect(scroll).toHaveBeenCalledTimes(1);
+  fireEvent.click(within(form).getByRole("checkbox", { name: "ListBuckets" }));
+  fireEvent.change(name, { target: { value: "retained-draft" } });
+  const filter = within(form).getByRole("searchbox", { name: "Filter scope" });
+  filter.focus();
+  await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
+  expect(document.activeElement).toBe(filter);
+  expect(scroll).toHaveBeenCalledTimes(1);
+  fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+  expect(document.activeElement).toBe(trigger);
 });

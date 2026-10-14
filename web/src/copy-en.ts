@@ -534,6 +534,9 @@ export const en = {
   "ui.cancelled": "Cancelled",
   "ui.close.upload": "Close upload",
   "ui.clear.selection": "Clear selection",
+  "ux.scope.filter": "Filter scope",
+  "ux.scope.selected": "{count} selected",
+  "ux.scope.no.matches": "No matching scopes.",
 } as const;
 
 export type CopyKey = keyof typeof en;

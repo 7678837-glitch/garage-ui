@@ -571,6 +571,7 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
       </SettingsSection>
       {error ? <p className="ui-alert" role="alert">{error}</p> : null}
       {create.isSuccess ? <p>{copy("ui.user.created")}</p> : null}
+      <div className="ui-actions">
       <button
         className="ui-button ui-button-primary"
         type="submit"
@@ -581,6 +582,7 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
       <button className="ui-button" type="button" disabled={create.isPending} onClick={() => {
         setUsername(""); setPassword(""); setRole("viewer"); setDownload(false); setShare(false); setError(null); create.reset(); onCancel();
       }}>{copy("ui.cancel")}</button>
+      </div>
     </form>
   );
 }

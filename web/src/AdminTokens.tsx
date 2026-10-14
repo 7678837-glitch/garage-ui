@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
-import { ReadableInstantText, copy, translate } from "./i18n";
+import { ReadableInstantText, copy, fill, translate } from "./i18n";
 import { isGarageDown } from "./garageDown";
 
 import { DataCell, SettingsSection } from "./ui";
@@ -369,6 +369,12 @@ function ScopePicker({
   selected: readonly string[];
   onChange: (next: string[]) => void;
 }) {
+  const [filter, setFilter] = useState("");
+  const query = filter.trim().toLowerCase();
+  const visibleGroups = SCOPE_GROUPS.map((group) => ({
+    ...group,
+    shown: group.endpoints.filter((id) => group.name.toLowerCase().includes(query) || id.toLowerCase().includes(query)),
+  })).filter((group) => group.shown.length > 0);
   const chosen = new Set(selected);
   const allChecked = SCOPE_ENDPOINTS.every((id) => chosen.has(id));
   return (
@@ -384,7 +390,13 @@ function ScopePicker({
           }}
         />
         {copy("ui.all")}</label>
-      {SCOPE_GROUPS.map((group) => {
+      <label className="ui-field">
+        {copy("ux.scope.filter")}
+        <input className="ui-input" type="search" value={filter} onChange={(event) => setFilter(event.target.value)} />
+      </label>
+      <p className="ui-muted" aria-live="polite">{fill(copy("ux.scope.selected"), { count: String(chosen.size) })}</p>
+      <div className="grid max-h-64 gap-2 overflow-y-auto overscroll-contain pr-1">
+      {visibleGroups.map((group) => {
         const groupChecked = group.endpoints.every((id) => chosen.has(id));
         return (
           <div key={group.name} className="grid gap-1">
@@ -399,7 +411,7 @@ function ScopePicker({
               />
               {group.name}
             </label>
-            {group.endpoints.map((id) => (
+            {group.shown.map((id) => (
               <label key={id} className="ui-checkbox-field ml-4">
                 <input
                   className="mr-2"
@@ -409,12 +421,14 @@ function ScopePicker({
                     onChange(withEndpoint(selected, id, event.target.checked));
                   }}
                 />
-                {id}
+                <span className="min-w-0 break-words">{id}</span>
               </label>
             ))}
           </div>
         );
       })}
+      {visibleGroups.length === 0 ? <p>{copy("ux.scope.no.matches")}</p> : null}
+      </div>
       {scopeIsFullAdmin(selected) ? <p>{copy("ui.this.scope.is.equivalent.to.full.admin.access")}</p> : null}
     </fieldset>
   );
@@ -609,6 +623,7 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
         />
         </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
+        <div className="ui-actions">
         <button
           className="ui-button ui-button-primary"
           type="submit"
@@ -616,6 +631,7 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
         >
           {copy("ui.create.token")}</button>
         <button className="ui-button" type="button" disabled={create.isPending} onClick={() => { setDraft(EMPTY_DRAFT); create.reset(); onCancel(); }}>{copy("ui.cancel")}</button>
+        </div>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -660,6 +676,12 @@ function EditTokenForm({
   onClose: () => void;
 }) {
   const client = useQueryClient();
+  const formRef = useRef<HTMLFormElement>(null);
+  useLayoutEffect(() => {
+    const name = formRef.current?.querySelector<HTMLInputElement>("input");
+    name?.focus();
+    name?.scrollIntoView({ block: "center" });
+  }, []);
   const [draft, setDraft] = useState(() => draftFrom(token));
   const [pending, setPending] = useState<TokenDraft | null>(null);
   const update = useMutation({
@@ -679,6 +701,7 @@ function EditTokenForm({
   return (
     <>
       <form
+        ref={formRef}
         className="ui-form ui-settings"
         onSubmit={(event) => {
           event.preventDefault();
@@ -729,6 +752,7 @@ function EditTokenForm({
         />
         </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
+        <div className="ui-actions">
         <button
           className="ui-button ui-button-primary"
           type="submit"
@@ -736,6 +760,7 @@ function EditTokenForm({
         >
           {copy("ui.update.token")}</button>
         <button type="button" className="ui-button" disabled={update.isPending} onClick={onClose}>{copy("ui.cancel")}</button>
+        </div>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -764,6 +789,11 @@ function EditTokenForm({
 function TokenTable({ rows }: { rows: AdminToken[] }) {
   const client = useQueryClient();
   const [editing, setEditing] = useState<AdminToken | null>(null);
+  const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const closeEditor = () => {
+    setEditing(null);
+    if (editTrigger.current?.isConnected) editTrigger.current.focus();
+  };
   const [removing, setRemoving] = useState<AdminToken | null>(null);
   const editingId = editing === null ? null : issuedTokenId(editing);
   const removingId = removing === null ? null : issuedTokenId(removing);
@@ -811,7 +841,8 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                       <button
                         className="ui-button"
                         type="button"
-                        onClick={() => {
+                        onClick={(event) => {
+                          editTrigger.current = event.currentTarget;
                           setEditing(token);
                         }}
                       >
@@ -837,12 +868,10 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
         <div className="ui-panel">
           <div className="ui-page-header"><h3>{editing.name}</h3></div>
           <EditTokenForm
-          key={`${editing.name}-${editing.created}`}
+          key={editingId}
           id={editingId}
           token={editing}
-          onClose={() => {
-            setEditing(null);
-          }}
+          onClose={closeEditor}
           />
         </div>
       ) : null}

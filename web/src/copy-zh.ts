@@ -536,4 +536,7 @@ export const zh = {
   "ui.cancelled": "已取消",
   "ui.close.upload": "收起上传",
   "ui.clear.selection": "清除选择",
+  "ux.scope.filter": "筛选权限范围",
+  "ux.scope.selected": "已选择 {count} 项",
+  "ux.scope.no.matches": "没有匹配的权限范围。",
 } as const satisfies Record<CopyKey, string>;
