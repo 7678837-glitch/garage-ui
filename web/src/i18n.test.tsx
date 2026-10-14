@@ -5,7 +5,7 @@ import { CapacityField } from "./CapacityField";
 import { ConfirmDialog } from "./confirm";
 import { en } from "./copy-en";
 import { zh } from "./copy-zh";
-import { CapacityText, InstantText, LanguageChooser, LanguageProvider } from "./i18n";
+import { CapacityText, InstantText, LanguageChooser, LanguageProvider, phrase } from "./i18n";
 
 afterEach(() => {
   cleanup();
@@ -23,6 +23,30 @@ test("english and chinese catalogs have the same keys", () => {
     expect(chinese.length).toBeGreaterThan(0);
     expect(chinese).not.toBe(key);
     expect(chinese).not.toBe(english);
+  }
+});
+
+test("new page labels translate from exact English phrases", () => {
+  const labels = [
+    ["No matches on this page.", "本页没有匹配项。"],
+    ["Filtering and sorting apply to the current page", "筛选和排序仅作用于当前页"],
+    ["User list", "用户列表"],
+    ["Admin token list", "管理令牌列表"],
+    ["Audit events", "审计事件"],
+    ["All nodes", "所有节点"],
+    ["Layout version", "布局版本"],
+    ["Node list", "节点列表"],
+    ["Worker list", "工作任务列表"],
+    ["Block error list", "数据块错误列表"],
+    [
+      "Leave this page? Unfinished uploads will be cancelled and unsaved changes will be lost.",
+      "离开此页面？未完成的上传将被取消，未保存的更改将丢失。",
+    ],
+  ] as const;
+
+  for (const [english, chinese] of labels) {
+    expect(phrase("en", english)).toBe(english);
+    expect(phrase("zh-CN", english)).toBe(chinese);
   }
 });
 
