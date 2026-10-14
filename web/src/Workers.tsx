@@ -444,7 +444,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
       {groups.map((group) =>
         group.rows.length === 0 ? null : (
           <div key={group.nodeId} className="grid gap-2">
-            {nodeId === "*" ? <p>{group.nodeId}</p> : null}
+            {nodeId === "*" ? <p className="ui-identifier">{group.nodeId}</p> : null}
             <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Worker list")}>
               <table className="ui-table">
                 <thead>
@@ -457,7 +457,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                       {copy("ui.errors")}</th>
                     <th className="py-2 pr-3 font-medium" scope="col">
                       {copy("ui.progress")}</th>
-                    <th className="py-2 font-medium" scope="col">
+                    <th className="relative py-2 font-medium" scope="col">
                       <span className="sr-only">{copy("ui.details")}</span>
                     </th>
                   </tr>

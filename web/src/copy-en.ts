@@ -100,6 +100,7 @@ export const en = {
   "ui.key.2": "Key",
   "ui.actions": "Actions",
   "ui.reading.secret": "Reading secret",
+  "ui.view.secret": "View secret",
   "ui.view.secret.for": "View secret for {id}",
   "ui.delete": "Delete {id}",
   "ui.more.keys.are.available": "More keys are available.",

@@ -751,7 +751,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
               <RenameKey key={openedKey.id} id={openedKey.id} name={openedKey.name} />
               <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
               <div className="ui-actions">
-                <button className="ui-button" type="button" disabled={viewSecret.isPending} onClick={() => { viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{fill(copy("ui.view.secret.for"), { id: openedKey.id })}</button>
+                <button className="ui-button" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={() => { viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{copy("ui.view.secret")}</button>
                 <button className="ui-button ui-button-danger" type="button" onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{fill(copy("ui.delete"), { id: openedKey.id })}</button>
               </div>{viewError ? <p className="ui-alert">{viewError}</p> : null}
             </>

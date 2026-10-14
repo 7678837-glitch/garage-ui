@@ -102,6 +102,7 @@ export const zh = {
   "ui.key.2": "密钥",
   "ui.actions": "操作",
   "ui.reading.secret": "正在读取密钥",
+  "ui.view.secret": "查看",
   "ui.view.secret.for": "查看 {id} 的密钥",
   "ui.delete": "删除 {id}",
   "ui.more.keys.are.available": "还有更多密钥。",
