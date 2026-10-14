@@ -6,7 +6,7 @@
 
 **Your Garage cluster, buckets, and files in one browser.**
 
-Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. A Rust server serves the bundled frontend and connects to your Garage Admin and S3 APIs.
+Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. One Rust binary serves the React interface and connects to your Garage Admin and S3 APIs. The interface uses Radix Themes for accessible controls and adapts to narrow screens.
 
 ![Garage UI object browser](docs/images/objects-desktop.png)
 
@@ -92,6 +92,8 @@ Set the Garage connection variables in `.env`, plus `COOKIE_SECURE=false` for lo
 ```
 
 The binary listens on `127.0.0.1:3909` by default. Toolchain details and development checks are in [Contributing](CONTRIBUTING.md).
+
+The production build embeds `web/dist` in that binary. The runtime uses one image, process, and port; Bun is only needed while building. There is no separate frontend service, browser CDN, or Node.js runtime to configure.
 
 To build and load local Linux images separately, run `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64`. With no architecture argument, it builds both. Tags are `garage-ui:<VERSION>-amd64` and `garage-ui:<VERSION>-arm64`; the script does not publish images.
 

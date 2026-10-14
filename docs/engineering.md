@@ -57,7 +57,7 @@ Acceptance: After a language switch, no key is untranslated (a test checks that 
 - Backend: Rust 1.99.0. One binary embeds the frontend. For HTTP, SQLite, S3, the Admin client, and the other crates, see "Runtime technology stack" in [decisions.md](decisions.md).
 - S3: the official `aws-sdk-s3`. Use the endpoint configuration that this SDK currently recommends. The runtime is the tokio multi-thread runtime.
 - The session library supports database storage. SQLite and the user store use the same database. Passwords use bcrypt.
-- Frontend UI: React 18, TypeScript strict mode, Vite, TanStack Query, react-hook-form + zod, and Tailwind. Do not use daisyUI. Do not use zustand. Server data uses TanStack Query. UI state lives in the component.
+- Frontend UI: React 18, TypeScript strict mode, Vite, Radix Themes 3.3.0, `radix-ui` 1.8.1, TanStack Query, react-hook-form + zod, and Tailwind. Do not use daisyUI or zustand. Server data uses TanStack Query; UI state lives in the component. Use Radix controls and theme tokens for shared interface patterns, with native file inputs for upload.
 - Frontend toolchain: Bun. Install, scripts, and the lockfile all go through Bun.
 - Tests: `cargo test`. Bun starts Vitest + Testing Library. Playwright runs E2E. Integration tests against Garage v2.3.x and v2.4.1 may use a local container.
 

@@ -65,7 +65,7 @@ scripts/build.sh --images amd64
 
 This builds and loads `garage-ui:<VERSION>-amd64` locally. Choose `arm64` for ARM, or omit the architecture to build both. The version comes from the root `VERSION` file. The build uses buildx without cache; it does not push images.
 
-The runtime image embeds the browser assets, listens on 0.0.0.0:3909 inside the container, runs as UID/GID 65532, and has no shell. Mount a writable `/data` for its UI database and generated session key; mount secret files read-only. Put a trusted HTTPS proxy in front of externally reachable deployments.
+The runtime image contains one Rust binary with the browser assets embedded. It serves the UI and API from one process on 0.0.0.0:3909, runs as UID/GID 65532, and has no shell, Bun, or Node.js runtime. It needs no browser CDN or separate frontend deployment. Mount a writable `/data` for its UI database and generated session key; mount secret files read-only. Put a trusted HTTPS proxy in front of externally reachable deployments.
 
 ## Deploy the UI with Helm
 

@@ -2,6 +2,8 @@
 
 Garage UI is an unofficial browser console for Garage, the S3-compatible object store. Use it to manage storage, access, and cluster operations without giving the browser your Garage admin token.
 
+The React interface is bundled into the Rust server. A production deployment serves the UI and API from one process and port; it needs neither a separate frontend service nor a browser CDN.
+
 The current development version is **20261014.2**, an unpublished draft. Build from the source you intend to run; a draft release does not establish that later source changes are included. Garage **v2.3.0 or newer** is required for writes. Compatibility has been exercised with v2.3.0 and v2.4.1.
 
 ## Start here

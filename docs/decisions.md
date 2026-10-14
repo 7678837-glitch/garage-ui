@@ -93,10 +93,11 @@ The frontend toolchain pins Bun 1.4.2. `packageManager` records that version. On
 
 On 2026-10-10 the maintainer confirmed this. The maintainer's words were: "Yes. Remove daisyUI and zustand. The simpler the frontend is, the more powerful it is."
 
-- UI libraries: React 18, TypeScript strict mode, Vite, TanStack Query, react-hook-form + zod, and Tailwind.
-- Do not use daisyUI. Do not use zustand. Do not add another UI library.
-- Server data uses TanStack Query. Forms such as login, create bucket, and keys use react-hook-form and zod. UI state such as the theme and the sidebar toggle lives in the component.
-- Styling uses only Tailwind. Light and dark themes are still done as 5.35 of [features-ui.md](features-ui.md) says.
+The subsequent Radix migration supersedes the earlier restriction on adding a UI library and on Tailwind-only styling.
+
+- UI libraries: React 18, TypeScript strict mode, Vite, Radix Themes 3.3.0, `radix-ui` 1.8.1, TanStack Query, react-hook-form + zod, and Tailwind. Do not use daisyUI or zustand.
+- Server data uses TanStack Query. Authentication forms use react-hook-form and zod. UI state such as the theme and navigation toggle lives in the component.
+- Shared controls use Radix and its theme tokens, with local CSS and Tailwind for layout. File uploads retain native file inputs. Light and dark themes still follow 5.35 of [features-ui.md](features-ui.md).
 - The frontend is still built into the same Rust binary. It is not deployed on its own.
 
 ## Maintenance check

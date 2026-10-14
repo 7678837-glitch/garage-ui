@@ -25,10 +25,10 @@ Sessions normally expire after 24 hours absolute age or two hours idle time. A l
 
 1. Open **Users**, choose **Create user**, and enter a username, password, role, and any viewer Download/Share permissions.
 2. Choose **Create user** and wait for **User created**.
-3. Use the user's row controls to change **Role**, **Download**, **Share**, or **Disabled**. Review the saved state before leaving.
+3. Use the user's **Edit** action to change **Role**, **Download**, **Share**, or **Disabled**. Review the saved state before leaving.
 4. To reset another account, enter its new password and choose **Reset password**. Give the password to the user through a secure channel.
 
-To remove an account, choose its **Delete** action and review the confirmation. Existing sessions for that account lose access.
+To remove an account, open its **Edit** dialog and choose **Delete**. Deletion starts immediately without a separate confirmation; existing sessions for that account lose access.
 
 Usernames are unique without regard to ASCII case, 1–64 characters long, and cannot contain spaces, control characters, or semicolons. Passwords need at least 10 characters and no more than 72 UTF-8 bytes; they cannot be blank. Use a long unique password within that limit.
 

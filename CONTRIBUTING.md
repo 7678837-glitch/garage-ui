@@ -18,6 +18,8 @@ scripts/build.sh
 
 This installs frontend dependencies with the frozen lockfile, builds `web/dist`, and builds the host release binary. The backend build requires `web/dist/index.html`, including when running Rust tests; build the frontend first in a clean checkout.
 
+The shipped UI uses React 18, Vite, Radix Themes 3.3, and `radix-ui` 1.8.1. Reuse the installed Radix controls and the theme tokens in `web/src/theme.tsx` and `web/src/index.css` before adding local styling. Keep native file inputs for upload and the existing confirmation flow for destructive actions. The production Rust binary embeds `web/dist`; Bun runs only during builds and local development, so changes must not require a browser CDN, Node.js runtime, or separately deployed frontend.
+
 For frontend iteration, run the backend with the Garage configuration described in [Build and run](README.md#build-and-run), then run this in another terminal:
 
 ```sh
@@ -61,7 +63,7 @@ bun run generate:api
 git diff -- src/api/garage-admin-v2.ts
 ```
 
-Commit the pinned OpenAPI input and corresponding generated types together. For a UI change, inspect the affected flow in a browser on desktop and narrow/mobile viewports, including keyboard focus, errors, destructive confirmations, and secret display where relevant. Save screenshots that let the reviewer assess the final UI.
+Commit the pinned OpenAPI input and corresponding generated types together. For a UI change, inspect the affected flow in a real browser at 360, 390, 768, and 1280 CSS pixels, including keyboard focus, errors, destructive confirmations, and secret display where relevant. On narrow screens, check touch targets, the Sections dialog, and the account menu. Save screenshots that let the reviewer assess the final UI, after checking them for credentials and personal data.
 
 ### Browser integration tests
 
@@ -81,7 +83,7 @@ Use the affected spec rather than the example when appropriate. A custom `CARGO_
 
 ## Use AI assistance within a bounded task
 
-Give the assistant the desired behavior, allowed files, relevant spec sections, verification commands, and a concrete completion criterion. A useful task states the input, expected output, important failure case, and any operations the maintainer has authorized. Have the assistant inspect existing signatures and patterns before coding, keep edits within scope, and ask about a new product or architecture decision instead of inventing one.
+Give the assistant the desired behavior, allowed files, relevant spec sections, verification commands, and a concrete completion criterion. A useful task states the input, expected output, important failure case, and any operations the maintainer has authorized. Have the assistant inspect existing signatures and patterns before coding, reuse Radix components and theme tokens for UI work, keep edits within scope, and ask about a new product or architecture decision instead of inventing one.
 
 For concurrent work, assign non-overlapping file ownership and use separate branches/worktrees where useful. Preserve other contributors' edits. Coordinate shared ports, Garage fixtures, SQLite databases, and test runs; a separate worktree does not isolate those resources. Keep staging and integration under the coordinating contributor's control.
 

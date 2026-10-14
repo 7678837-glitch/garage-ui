@@ -18,11 +18,11 @@ In **Settings**, **About** shows the UI version and Garage version/capability in
 - In an object preview, Left/Right move between objects in the loaded directory.
 - Use Escape to close the mobile navigation or a dismissible dialog. Confirmations return focus to their triggering control.
 
-Native inputs and buttons provide their normal browser keyboard behavior. Destructive dialogs show the affected resource and may require typing its name; finish that field before confirming.
+Buttons and file inputs retain their native keyboard behavior. Radix tabs, selects, menus, and dialogs provide keyboard interaction for their roles. Destructive dialogs show the affected resource and may require typing its name; finish that field before confirming.
 
 ## Use a narrow screen
 
-Use **Menu** to open navigation and **Close navigation** to dismiss it. Resource tables adapt to the available width; scroll a table region where needed to read long identifiers or audit fields. Open row **Actions** for controls that are grouped on compact layouts.
+Use **Menu** to open the **Sections** dialog and **Close navigation** or Escape to dismiss it. Select a section to navigate. The account button in the header opens account and server status details plus the sign-out control. Resource tables adapt to the available width; scroll a table region where needed to read long identifiers or audit fields. Open row **Actions** for controls that are grouped on compact layouts. The main Radix controls on mobile have at least 36-pixel targets, and text inputs use 16-pixel text to avoid browser zoom while typing.
 
 Unsaved forms warn before navigation. Active uploads also warn that unfinished work will be cancelled if you leave. Finish or cancel those changes deliberately rather than dismissing the warning automatically.
 

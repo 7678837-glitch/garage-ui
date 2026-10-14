@@ -14,7 +14,7 @@ cd garage-ui
 scripts/build.sh
 ```
 
-This installs the locked frontend dependencies, builds the browser assets, and builds `target/release/garage-ui`. The browser bundle is embedded in the binary. Keep the frontend build before the Rust build so the binary includes current assets.
+This installs the locked frontend dependencies, builds the browser assets, and builds `target/release/garage-ui`. The browser bundle is embedded in the binary. Bun is a build tool, not a production runtime. Keep the frontend build before the Rust build so the binary includes current assets.
 
 ## Connect to an existing local Garage
 

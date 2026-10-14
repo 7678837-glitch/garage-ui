@@ -24,7 +24,7 @@ Endpoint names and field names still follow the Admin API v2 definition in the G
 | The admin UI itself supports containerized deployment (`linux/amd64` and `linux/arm64`) | [decisions.md](decisions.md), [engineering.md](engineering.md), [scope.md](scope.md) |
 | The frontend drops daisyUI and zustand | [decisions.md](decisions.md), [engineering.md](engineering.md) |
 
-The UI libraries are React 18, TypeScript, Vite, TanStack Query, react-hook-form, zod, and Tailwind. Bun replaces the Node / pnpm toolchain layer. It is currently pinned at 1.4.2.
+The UI libraries are React 18, TypeScript, Vite, Radix Themes 3.3.0, `radix-ui` 1.8.1, TanStack Query, react-hook-form, zod, and Tailwind. Bun replaces the Node / pnpm toolchain layer. It is currently pinned at 1.4.2.
 
 ## Reading order
 

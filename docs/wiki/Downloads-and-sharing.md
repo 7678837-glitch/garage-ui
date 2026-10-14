@@ -25,7 +25,7 @@ ZIPs contain the explicitly selected keys; there is no whole-prefix ZIP control 
 The operator must configure a browser-reachable `S3_PUBLIC_ENDPOINT_URL` first.
 
 1. Select exactly one object.
-2. Choose **Share for 1 hour**, **Share for 24 hours**, or **Share for 7 days**.
+2. Choose **Share** to open the dialog, then choose **Share for 1 hour**, **Share for 24 hours**, or **Share for 7 days**.
 3. Copy the returned link and give it only to the intended recipient.
 
 The link is a presigned Garage S3 URL. Its recipient does not need a UI account, and anyone holding the URL can read the object while it remains valid. The maximum supported expiry is seven days. The internal S3 endpoint is separate from this public address.

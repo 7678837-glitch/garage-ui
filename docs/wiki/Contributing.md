@@ -24,4 +24,6 @@ GitHub Actions are disabled while development is unfinished. Do not assume a pul
 
 Give the assistant a bounded task: desired behavior, allowed files, relevant source/specification, verification commands, and a concrete completion criterion. Require it to inspect current signatures before coding and to report real check results, including prerequisites that were unavailable.
 
+For interface changes, reuse the repository's Radix controls and theme tokens. Check the affected flow in a real browser at 360, 390, 768, and 1280 CSS pixels. Verify keyboard access, touch targets, dialogs, and sensitive data in screenshots where relevant; the [contributor guide](https://github.com/xjoker/garage-ui/blob/dev/CONTRIBUTING.md) owns the full check commands.
+
 When contributors work concurrently, use non-overlapping ownership and coordinate shared service ports, Garage fixtures, and SQLite state. Preserve other contributors' changes. Keep credentials and personal machine details out of prompts that will be published, patches, screenshots, and pull requests. The [AI contribution instructions](https://github.com/xjoker/garage-ui/blob/dev/CONTRIBUTING.md#use-ai-assistance-within-a-bounded-task) explain these boundaries; human maintainers review, merge, and publish the result.
