@@ -209,7 +209,7 @@ export function Audit() {
       ) : null}
       {view.empty ? <p>{copy("ui.there.are.no.audit.events")}</p> : null}
       <div className="ui-table-container" role="region" aria-label={translate("Audit events")} tabIndex={0}>
-        <table className="ui-table ui-table-records" role="table">
+        <table className="ui-table ui-table-records ui-audit-table" role="table">
           <thead role="rowgroup">
             <tr role="row">
               {COLUMNS.map((column) => (
@@ -223,7 +223,7 @@ export function Audit() {
             {items.map((row, index) => (
               <tr role="row" key={`${row.at}-${row.path}-${index}`}>
                 {COLUMNS.map((column) => (
-                  <DataCell label={copy(columnLabel[column])} kind={column === "at" ? "identity" : "metadata"} className={column === "path" || column === "target" ? "ui-identifier" : undefined} key={column}>
+                  <DataCell label={copy(columnLabel[column])} kind={column === "at" ? "identity" : "metadata"} className={`ui-audit-${column}${column === "path" || column === "target" ? " ui-identifier" : ""}`} key={column}>
                     {column === "at" ? <ReadableInstantText value={auditInstant(row[column])} /> : String(row[column] ?? "")}
                   </DataCell>
                 ))}
