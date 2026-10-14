@@ -441,7 +441,7 @@ function InlineBody({
     case "text":
       return text === undefined ? null : (
         <>
-          <pre>{text.body}</pre>
+          <pre tabIndex={0}>{text.body}</pre>
           {text.partial ? <p>{copy("ui.showing.the.first.256.kib")}</p> : null}
         </>
       );
@@ -618,7 +618,7 @@ function arrowMovesSelection(target: EventTarget | null): boolean {
   ) {
     return false;
   }
-  if (target instanceof Element && target.closest("dialog") !== null) {
+  if (target instanceof Element && target.closest("dialog, pre") !== null) {
     return false;
   }
   return true;

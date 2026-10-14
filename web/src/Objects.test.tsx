@@ -2047,3 +2047,19 @@ test("explicit inspect feedback is focused while loading and shows a failure in 
   expect(await within(panel).findByText("inspection failed")).toBeTruthy();
   expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
 });
+
+
+test.each(["ArrowLeft", "ArrowRight"])("focused text preview keeps %s for scrolling without selecting another object", async (key) => {
+  stubBucketObjects(["a.txt", "b.txt", "c.txt"].map((name) => ({ key: name, encodedKey: name, contentType: "text/plain" })), "keyboard scroll body");
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select b.txt" }));
+  const preview = await screen.findByText("keyboard scroll body");
+  preview.focus();
+  expect(document.activeElement).toBe(preview);
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  fireEvent(preview, event);
+  expect(event.defaultPrevented).toBe(false);
+  expect((screen.getByRole("checkbox", { name: "Select b.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "Select a.txt" }) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByRole("checkbox", { name: "Select c.txt" }) as HTMLInputElement).checked).toBe(false);
+});

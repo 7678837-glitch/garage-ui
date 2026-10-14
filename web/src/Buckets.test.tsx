@@ -302,12 +302,12 @@ test("explains an empty list and lets an admin create a bucket with only a globa
   if (createPanel) fireEvent.click(createPanel);
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Global alias" }), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
   expect(await screen.findByText("bucket-new")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByText("Bucket created")).toBeTruthy();
-  expect((screen.getByLabelText("Global alias") as HTMLInputElement).value).toBe("");
+  expect((screen.getByRole("textbox", { name: "Global alias" }) as HTMLInputElement).value).toBe("");
   const post = calls.find((call) => call.method === "POST" && call.url === "/api/buckets");
   expect(post).toEqual({
     url: "/api/buckets",
@@ -355,7 +355,7 @@ test("refreshes after creating a bucket while the initial list response is pendi
   if (createPanel) fireEvent.click(createPanel);
   expect(screen.getByLabelText("Loading buckets")).toBeTruthy();
   expect(listCalls).toBe(1);
-  fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Global alias" }), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
   expect(await screen.findByText("Bucket created")).toBeTruthy();
   await act(async () => {
@@ -389,14 +389,14 @@ test("omits globalAlias when the create form is blank and keeps the value when c
     expect(calls.some((call) => call.method === "POST")).toBe(true);
   });
   expect(calls.find((call) => call.method === "POST")?.body).toEqual({});
-  fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: " photos " } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Global alias" }), { target: { value: " photos " } });
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
   await waitFor(() => {
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(2);
   });
   expect(screen.getByText("name taken")).toBeTruthy();
   expect(screen.queryByText("Bucket created")).toBeNull();
-  expect((screen.getByLabelText("Global alias") as HTMLInputElement).value).toBe(" photos ");
+  expect((screen.getByRole("textbox", { name: "Global alias" }) as HTMLInputElement).value).toBe(" photos ");
   expect(calls.filter((call) => call.method === "POST")[1]?.body).toEqual({ globalAlias: " photos " });
 });
 

@@ -506,7 +506,8 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
       }}
     >
       <label className={`${wrap} block text-sm`}>
-        {fill(copy("ui.max.size.for"), { bucketId: bucketId })}<input
+        {copy("ui.max.size")}<input
+          aria-label={fill(copy("ui.max.size.for"), { bucketId: bucketId })}
           className="ui-input"
           inputMode="numeric"
           autoComplete="off"
@@ -517,7 +518,8 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         />
       </label>
       <label className={`${wrap} block text-sm`}>
-        {fill(copy("ui.max.objects.for"), { bucketId: bucketId })}<input
+        {copy("ui.max.objects")}<input
+          aria-label={fill(copy("ui.max.objects.for"), { bucketId: bucketId })}
           className="ui-input"
           inputMode="numeric"
           autoComplete="off"
@@ -533,8 +535,9 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         className={`${wrap} ui-button`}
         type="submit"
         disabled={save.isPending}
+        aria-label={save.isPending ? copy("ui.saving.quotas") : fill(copy("ui.save.quotas.for"), { bucketId: bucketId })}
       >
-        {save.isPending ? copy("ui.saving.quotas") : fill(copy("ui.save.quotas.for"), { bucketId: bucketId })}
+        {save.isPending ? copy("ui.saving.quotas") : copy("ui.save.quotas")}
       </button>
     </form>
   );
@@ -1465,33 +1468,36 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       }}
     >
       <fieldset className="grid min-w-0 gap-1">
-        <legend className={`${wrap} text-sm`}>{fill(copy("ui.add.alias.to"), { bucketId: bucketId })}</legend>
+        <legend className={`${wrap} text-sm`}>{copy("ui.add.alias")}</legend>
         <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
             type="radio"
             name={`alias-scope-${bucketId}`}
+            aria-label={fill(copy("ui.global.for"), { bucketId: bucketId })}
             checked={draft.scope === "global"}
             onChange={() => {
               setDraft((current) => ({ ...current, scope: "global" }));
             }}
           />
-          {fill(copy("ui.global.for"), { bucketId: bucketId })}</label>
+          {copy("ui.global")}</label>
         <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
             type="radio"
             name={`alias-scope-${bucketId}`}
+            aria-label={fill(copy("ui.local.for"), { bucketId: bucketId })}
             checked={draft.scope === "local"}
             onChange={() => {
               setDraft((current) => ({ ...current, scope: "local" }));
             }}
           />
-          {fill(copy("ui.local.for"), { bucketId: bucketId })}</label>
+          {copy("ui.local")}</label>
       </fieldset>
       {draft.scope === "global" ? (
         <label className={`${wrap} block text-sm`}>
-          {fill(copy("ui.global.alias.for"), { bucketId: bucketId })}<input
+          {copy("ui.global.alias")}<input
+            aria-label={fill(copy("ui.global.alias.for"), { bucketId: bucketId })}
             className="ui-input"
             value={draft.globalAlias}
             onChange={(event) => {
@@ -1502,7 +1508,8 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       ) : (
         <>
           <label className={`${wrap} block text-sm`}>
-            {fill(copy("ui.local.alias.for"), { bucketId: bucketId })}<input
+            {copy("ui.local.alias")}<input
+              aria-label={fill(copy("ui.local.alias.for"), { bucketId: bucketId })}
               className="ui-input"
               value={draft.localAlias}
               onChange={(event) => {
@@ -1511,7 +1518,8 @@ function AliasControls({ bucketId }: { bucketId: string }) {
             />
           </label>
           <label className={`${wrap} block text-sm`}>
-            {fill(copy("ui.access.key.for"), { bucketId: bucketId })}<input
+            {copy("ui.access.key")}<input
+              aria-label={fill(copy("ui.access.key.for"), { bucketId: bucketId })}
               className="ui-input"
               value={draft.accessKeyId}
               onChange={(event) => {
@@ -1527,8 +1535,9 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         className={`${wrap} ui-button`}
         type="submit"
         disabled={add.isPending}
+        aria-label={add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
       >
-        {add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
+        {add.isPending ? copy("ui.adding.alias") : copy("ui.add.alias")}
       </button>
     </form>
   );
@@ -1552,7 +1561,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
   return (
     <>
       <button
-        className="ui-button"
+        className={`${wrap} ui-button`}
         type="button"
         disabled={remove.isPending}
         onClick={() => {
@@ -1860,7 +1869,7 @@ export function Buckets({
             {canManage ? <><AliasControls bucketId={openedBucket.id} />
               {openedBucket.aliases.map((alias, index) => <RemoveAliasButton key={index} bucketId={openedBucket.id} alias={alias} />)}
               <CorsEditor bucketId={openedBucket.id} /><LifecycleEditor bucketId={openedBucket.id} /><IncompleteUploads bucketId={openedBucket.id} />
-              <button className="ui-button ui-button-danger" type="button" onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{fill(copy("ui.delete"), { id: openedBucket.id })}</button>
+              <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</button>
             </> : <><CorsSummary bucketId={openedBucket.id} /><LifecycleSummary bucketId={openedBucket.id} /></>}
           </div> : null}
         </DetailTabs>
