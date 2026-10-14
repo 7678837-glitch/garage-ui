@@ -1,3 +1,4 @@
+import { openDisclosure } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -41,6 +42,7 @@ test("opens layout history and leaves apply disabled", async ({ page }) => {
     .click();
   await expect(page.getByRole("region", { name: "Cluster nodes" })).toBeVisible();
 
+  await openDisclosure(page.getByRole("region", { name: "Cluster nodes" }).locator(":scope > details > summary", { hasText: "Maintenance" }));
   const apply = page.getByRole("button", { name: "Apply layout", exact: true });
   await expect(apply).toBeVisible();
   await expect(apply).toBeDisabled();

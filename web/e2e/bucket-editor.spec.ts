@@ -1,3 +1,4 @@
+import { openDisclosure } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -8,6 +9,7 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
   try {
     await logIn(page);
     await openBuckets(page);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.getByLabel("Global alias", { exact: true }).fill(alias);
     await page.getByRole("button", { name: "Create bucket", exact: true }).click();
     await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
@@ -24,6 +26,7 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
     const row = await revealRow(buckets, alias);
     await expect(row.getByText(alias, { exact: true })).toBeVisible();
 
+    await openDisclosure(row.locator("summary[aria-label^=\"Edit \"]"));
     await row.getByRole("button", { name: "Edit CORS", exact: true }).click();
     await row.getByRole("button", { name: "Add CORS rule", exact: true }).click();
     await row.getByLabel("ID").fill("photos");
@@ -53,7 +56,7 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
     await assertWidth(page, "bucket-editor", 1280);
     await assertWidth(page, "bucket-editor", 360);
   } finally {
-    await cleanup(page);
+    await cleanup(page, alias);
   }
 });
 
@@ -111,35 +114,19 @@ async function saveRule(
   expect(response.ok(), `${name} returned ${response.status()} ${body}`).toBe(true);
 }
 
-async function cleanup(page: Page): Promise<void> {
+async function cleanup(page: Page, alias: string): Promise<void> {
   if (page.isClosed()) {
     return;
   }
   await page.keyboard.press("Escape").catch(() => undefined);
-  const link = page.getByRole("navigation", { name: "Sections" }).getByRole("link", {
-    name: "Buckets",
-    exact: true,
-  });
-  if ((await link.count()) === 0) {
-    return;
-  }
-  if (!(await link.isVisible())) {
-    const menu = page.getByRole("button", { name: "Menu", exact: true });
-    if ((await menu.count()) > 0 && (await menu.getAttribute("aria-expanded")) !== "true") {
-      await menu.click();
-    }
-  }
-  if (!(await link.isVisible())) {
-    return;
-  }
-  await link.click();
+  await openBuckets(page);
   const buckets = page.getByRole("region", { name: "Buckets" });
   await expect(buckets.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible({
     timeout: 10_000,
   });
-  await buckets.getByLabel("Filter buckets").fill("e2e-301-");
+  await buckets.getByLabel("Filter buckets").fill(alias);
   for (let guard = 0; guard < 5; guard += 1) {
-    const row = buckets.locator("tbody tr", { hasText: "e2e-301-" });
+    const row = buckets.locator("tbody tr", { has: page.getByText(alias, { exact: true }) });
     if ((await row.count()) === 0) {
       const more = buckets.getByRole("button", { name: "Load more", exact: true });
       if (await more.isVisible()) {
@@ -149,14 +136,12 @@ async function cleanup(page: Page): Promise<void> {
       return;
     }
     const target = row.first();
-    const alias = (await target.locator("td").nth(2).locator("span").first().innerText()).trim();
-    if (!alias.startsWith("e2e-301-")) {
-      throw new Error(`refusing to delete bucket alias ${alias}`);
-    }
-    const bucketId = (await target.getByRole("button", { name: /^Objects for / }).innerText()).replace(
+    await expect(target.getByText(alias, { exact: true })).toBeVisible();
+    const bucketId = (await target.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? "")).replace(
       "Objects for ",
       "",
     );
+    console.log("bucket-editor cleanup", JSON.stringify({ alias, bucketId }));
     await target.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Delete bucket", exact: true }).click();
     await expect(buckets.getByText(alias, { exact: true })).toHaveCount(0, { timeout: 20_000 });

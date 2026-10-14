@@ -1,3 +1,4 @@
+import { openNavigation, openDisclosure, openUpload } from "./interactions";
 import { execFileSync } from "node:child_process";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -34,10 +35,11 @@ test("deletes a selection, deletes a folder, and downloads a ZIP", async ({ page
     await createBucket(page, alias);
     await reloadUntilAlias(page, alias);
     bucketId = await filterGrantAndOpen(page, alias, keyId);
-    const objects = page.getByRole("region", { name: "Objects" });
+    const objects = page.locator("section[aria-label=\"Objects\"]");
     const upload = page.getByRole("region", { name: "Upload" });
     await bindKey(objects, keyId);
     await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
+    await openUpload(objects);
     await objects.getByLabel("Choose files").setInputFiles([
       join(work, "batch-a.txt"),
       join(work, "batch-b.txt"),
@@ -46,6 +48,7 @@ test("deletes a selection, deletes a folder, and downloads a ZIP", async ({ page
       timeout: 30_000,
     });
     await expect(uploadRow(upload, "batch-b.txt").getByText("Done", { exact: true })).toBeVisible();
+    await openUpload(objects);
     await objects.getByLabel("Choose folder").setInputFiles(goneRoot);
     await expect(uploadRow(upload, "gone/leaf.txt").getByText("Done", { exact: true })).toBeVisible({
       timeout: 30_000,
@@ -172,6 +175,7 @@ async function logIn(page: Page): Promise<void> {
 async function createKey(page: Page, name: string): Promise<string> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Keys", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Keys", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Key name").fill(name);
   await page.getByRole("button", { name: "Create key", exact: true }).click();
   const heading = page.getByRole("heading", { name: /^Secret for / });
@@ -185,6 +189,7 @@ async function createKey(page: Page, name: string): Promise<string> {
 async function createBucket(page: Page, alias: string): Promise<void> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
@@ -216,20 +221,23 @@ async function filterGrantAndOpen(page: Page, alias: string, keyId: string): Pro
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = buckets.locator("tbody tr").filter({ has: page.getByText(alias, { exact: true }) }).first();
   await expect(row).toBeVisible();
-  const bucketId = (await row.getByRole("button", { name: /^Objects for / }).innerText()).replace(
+  const bucketId = (await row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? "")).replace(
     /^Objects for /,
     "",
   );
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  const grant = row.getByRole("form", { name: `Grant permissions on ${bucketId}` });
+  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
   await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
-  await expect(row.getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await openNavigation(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   await row.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
-  await expect(page.getByRole("region", { name: "Objects" })).toBeVisible();
+  await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
   return bucketId;
 }
 

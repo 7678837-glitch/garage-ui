@@ -1,3 +1,4 @@
+import { openNavigation } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { recordLayout } from "./layout";
@@ -33,12 +34,14 @@ test("chinese pages stay inside the viewport", async ({ page }) => {
 
   for (const [name, shot] of pages) {
     const link = sections(page).getByRole("link", { name, exact: true });
+    await openNavigation(page);
     await link.click();
     await expect(link).toHaveAttribute("aria-current", "page");
     await recordLayout(page, shot);
   }
 
   const overview = sections(page).getByRole("link", { name: "概览", exact: true });
+  await openNavigation(page);
   await overview.click();
   await expect(overview).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "退出" }).click();

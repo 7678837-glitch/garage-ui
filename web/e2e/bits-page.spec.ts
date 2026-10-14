@@ -1,3 +1,4 @@
+import { openDisclosure } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -45,6 +46,8 @@ async function revealDownload(page: Page, name: string): Promise<Locator> {
   const next = users.getByRole("button", { name: "Next", exact: true });
   for (let step = 0; step < 20; step += 1) {
     await expect(users.getByLabel("Loading users")).toHaveCount(0);
+    const row = users.locator("tbody tr", { hasText: name });
+    if (await row.count() === 1) await openDisclosure(row.locator("summary", { hasText: "Edit" }));
     if (await download.isVisible().catch(() => false)) {
       return download;
     }
@@ -90,6 +93,7 @@ test("keeps download unchecked for a viewer after revoke and reload", async ({ p
   username = `e2e-298-${Date.now().toString(36)}`;
   await logIn(page);
   const users = await openUsers(page);
+  await openDisclosure(users.locator("summary", { hasText: "Create user" }));
   const form = users.getByRole("form", { name: "Create user" });
   await form.getByLabel("Username").fill(username);
   await form.getByLabel("Password").fill(password);

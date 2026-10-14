@@ -1,3 +1,4 @@
+import { openDisclosure } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -24,6 +25,7 @@ test("shows the full-admin warning for CreateAdminToken and stays within the vie
   const tokens = page.getByRole("region", { name: "Admin tokens" });
   await expect(tokens.getByRole("heading", { name: "Admin tokens" })).toBeVisible();
 
+  await openDisclosure(tokens.locator("summary", { hasText: "Create token" }));
   const createAdmin = tokens.getByRole("checkbox", { name: "CreateAdminToken", exact: true });
   await expect(createAdmin).toBeVisible();
   await expect(tokens.getByText(fullAdminWarning, { exact: true })).toHaveCount(0);

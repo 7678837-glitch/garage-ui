@@ -1,3 +1,4 @@
+import { openDisclosure, openNavigation } from "./interactions";
 import { createHash, createHmac, type BinaryLike } from "node:crypto";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -24,13 +25,14 @@ test("cleans up incomplete uploads older than the threshold", async ({ page }) =
     keyId = created.keyId;
     await grantKey(page, alias, bucketId, keyId);
     await openObjects(page, bucketId);
-    await bindKey(page.getByRole("region", { name: "Objects" }), keyId);
+    await bindKey(page.locator("section[aria-label=\"Objects\"]"), keyId);
     const uploadId = await createIncompleteUpload(bucketId, objectKey, keyId, created.secret);
     await backToBuckets(page);
 
     const buckets = page.getByRole("region", { name: "Buckets" });
     await buckets.getByLabel("Filter buckets").fill(alias);
     const row = await revealRow(buckets, alias);
+    await openDisclosure(row.locator("summary[aria-label^=\"Edit \"]"));
     await row.getByRole("button", { name: "Incomplete uploads", exact: true }).click();
     await expect(row.getByText(objectKey, { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(row.getByText(uploadId, { exact: true })).toBeVisible();
@@ -129,18 +131,20 @@ async function logIn(page: Page): Promise<void> {
 async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
-  return buttonId(row.getByRole("button", { name: /^Objects for / }).innerText(), "Objects for ");
+  return buttonId(row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? ""), "Objects for ");
 }
 
 async function createKey(page: Page, name: string): Promise<{ keyId: string; secret: string }> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Keys", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Keys", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Key name").fill(name);
   await page.getByRole("button", { name: "Create key", exact: true }).click();
   const heading = page.getByRole("heading", { name: /^Secret for / });
@@ -160,19 +164,22 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  const grant = row.getByRole("form", { name: `Grant permissions on ${bucketId}` });
+  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
   await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
-  await expect(row.getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
 async function openObjects(page: Page, bucketId: string): Promise<void> {
+  await openNavigation(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
-  await expect(page.getByRole("region", { name: "Objects" })).toBeVisible();
+  await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
 }
 
 async function bindKey(objects: Locator, keyId: string): Promise<void> {
@@ -187,7 +194,7 @@ async function bindKey(objects: Locator, keyId: string): Promise<void> {
 }
 
 async function backToBuckets(page: Page): Promise<void> {
-  await page.getByRole("region", { name: "Objects" }).getByRole("button", { name: "Back to buckets", exact: true }).click();
+  await page.locator("section[aria-label=\"Objects\"]").getByRole("button", { name: "Back to buckets", exact: true }).click();
   await expect(page.getByRole("region", { name: "Buckets" }).getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
 }
 

@@ -1,3 +1,4 @@
+import { chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { closeSync, createReadStream, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -33,12 +34,13 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
   writeFileSync(join(work, "aa-large.txt"), "A".repeat(200));
   writeFileSync(join(work, "zz-small.txt"), "zz");
   writeSparse(join(work, "slow.bin"), slowSize);
+  writeSparse(join(work, "guard.bin"), slowSize);
   writeSparse(join(work, "wide.bin"), wideSize);
 
   let bucketId = "";
   let keyId = "";
   let cdp: CDPSession | null = null;
-  const objects = page.getByRole("region", { name: "Objects" });
+  const objects = page.locator("section[aria-label=\"Objects\"]");
   const upload = page.getByRole("region", { name: "Upload" });
 
   try {
@@ -52,6 +54,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
 
     await test.step("prefix, inline text, and download", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose folder").setInputFiles(notesRoot);
       await expect(uploadRow(upload, "notes/a.txt").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
@@ -76,6 +79,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("a type outside the allowlist offers Download without an inline preview", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles(join(work, "blocked.html"));
       await expect(uploadRow(upload, "blocked.html").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
@@ -95,6 +99,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
 
     await test.step("upload three files and cancel one", async () => {
       cdp = await throttle(page, cdp, 1024 * 1024);
+      await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles([
         join(work, "keep-a.txt"),
         join(work, "keep-b.txt"),
@@ -104,6 +109,11 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(slow.getByRole("button", { name: "Cancel", exact: true })).toBeVisible({
         timeout: 15_000,
       });
+      const guardedHash = new URL(page.url()).hash;
+      page.once("dialog", (dialog) => dialog.dismiss());
+      await objects.getByRole("button", { name: "Back to buckets", exact: true }).click();
+      await expect.poll(() => new URL(page.url()).hash).toBe(guardedHash);
+      await expect(slow.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
       await slow.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(slow.getByText("Cancelled", { exact: true })).toBeVisible();
       await expect(slow.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
@@ -125,7 +135,24 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       expect(await multipartKeys(page, bucketId)).not.toContain("slow.bin");
     });
 
+    await test.step("accepted upload departure cancels real transfer", async () => {
+      cdp = await throttle(page, cdp, 128 * 1024);
+      await openUpload(objects);
+      await objects.getByLabel("Choose files").setInputFiles(join(work, "guard.bin"));
+      await expect(uploadRow(upload, "guard.bin").getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+      page.once("dialog", (dialog) => dialog.accept());
+      await objects.getByRole("button", { name: "Back to buckets", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
+      cdp = await throttle(page, cdp, -1);
+      await openObjects(page, bucketId);
+      await expect(objects.getByRole("button", { name: "keep-a.txt", exact: true })).toBeVisible();
+      const missing = await page.request.get(objectUrl(bucketId, "guard.bin"));
+      expect(missing.status()).toBe(404);
+      expect(await multipartKeys(page, bucketId)).not.toContain("guard.bin");
+    });
+
     await test.step("delete one object", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles(join(work, "once.txt"));
       await expect(uploadRow(upload, "once.txt").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
@@ -141,6 +168,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("batch delete asks for the count", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles([
         join(work, "batch-a.txt"),
         join(work, "batch-b.txt"),
@@ -168,6 +196,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("recursive delete types the prefix", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose folder").setInputFiles(goneRoot);
       await expect(uploadRow(upload, "gone/leaf.txt").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
@@ -211,6 +240,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
         });
       });
       try {
+        await openUpload(objects);
         await objects.getByLabel("Choose files").setInputFiles(widePath);
         await expect(uploadRow(upload, "wide.bin").getByText("Done", { exact: true })).toBeVisible({
           timeout: 60_000,
@@ -235,6 +265,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("screenshots, empty list, and error", async () => {
+      await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles([
         join(work, "aa-large.txt"),
         join(work, "zz-small.txt"),
@@ -245,19 +276,11 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(objects.getByRole("button", { name: "zz-small.txt", exact: true })).toBeVisible({
         timeout: 20_000,
       });
-      await page.getByRole("button", { name: "Light", exact: true }).click();
-      await expect(page.getByRole("button", { name: "Light", exact: true })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      );
+      await chooseTheme(page, "Light");
       await recordLayout(page, "objects-list");
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.screenshot({ path: `${evidenceDir}/objects-list-light.png`, fullPage: true });
-      await page.getByRole("button", { name: "Dark", exact: true }).click();
-      await expect(page.getByRole("button", { name: "Dark", exact: true })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      );
+      await chooseTheme(page, "Dark");
       await page.screenshot({ path: `${evidenceDir}/objects-list-dark.png`, fullPage: true });
 
       const mode: { current: "live" | "empty" | "error" } = { current: "empty" };
@@ -341,6 +364,19 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
         timeout: 20_000,
       });
       await expect(objects.getByRole("button", { name: "aa-large.txt", exact: true })).toHaveCount(0);
+    });
+
+    await test.step("active search refreshes after upload and deletion", async () => {
+      await openUpload(objects);
+      await objects.getByLabel("Choose files").setInputFiles({ name: "zz-small-new.txt", mimeType: "text/plain", buffer: Buffer.from("new search match") });
+      await expect(objects.getByRole("button", { name: "zz-small-new.txt", exact: true })).toBeVisible();
+      await expect(objects.getByLabel("Search")).toHaveValue("zz-small");
+      await objects.getByRole("checkbox", { name: "Select zz-small-new.txt", exact: true }).check();
+      await objects.getByRole("button", { name: "Delete", exact: true }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(objects.getByRole("button", { name: "zz-small-new.txt", exact: true })).toHaveCount(0);
+      await expect(objects.getByRole("button", { name: "zz-small.txt", exact: true })).toBeVisible();
     });
 
     await deleteBucketThroughThePage(page, alias, bucketId);
@@ -480,18 +516,20 @@ async function logIn(page: Page): Promise<void> {
 async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
-  return buttonId(row.getByRole("button", { name: /^Objects for / }).innerText(), "Objects for ");
+  return buttonId(row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? ""), "Objects for ");
 }
 
 async function createKey(page: Page, name: string): Promise<string> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Keys", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Keys", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Key name").fill(name);
   await page.getByRole("button", { name: "Create key", exact: true }).click();
   const heading = page.getByRole("heading", { name: /^Secret for / });
@@ -509,19 +547,22 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  const grant = row.getByRole("form", { name: `Grant permissions on ${bucketId}` });
+  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
   await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
   await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
-  await expect(row.getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
 async function openObjects(page: Page, bucketId: string): Promise<void> {
+  await openNavigation(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
-  await expect(page.getByRole("region", { name: "Objects" })).toBeVisible();
+  await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
 }
 
 async function bindKey(objects: Locator, keyId: string): Promise<void> {
@@ -560,7 +601,7 @@ async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: s
   }
   await page.unrouteAll({ behavior: "ignoreErrors" });
   await emptyBucket(page, bucketId);
-  const objects = page.getByRole("region", { name: "Objects" });
+  const objects = page.locator("section[aria-label=\"Objects\"]");
   if (await objects.getByRole("button", { name: "Back to buckets", exact: true }).isVisible()) {
     await objects.getByRole("button", { name: "Back to buckets", exact: true }).click();
   } else {

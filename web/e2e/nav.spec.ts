@@ -84,7 +84,7 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   await expectSections(page, true);
   await assertWidth(page, "menu-expanded", 360);
 
-  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("button", { name: "Close navigation" }).click();
   await expect(page.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
   await expectSections(page, false);
 
@@ -109,6 +109,7 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   await snapshotCaptured;
   await expect(page.getByRole("heading", { name: "Buckets" })).toBeVisible();
   const alias = `e2e-252-${Date.now().toString(36)}`;
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   const createdResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname === "/api/buckets",

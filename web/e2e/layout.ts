@@ -1,11 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { garageTarget } from "./garage-target";
 
-export const evidenceDir = fileURLToPath(
-  new URL(`../../evidence/e2e/${garageTarget().version}/`, import.meta.url),
-);
+const evidenceBase = process.env.GARAGE_UI_E2E_EVIDENCE_DIR ?? fileURLToPath(new URL("../../evidence/e2e/", import.meta.url));
+export const evidenceDir = join(evidenceBase, garageTarget().version);
 
 const widths = [1280, 360] as const;
 

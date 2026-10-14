@@ -1,3 +1,4 @@
+import { chooseTheme, openDisclosure } from "./interactions";
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
@@ -83,13 +84,16 @@ test.describe.serial("accounts", () => {
     const nav = sections(page);
     await nav.getByRole("link", { name: "Buckets", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Buckets" })).toBeVisible();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.getByRole("button", { name: "Create bucket", exact: true })).toBeVisible();
     await nav.getByRole("link", { name: "Keys", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Keys" })).toBeVisible();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.getByRole("button", { name: "Create key", exact: true })).toBeVisible();
 
     await nav.getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
     const download = page.getByRole("checkbox", {
       name: `Download for ${readOnlyUser.username}`,
     });
@@ -117,6 +121,7 @@ test.describe.serial("accounts", () => {
     await sections(page).getByRole("link", { name: "Users", exact: true }).click();
     const users = page.getByRole("region", { name: "Users" });
     await expect(users.getByRole("heading", { name: "Users" })).toBeVisible();
+    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
     await expect(
       users.getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` }),
     ).toBeChecked();
@@ -125,17 +130,9 @@ test.describe.serial("accounts", () => {
     ).toBeChecked();
     await recordLayout(page, "account-users");
 
-    await page.getByRole("button", { name: "Light", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Light", exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await chooseTheme(page, "Light");
     await page.screenshot({ path: `${evidenceDir}/account-users-light.png`, fullPage: true });
-    await page.getByRole("button", { name: "Dark", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Dark", exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await chooseTheme(page, "Dark");
     await page.screenshot({ path: `${evidenceDir}/account-users-dark.png`, fullPage: true });
 
     let mode: UserListMode = "live";
@@ -183,6 +180,7 @@ test.describe.serial("accounts", () => {
     test.setTimeout(120_000);
     await logIn(page, administrator.username, nextPassword);
     await sections(page).getByRole("link", { name: "Users", exact: true }).click();
+    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
     const share = page.getByRole("checkbox", { name: `Share for ${readOnlyUser.username}` });
     const download = page.getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` });
     await share.click();

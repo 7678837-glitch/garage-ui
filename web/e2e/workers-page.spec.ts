@@ -34,13 +34,13 @@ test("opens workers for one live node without starting repair", async ({ page })
   await expect(cluster.getByRole("heading", { name: "Nodes" })).toBeVisible();
   await expect(cluster.getByLabel("Loading nodes")).toHaveCount(0, { timeout: 20_000 });
   const nodeCard = cluster
-    .getByRole("listitem")
+    .locator("tbody tr")
     .filter({
       has: page.getByText("Up", { exact: true }).or(page.getByText("Down", { exact: true })),
     })
     .first();
   await expect(nodeCard).toBeVisible();
-  const nodeId = ((await nodeCard.getByRole("paragraph").first().textContent()) ?? "").trim();
+  const nodeId = ((await nodeCard.locator("[title]").first().getAttribute("title")) ?? "").trim();
   expect(nodeId.length).toBeGreaterThan(0);
 
   await page.goto(`/#workers/${encodeURIComponent(nodeId)}`);

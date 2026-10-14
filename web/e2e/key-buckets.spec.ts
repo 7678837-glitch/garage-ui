@@ -35,7 +35,7 @@ test("opens the Buckets tab of one live key", async ({ page }) => {
   if ((await firstCell.count()) === 0) {
     throw new Error("The key list is empty");
   }
-  const keyId = ((await firstCell.textContent()) ?? "").trim();
+  const keyId = ((await firstCell.getByRole("link").getAttribute("aria-label")) ?? "").trim();
   if (keyId.length === 0) {
     throw new Error("The first key id is empty");
   }
@@ -49,7 +49,7 @@ test("opens the Buckets tab of one live key", async ({ page }) => {
   const buckets = bucketsFor(page, keyId);
   const empty = buckets.getByText("This key cannot access any buckets.", { exact: true });
   const grant = buckets
-    .getByRole("listitem")
+    .getByRole("row")
     .filter({ hasText: /owner (yes|no)/ })
     .filter({ hasText: /read (yes|no)/ })
     .filter({ hasText: /write (yes|no)/ });
