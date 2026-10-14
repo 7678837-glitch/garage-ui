@@ -274,8 +274,10 @@ test("shows the Garage banner instead of the cluster status message", async () =
 test("does not show cluster nodes to a viewer or request them", async () => {
   const fetchMock = installFetch("viewer", () => textResponse(listed));
   renderApp();
-  expect(await screen.findByText("Bea · viewer")).toBeTruthy();
+  const account = await screen.findByRole("button", { name: "Bea · viewer" });
+  fireEvent.click(account);
   expect(await screen.findByText("ok · test")).toBeTruthy();
+  fireEvent.click(account);
   expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(screen.queryByText("node-up")).toBeNull();
   expect(screen.queryByText("alpha")).toBeNull();
@@ -941,6 +943,8 @@ test("apply stays disabled until preview succeeds", async () => {
     false,
   );
 
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
   await act(async () => {
     fireEvent.click(preview);
   });

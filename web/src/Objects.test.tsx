@@ -607,8 +607,8 @@ test("encodes each key segment when loading metadata", async () => {
   expect(meta).toBe("/api/buckets/bkt-1/objects/dir/a%3Fb.txt");
 });
 
-function box(name: string): HTMLElement {
-  return screen.getByRole("checkbox", { name });
+function box(name: string, includeHidden = false): HTMLElement {
+  return screen.getByRole("checkbox", { name, hidden: includeHidden });
 }
 
 test("hides the copy bar until an object row is selected", async () => {
@@ -923,8 +923,8 @@ test("keeps the object and shows the error when delete is forbidden", async () =
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("This permanently deletes a.txt.");
   expect(dialog.textContent).toContain("Not allowed to delete this object");
-  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
-  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByRole("button", { name: "a.txt", hidden: true })).toBeTruthy();
+  expect(box("Select a.txt", true).getAttribute("aria-checked")).toBe("true");
 });
 
 test("requires the selected count before one batch delete", async () => {
@@ -1026,8 +1026,8 @@ test("keeps the batch dialog open when a key fails", async () => {
   expect(open.textContent).toContain("b.txt: denied by policy");
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  expect(box("Select a.txt").getAttribute("aria-checked")).toBe("false");
-  expect(box("Select b.txt").getAttribute("aria-checked")).toBe("true");
+  expect(box("Select a.txt", true).getAttribute("aria-checked")).toBe("false");
+  expect(box("Select b.txt", true).getAttribute("aria-checked")).toBe("true");
 });
 
 test("shows Delete folder on a prefix row and not on an object row", async () => {
@@ -1141,9 +1141,9 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
     "This permanently deletes every object whose key starts with photos/.",
   );
   expect(open.textContent).toContain("Not allowed to delete this prefix");
-  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Actions (photos/)" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "photos/", hidden: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Actions (photos/)", hidden: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "a.txt", hidden: true })).toBeTruthy();
 });
 
 test("hides upload, delete, preview, and download when the viewer cannot transfer", async () => {
@@ -1273,7 +1273,7 @@ test("shows Working while an object delete is submitting", async () => {
   expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
   const cancel = within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
   expect(cancel.disabled).toBe(false);
-  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "a.txt", hidden: true })).toBeTruthy();
   release(new Response(null, { status: 204 }));
   await waitFor(() => {
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -1314,8 +1314,8 @@ test("shows Working while a batch delete is submitting", async () => {
   expect((within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
     false,
   );
-  expect(screen.getByRole("button", { name: "a.txt" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "b.txt" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "a.txt", hidden: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "b.txt", hidden: true })).toBeTruthy();
   release(json({ deleted: ["a.txt", "b.txt"], failed: [] }));
   await waitFor(() => {
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -1352,7 +1352,7 @@ test("shows Working while a prefix delete is submitting", async () => {
   expect((within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
     false,
   );
-  expect(screen.getByRole("button", { name: "photos/" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "photos/", hidden: true })).toBeTruthy();
   release(json({ deleted: 1, errors: [] }));
   await waitFor(() => {
     expect(screen.queryByRole("dialog")).toBeNull();

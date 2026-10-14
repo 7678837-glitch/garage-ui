@@ -748,13 +748,14 @@ test("shows user management for an admin and locks that signed-in row", async ()
   expect(screen.getByText("List keys info unknown")).toBeTruthy();
   expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
   await chooseSection("Users");
+  fireEvent.click(await screen.findByRole("button", { name: "Actions: Ada" }));
   const remove = (await screen.findByRole("button", { name: "Delete Ada" })) as HTMLButtonElement;
   expect(remove.disabled).toBe(true);
-  expect((screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLSelectElement).disabled).toBe(
+  expect((screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLButtonElement).disabled).toBe(
     true,
   );
   expect(
-    (screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLInputElement).disabled,
+    (screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   expect(document.body.textContent).not.toContain("$2b$12$from-the-api");
 });
@@ -868,6 +869,7 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(screen.getByText("a&b=c")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await chooseSection("Users");
   expect(screen.getByRole("heading", { name: "Users" })).toBeTruthy();
   await chooseSection("Keys");
@@ -876,11 +878,13 @@ test("shows a bucket id and its alias to an admin", async () => {
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByLabelText("Actions (key-ada)"));
   expect(screen.getByRole("button", { name: "Save name (key-ada)" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Allow bucket creation (key-ada)" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Show secret (key-ada)" })).toBeTruthy();
-  expect(screen.getByRole("checkbox", { name: "Allow bucket creation (key-ada)" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETADA");
 });
 

@@ -1467,7 +1467,7 @@ test("bucket detail objects discard A's list and deletion selection while B is l
   }));
   renderBuckets(true);
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select report.txt" }));
-  expect((screen.getByRole("checkbox", { name: "Select report.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByRole("checkbox", { name: "Select report.txt" }).getAttribute("aria-checked")).toBe("true");
   await changeBucketHash("#bucket/B/objects");
   expect(screen.queryByRole("checkbox", { name: "Select report.txt" })).toBeNull();
   expect(screen.queryByText("report.txt")).toBeNull();

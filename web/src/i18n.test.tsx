@@ -146,13 +146,14 @@ test("capacity units follow the language", () => {
   chinese.unmount();
 
   render(
-    <LanguageProvider>
+    <GarageTheme><LanguageProvider>
       <CapacityField bytes="1800000000000" submit={() => undefined} />
-    </LanguageProvider>,
+    </LanguageProvider></GarageTheme>,
   );
-  const unit = screen.getByRole("combobox", { name: "单位" }) as HTMLSelectElement;
-  expect(unit.value).toBe("TB");
-  expect(unit.selectedOptions[0]?.textContent).toBe("太字节");
+  const unit = screen.getByRole("combobox", { name: "单位" });
+  expect(unit.textContent).toBe("太字节");
+  fireEvent.keyDown(unit, { key: "ArrowDown" });
+  expect(screen.getByRole("option", { name: "太字节" }).getAttribute("aria-selected")).toBe("true");
 });
 
 test("the confirm dialog follows the language", () => {
