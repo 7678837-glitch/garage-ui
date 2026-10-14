@@ -1817,7 +1817,7 @@ export function Buckets({
 
   return (
     <section className="ui-page" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
-      {bucketDetail === null ? <header className="ui-page-header">
+      {listing ? <header className="ui-page-header">
         <h2>{copy("nav.buckets")}</h2>
         {listing && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
       </header> : null}

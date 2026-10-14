@@ -225,15 +225,31 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-objects-name > .ui-object-name { flex: 1; }
 .ui-objects-table :is(th, td) { padding-block: 6px; }
 .ui-objects-table [data-kind="selection"], .ui-objects-table [data-kind="actions"] { width: 1%; white-space: nowrap; }
-.ui-objects-table [data-kind="identity"] { width: 100%; }
-.ui-objects-table .ui-objects-size, .ui-objects-table .ui-objects-time { white-space: normal; }
+.ui-objects-table [data-kind="metadata"] .ui-data-value { overflow-wrap: normal; }
+.ui-objects-table .ui-value-text { display: grid; justify-items: start; overflow-wrap: normal; }
+.ui-objects-table .ui-value-text > :is(span, time), .ui-objects-table .ui-value-details > summary,
+.ui-objects-table [data-kind="actions"] .ui-button { white-space: nowrap; }
 .ui-objects-selection-label { display: inline-flex; justify-content: center; align-items: center; min-height: var(--control-height); min-width: var(--control-height); cursor: pointer; }
 @media (max-width: 639px) {
   .ui-table-records .ui-disclosure { max-width: 100%; min-width: 0; }
   .ui-table-records .ui-disclosure > summary { min-height: 44px; display: flex; align-items: center; white-space: normal; }
   .ui-objects-tools > .ui-objects-upload { order: 0; width: 100%; }
   .ui-objects-tools > .ui-objects-search { flex-basis: 100%; }
-  .ui-objects-table tbody tr { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); }
+}
+@container (max-width: 48rem) {
+  .ui-objects-table, .ui-objects-table tbody { display: block; }
+  .ui-objects-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .ui-objects-table tbody tr { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 16px; border-bottom: 1px solid var(--separator); }
+  .ui-objects-table tbody tr:last-child { border-bottom: 0; }
+  .ui-objects-table td { display: block; height: auto; padding: 0; border: 0; min-width: 0; }
+  .ui-objects-table .ui-data-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .ui-objects-table [data-kind="identity"] .ui-data-label, .ui-objects-table [data-kind="selection"] .ui-data-label { display: none; }
+  .ui-objects-table [data-kind="metadata"] .ui-data-value, .ui-objects-table .ui-value-text { overflow-wrap: anywhere; }
+  .ui-objects-table .ui-value-text > :is(span, time), .ui-objects-table .ui-value-details > summary,
+  .ui-objects-table [data-kind="actions"] .ui-button { white-space: normal; overflow-wrap: anywhere; }
+  .ui-objects-table .ui-disclosure { max-width: 100%; min-width: 0; }
+  .ui-objects-table .ui-disclosure > summary { display: flex; align-items: center; white-space: normal; }
+  .ui-objects-table [data-kind="actions"] .ui-data-value { display: flex; flex-wrap: wrap; gap: 8px; }
   .ui-objects-table :is([data-kind="selection"], [data-kind="identity"], [data-kind="actions"]) { width: auto; white-space: normal; }
   .ui-objects-table [data-kind="selection"] { grid-column: 1; grid-row: 1; }
   .ui-objects-table [data-kind="identity"] { grid-column: 2 / -1; grid-row: 1; align-self: center; }
