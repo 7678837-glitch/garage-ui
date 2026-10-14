@@ -55,6 +55,10 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-toolbar > :is(.ui-field, form) { flex: 1 1 18ch; min-width: min(100%, 18ch); max-width: 100%; }
 .ui-actions > .ui-field { flex: 1 1 16ch; min-width: min(100%, 16ch); }
 .ui-page-header, .ui-toolbar { justify-content: space-between; }
+.ui-users-header { align-items: flex-start; }
+.ui-users-header > .ui-disclosure { min-width: 0; }
+.ui-users-header > .ui-disclosure[open] { width: 100%; }
+.ui-users-header > .ui-disclosure[open] > form { max-width: none; }
 .ui-page-header h2, .ui-page > h2 { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 22px; font-weight: 600; letter-spacing: -.025em; }
 .ui-panel { display: grid; gap: var(--space-large); padding: 24px; min-width: 0; background: var(--surface); border: 1px solid var(--separator); border-radius: var(--control-radius); }
 .ui-panel.ui-actions { display: flex; }

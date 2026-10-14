@@ -23,9 +23,7 @@
   .ui-filter-help > summary { min-height: var(--touch-control-height); display: flex; align-items: center; gap: 6px; }
   .ui-filter-help > summary::before { content: "▸"; }
   .ui-filter-help[open] > summary::before { content: "▾"; }
-  .ui-users-header { align-items: flex-start; gap: 8px; }
-  .ui-users-header > .ui-disclosure { min-width: 0; }
-  .ui-users-header:has(> .ui-disclosure[open]) > .ui-disclosure { width: 100%; }
+  .ui-users-header { gap: 8px; }
   .ui-bucket-list tbody tr, .ui-key-list tbody tr { gap: 4px 12px; padding: 8px 12px; }
   .ui-bucket-list [data-kind="actions"] .ui-data-label, .ui-key-list [data-kind="actions"] .ui-data-label { display: none; }
   .ui-bucket-list [data-kind="metadata"] .ui-data-label { display: inline; margin-right: 8px; }
