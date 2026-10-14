@@ -1112,7 +1112,7 @@ test("mobile Menu toggles the drawer links", async () => {
 function stubNavMedia(narrow: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => {
     const media: MediaQueryList = {
-      matches: query === "(max-width: 639px)" && narrow,
+      matches: query === "(max-width: 899px)" && narrow,
       media: query,
       onchange: null,
       addEventListener() {},
@@ -1127,7 +1127,7 @@ function stubNavMedia(narrow: boolean) {
   });
 }
 
-test("a viewport below 640px hides section links until Menu opens them", async () => {
+test("a viewport below 900px hides section links until Menu opens them", async () => {
   stubNavMedia(true);
   stubSignedIn("admin");
   renderApp();

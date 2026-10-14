@@ -17,9 +17,9 @@ const adminEntries = [
   "Nodes and layout",
   "Workers",
   "Block errors",
-  "Audit",
-  "Admin tokens",
   "Users",
+  "Admin tokens",
+  "Audit",
   "Settings",
 ];
 

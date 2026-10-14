@@ -1,8 +1,10 @@
 import { useId, type ReactNode } from "react";
 import { translate } from "./i18n";
 
-export function DetailTabs<T extends string>({ label, tabs, selected, hrefFor, onSelect, children }: {
+export function DetailTabs<T extends string>({ label, tabs, selected, hrefFor, onSelect, title, identity, children }: {
   label: string;
+  title?: string;
+  identity?: ReactNode;
   tabs: readonly { id: T; label: string }[];
   selected: T;
   hrefFor: (tab: T) => string;
@@ -11,7 +13,7 @@ export function DetailTabs<T extends string>({ label, tabs, selected, hrefFor, o
 }) {
   const id = useId();
   return <section className="ui-page" aria-label={translate(label)}>
-    <header className="ui-page-header"><h2>{translate(label)}</h2></header>
+    <header className="ui-page-header"><div><h2>{title ?? translate(label)}</h2>{identity}</div></header>
     <div className="ui-tabs" role="tablist" aria-label={translate(label)}>
       {tabs.map((tab, index) => <a key={tab.id} id={`${id}-${tab.id}`} href={hrefFor(tab.id)} role="tab"
         aria-selected={tab.id === selected} aria-controls={`${id}-panel`} tabIndex={tab.id === selected ? 0 : -1} className="ui-tab"

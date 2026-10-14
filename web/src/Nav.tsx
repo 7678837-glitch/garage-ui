@@ -260,13 +260,13 @@ export function Nav({ role, section, open, onToggle, onSelect }: {
   onSelect: (id: SectionId) => boolean;
 }) {
   const { t } = useI18n();
-  const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 639px)").matches);
+  const [mobile, setMobile] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 899px)").matches);
   const dialog = useRef<HTMLDialogElement>(null);
   const menu = useRef<HTMLButtonElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(max-width: 639px)");
+    const media = window.matchMedia("(max-width: 899px)");
     const changed = () => setMobile(media.matches);
     media.addEventListener("change", changed);
     return () => media.removeEventListener("change", changed);
@@ -281,16 +281,27 @@ export function Nav({ role, section, open, onToggle, onSelect }: {
     const trigger = menu.current;
     return () => { element.close?.(); trigger?.focus(); };
   }, [mobile, open]);
+  const groups: { label?: CopyKey; ids: SectionId[] }[] = [
+    { ids: ["overview"] },
+    { label: "nav.storage", ids: ["buckets", "keys"] },
+    { label: "nav.cluster", ids: ["nodes", "workers", "block-errors"] },
+    { label: "nav.administration", ids: ["users", "tokens", "audit"] },
+    { ids: ["settings"] },
+  ];
   const links = <nav className="console-nav" aria-label={t("nav.sections")}>
-    <div className="console-wordmark">Garage <span>UI</span></div>
-    {sections.filter((item) => !item.adminOnly || role === "admin").map((item) => <a
-      key={item.id} href={`#${item.id}`} aria-current={section === item.id ? "page" : undefined}
-      className="console-nav-link"
-      onClick={(event) => {
-        event.preventDefault();
-        if (onSelect(item.id) && mobile && open) onToggle();
-      }}
-    >{t(sectionCopy[item.id])}</a>)}
+    <div className="console-wordmark"><img src="./brand/garage-ui.svg" width="32" height="32" alt="" />Garage UI</div>
+    {groups.map((group, index) => {
+      const visible = group.ids.filter((id) => !sections.find((item) => item.id === id)?.adminOnly || role === "admin");
+      if (!visible.length) return null;
+      return <div className="console-nav-group" key={index}>
+        {group.label ? <p className="console-nav-group-label">{t(group.label)}</p> : null}
+        {visible.map((id) => <a key={id} href={`#${id}`} aria-current={section === id ? "page" : undefined}
+          className="console-nav-link" onClick={(event) => {
+            event.preventDefault();
+            if (onSelect(id) && mobile && open) onToggle();
+          }}>{t(sectionCopy[id])}</a>)}
+      </div>;
+    })}
   </nav>;
   return <>
     <button ref={menu} className="ui-button console-menu" type="button" aria-expanded={mobile && open} aria-controls="console-navigation" onClick={onToggle}>{t("nav.menu")}</button>

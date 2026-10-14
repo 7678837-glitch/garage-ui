@@ -1,6 +1,26 @@
 import type { CopyKey } from "./copy-en";
 
 export const zh = {
+  "ux.general": "常规",
+  "ux.credentials": "凭据",
+  "ux.danger.zone": "危险操作",
+  "ux.save.name": "保存名称",
+  "ux.allow.bucket.creation": "允许创建存储桶",
+  "ux.saved.automatically": "自动保存",
+  "ux.delete.key": "删除密钥",
+  "ux.worker.id": "工作线程 ID",
+  "ux.loading.worker.details": "正在加载工作线程详情",
+  "ux.refreshing.worker.details": "正在刷新工作线程详情",
+
+  "nav.storage": "存储",
+  "nav.cluster": "集群",
+  "nav.administration": "管理",
+  "common.fullId": "完整 ID",
+  "common.copyId": "复制 ID",
+  "common.idCopied": "ID 已复制",
+  "common.idCopyFailed": "无法复制 ID。请选择完整 ID 并手动复制。",
+  "shell.status": "系统状态",
+
   "nav.close": "关闭导航",
   "nav.skip": "跳转到内容",
   "settings.appearance": "外观",

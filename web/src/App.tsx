@@ -70,7 +70,7 @@ function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean
     <main className="auth-shell" id="main-content">
       <div className="auth-preferences"><ThemeChooser /></div>
       <section className="auth-card">
-        <h1 className="console-wordmark">Garage <span>UI</span></h1>
+        <h1 className="console-wordmark"><img src="./brand/garage-ui.svg" width="32" height="32" alt="" />Garage UI</h1>
         {children}
         <LanguageChooser />
       </section>
@@ -408,14 +408,17 @@ function Home({ status }: { status: SessionStatus }) {
       <div className="console-workspace">
         <header className="console-topbar">
           <Breadcrumb section={section} hash={hash} onSelect={select} />
-          <div className="console-session">
-            <span className="ui-muted">{status.username} · {status.role}</span>
-            <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button>
-          </div>
-          <div className="console-health">
-            <p className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</p>
-            <p className="ui-muted">{garageLine(status.garage_version)}</p>
-          </div>
+          <details className="console-session console-header-disclosure">
+            <summary><span className="console-account-name">{status.username} · {status.role}</span></summary>
+            <div className="console-header-panel">
+            <button className="ui-button" type="button" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}</button></div>
+          </details>
+          <details className="console-health console-header-disclosure">
+            <summary><span className="ui-status" role="status" aria-label={copy("ui.health.status")}>{healthText}</span> <span>{garageLine(status.garage_version)}</span></summary>
+            <div className="console-header-panel">
+            <p className="ui-muted">{t("shell.status")}</p>
+            <p>{copy("ui.version")}: {health.data?.version ?? healthText}</p></div>
+          </details>
         </header>
         <main id="main-content" tabIndex={-1} className={section === "settings" ? "console-content console-settings" : "console-content"}>
           <GarageBanner />
