@@ -18,7 +18,8 @@ WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock VERSION ./
 COPY crates ./crates
 COPY --from=web /src/web/dist ./web/dist
-ENV RUSTFLAGS="-C target-feature=+crt-static -C linker=musl-gcc"
+# Rust supplies the musl CRT; musl-gcc injects a loader into x86_64 static PIE.
+ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV RUSTUP_USE_CURL=1
 RUN set -eu; \
     arch="$(uname -m)"; \

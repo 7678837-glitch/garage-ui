@@ -1,7 +1,6 @@
 #!/bin/sh
 # Usage: scripts/release.sh [output-directory]
 # Creates two static Linux binaries, their SBOM and SHA256SUMS, without signing.
-# ldd exits 1 when the file is not a dynamic executable. That output is success.
 set -eu
 if [ "$#" -gt 1 ]; then
   echo "Usage: $0 [output-directory]" >&2
@@ -163,7 +162,7 @@ copy_bin linux/amd64 "garage-ui:$version-amd64" "$out/garage-ui-linux-amd64"
 copy_bin linux/arm64 "garage-ui:$version-arm64" "$out/garage-ui-linux-arm64"
 
 # The Dockerfile pins a multi-arch index. Pulling that index digest for a second
-# platform fails with "cannot overwrite digest", so ldd uses the platform manifest.
+# platform fails with "cannot overwrite digest", so ELF checks use the platform manifest.
 platform_rust_image() {
   platform=$1
   python3 - "$rust_image" "$platform" <<'PY'
@@ -188,38 +187,39 @@ print(f"{image.split('@', 1)[0]}@{digest}")
 PY
 }
 
-ldd_one() {
+static_one() {
   platform=$1
   bin=$2
   image=$(platform_rust_image "$platform")
   docker pull --platform "$platform" "$image"
-  cid=$(docker create --platform "$platform" --entrypoint ldd "$image" /garage-ui)
+  cid=$(docker create --platform "$platform" --entrypoint sh "$image" -c \
+    'readelf -lW /garage-ui && readelf -dW /garage-ui')
   if ! docker cp "$bin" "$cid:/garage-ui"; then
     docker rm "$cid" >/dev/null || true
     exit 1
   fi
   set +e
-  ldd_out=$(docker start -a "$cid" 2>&1)
-  ldd_status=$?
+  elf_out=$(docker start -a "$cid" 2>&1)
+  elf_status=$?
   set -e
   docker rm "$cid" >/dev/null
-  printf '%s\n' "$ldd_out"
-  if printf '%s\n' "$ldd_out" | grep -E '[^[:space:]]+\.so([.0-9]*)?' >/dev/null; then
-    echo "ldd reported a shared library for $bin" >&2
+  printf '%s\n' "$elf_out"
+  if [ "$elf_status" -ne 0 ]; then
+    echo "ELF inspection failed for $bin (status $elf_status)" >&2
     exit 1
   fi
-  if printf '%s\n' "$ldd_out" | grep -q 'not a dynamic executable'; then
-    return 0
+  if printf '%s\n' "$elf_out" | grep -E '^[[:space:]]*INTERP[[:space:]]|\(NEEDED\)' >/dev/null; then
+    echo "ELF requires a dynamic loader or shared library: $bin" >&2
+    exit 1
   fi
-  if [ "$ldd_status" -eq 0 ] && [ -n "$ldd_out" ]; then
-    return 0
-  fi
-  echo "ldd check failed for $bin (status $ldd_status)" >&2
-  exit 1
 }
 
-ldd_one linux/amd64 "$out/garage-ui-linux-amd64"
-ldd_one linux/arm64 "$out/garage-ui-linux-arm64"
+static_one linux/amd64 "$out/garage-ui-linux-amd64"
+static_one linux/arm64 "$out/garage-ui-linux-arm64"
+
+# Verify the exact final images can start without a loader or writable root.
+docker run --rm --network none --read-only --platform linux/amd64 "garage-ui:$version-amd64" --version
+docker run --rm --network none --read-only --platform linux/arm64 "garage-ui:$version-arm64" --version
 
 python3 - "$out" <<'PY'
 import hashlib
