@@ -1,5 +1,10 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use axum::Json;
 use axum::Router;
+use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{Query, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
@@ -15,8 +20,11 @@ use crate::state::App;
 use super::Authed;
 use super::PageQuery;
 use super::page_bounds;
-use super::page_window;
 use super::require;
+
+const CSV_HEADER: &str = "at,username,ip,result,reason,method,path,target,status\n";
+const EXPORT_ROWS: usize = 128;
+const EXPORT_FRAME_BYTES: usize = 64 * 1024;
 
 #[derive(Deserialize)]
 struct AuditQuery {
@@ -30,6 +38,8 @@ struct AuditQuery {
 
 #[derive(Serialize)]
 struct AuditItem {
+    #[serde(skip)]
+    id: i64,
     at: i64,
     username: String,
     ip: String,
@@ -41,6 +51,7 @@ struct AuditItem {
     status: i64,
 }
 
+#[derive(Clone)]
 struct AuditFilter {
     user: Option<String>,
     from: Option<i64>,
@@ -80,19 +91,36 @@ fn time_bound(value: Option<i64>) -> (i64, i64) {
     }
 }
 
-async fn load_audit(app: &App, filter: &AuditFilter) -> Result<Vec<AuditItem>, ApiError> {
+async fn load_audit(
+    app: &App,
+    filter: &AuditFilter,
+    offset: u64,
+    limit: usize,
+    after: Option<i64>,
+    until: i64,
+) -> Result<Vec<AuditItem>, sqlx::Error> {
+    let Ok(offset) = i64::try_from(offset) else {
+        return Ok(Vec::new());
+    };
+    let first_id = match after {
+        Some(i64::MAX) => return Ok(Vec::new()),
+        Some(id) => id + 1,
+        None => i64::MIN,
+    };
     let (user, user_any) = text_bound(&filter.user);
     let (from, from_any) = time_bound(filter.from);
     let (to, to_any) = time_bound(filter.to);
     let (action, action_any) = text_bound(&filter.action);
     let rows = sqlx::query(
-        "SELECT at, username, ip, result, reason, method, path, target, status
+        "SELECT id, at, username, ip, result, reason, method, path, target, status
          FROM audit
          WHERE (username = ? OR ? = 1)
            AND (at >= ? OR ? = 1)
            AND (at <= ? OR ? = 1)
            AND (target = ? OR ? = 1)
-         ORDER BY id ASC",
+           AND id >= ?
+           AND id <= ?
+         ORDER BY id ASC LIMIT ? OFFSET ?",
     )
     .bind(user)
     .bind(user_any)
@@ -102,12 +130,16 @@ async fn load_audit(app: &App, filter: &AuditFilter) -> Result<Vec<AuditItem>, A
     .bind(to_any)
     .bind(action)
     .bind(action_any)
+    .bind(first_id)
+    .bind(until)
+    .bind(limit as i64)
+    .bind(offset)
     .fetch_all(&app.db)
-    .await
-    .map_err(|_| ApiError::internal())?;
+    .await?;
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         items.push(AuditItem {
+            id: row.get("id"),
             at: row.get("at"),
             username: row.get("username"),
             ip: row.get("ip"),
@@ -133,8 +165,11 @@ async fn list_audit(
         limit: query.limit.clone(),
     })?;
     let filter = audit_filter(&query)?;
-    let rows = load_audit(&app, &filter).await?;
-    let (page, more) = page_window(rows, offset, limit);
+    let mut page = load_audit(&app, &filter, offset, limit + 1, None, i64::MAX)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let more = page.len() > limit;
+    page.truncate(limit);
     Ok(Json(json!({
         "items": page,
         "hasMore": more,
@@ -142,15 +177,27 @@ async fn list_audit(
 }
 
 fn csv_cell(value: &str) -> String {
+    let dangerous = value
+        .trim_start_matches(|ch: char| ch.is_whitespace() || ch.is_control())
+        .starts_with(['=', '+', '-', '@', '＝', '＋', '－', '＠'])
+        || value
+            .chars()
+            .take_while(|ch| ch.is_whitespace() || ch.is_control())
+            .any(|ch| matches!(ch, '\t' | '\r' | '\n'));
+    let value = if dangerous {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
     if value.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
-        value.to_string()
+        value
     }
 }
 
 fn csv_body(rows: &[AuditItem]) -> String {
-    let mut out = String::from("at,username,ip,result,reason,method,path,target,status\n");
+    let mut out = String::new();
     for row in rows {
         let cells = [
             row.at.to_string(),
@@ -169,6 +216,73 @@ fn csv_body(rows: &[AuditItem]) -> String {
     out
 }
 
+type AuditBatch = Pin<Box<dyn Future<Output = Result<Vec<AuditItem>, sqlx::Error>> + Send>>;
+
+struct AuditCsv {
+    app: App,
+    filter: AuditFilter,
+    until: i64,
+    after: Option<i64>,
+    more: bool,
+    bytes: Bytes,
+    pending: Option<AuditBatch>,
+}
+
+impl HttpBody for AuditCsv {
+    type Data = Bytes;
+    type Error = sqlx::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        if this.bytes.is_empty() {
+            if !this.more {
+                return Poll::Ready(None);
+            }
+            if this.pending.is_none() {
+                let app = this.app.clone();
+                let filter = this.filter.clone();
+                let after = this.after;
+                let until = this.until;
+                this.pending = Some(Box::pin(async move {
+                    load_audit(&app, &filter, 0, EXPORT_ROWS, after, until).await
+                }));
+            }
+            let rows = match this
+                .pending
+                .as_mut()
+                .expect("audit batch")
+                .as_mut()
+                .poll(cx)
+            {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(result) => {
+                    this.pending = None;
+                    match result {
+                        Ok(rows) => rows,
+                        Err(error) => {
+                            this.more = false;
+                            return Poll::Ready(Some(Err(error)));
+                        }
+                    }
+                }
+            };
+            this.more = rows.len() == EXPORT_ROWS;
+            this.after = rows.last().map(|row| row.id);
+            if rows.is_empty() {
+                return Poll::Ready(None);
+            }
+            this.bytes = Bytes::from(csv_body(&rows));
+        }
+        let length = this.bytes.len().min(EXPORT_FRAME_BYTES);
+        Poll::Ready(Some(Ok(http_body::Frame::data(
+            this.bytes.split_to(length),
+        ))))
+    }
+}
+
 async fn export_audit(
     State(app): State<App>,
     Authed(current): Authed,
@@ -176,10 +290,29 @@ async fn export_audit(
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ViewAudit)?;
     let filter = audit_filter(&query)?;
-    let rows = load_audit(&app, &filter).await?;
+    // A fixed upper ID keeps new audit events from extending an active export.
+    let until: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM audit")
+        .fetch_one(&app.db)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let until = until.unwrap_or(i64::MIN);
+    let rows = load_audit(&app, &filter, 0, EXPORT_ROWS, None, until)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let mut bytes = String::from(CSV_HEADER);
+    bytes.push_str(&csv_body(&rows));
+    let body = AuditCsv {
+        app,
+        filter,
+        until,
+        after: rows.last().map(|row| row.id),
+        more: rows.len() == EXPORT_ROWS,
+        bytes: Bytes::from(bytes),
+        pending: None,
+    };
     Ok((
         [(header::CONTENT_TYPE, HeaderValue::from_static("text/csv"))],
-        csv_body(&rows),
+        Body::new(body),
     )
         .into_response())
 }
