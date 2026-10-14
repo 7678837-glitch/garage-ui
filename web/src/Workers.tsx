@@ -1,3 +1,4 @@
+import { Button, Checkbox, Dialog, Select, Table, TextField } from "@radix-ui/themes";
 import { OperationNodeSelection } from "./ClusterNodes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
@@ -189,50 +190,65 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
   const [variable, setVariable] = useState("");
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const save = useMutation({
-    onSuccess: () => setOpen(false),
+    onSuccess: () => { setOpen(false); setEditorOpen(false); },
     mutationFn: (assignment: VariableAssignment) => saveWorkerVariable(nodeId, assignment),
   });
   const ready = variable.length > 0 && value.length > 0 && !save.isPending;
 
   return (
-    <div className="ui-form max-w-sm">
-      <label className="ui-field">
-        <span className="text-sm">{copy("ui.variable")}</span>
-        <input
-          className="ui-input"
-          value={variable}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => {
-            setVariable(event.target.value);
-          }}
-        />
-      </label>
-      <label className="ui-field">
-        <span className="text-sm">{copy("ui.value")}</span>
-        <input
-          className="ui-input"
-          value={value}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => {
-            setValue(event.target.value);
-          }}
-        />
-      </label>
-      <button
-        className="ui-button"
-        type="button"
-        disabled={!ready}
-        onClick={() => {
-          if (!ready) {
-            return;
-          }
-          setOpen(true);
-        }}
-      >
-        {copy("ui.save.variable")}</button>
+    <div className="ui-page">
+      <Dialog.Root open={editorOpen} onOpenChange={(next) => {
+        if (!save.isPending && !open) setEditorOpen(next);
+      }}>
+        <Dialog.Trigger><Button type="button" size="2" variant="soft" color="gray">{copy("ui.save.variable")}</Button></Dialog.Trigger>
+        <Dialog.Content maxWidth="440px"
+          onEscapeKeyDown={(event) => { if (save.isPending || open) event.preventDefault(); }}
+          onPointerDownOutside={(event) => { if (save.isPending || open) event.preventDefault(); }}>
+          <Dialog.Title>{copy("ui.variable")}</Dialog.Title>
+          <Dialog.Description size="2">{copy("ui.this.changes.a.worker.variable.on.the.node")}</Dialog.Description>
+          <div className="ui-form">
+            <label className="ui-field">
+              <span className="text-sm">{copy("ui.variable")}</span>
+              <TextField.Root size="2" disabled={save.isPending || open}
+                value={variable}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => {
+                  setVariable(event.target.value);
+                }}
+              />
+            </label>
+            <label className="ui-field">
+              <span className="text-sm">{copy("ui.value")}</span>
+              <TextField.Root size="2" disabled={save.isPending || open}
+                value={value}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                }}
+              />
+            </label>
+            <Button size="2" variant="solid" color="orange"
+              type="button"
+              disabled={!ready}
+              onClick={() => {
+                if (!ready) {
+                  return;
+                }
+                setEditorOpen(false);
+                setOpen(true);
+              }}
+            >
+              {copy("ui.save.variable")}</Button>
+            <div className="ui-actions">
+              <Dialog.Close><Button type="button" size="2" variant="soft" color="gray" disabled={save.isPending || open}>{copy("ui.cancel")}</Button></Dialog.Close>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Root>
       {save.error instanceof Error ? <p role="alert">{save.error.message}</p> : null}
       {save.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {save.data !== undefined ? <p>{save.data}</p> : null}
@@ -244,7 +260,9 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
           scope={value}
           consequence={`${copy("ui.this.changes.a.worker.variable.on.the.node")}${save.error instanceof Error ? ` ${save.error.message}` : ""}`}
           onCancel={() => {
+            if (save.isPending) return;
             setOpen(false);
+            setEditorOpen(true);
           }}
           onConfirm={() => {
             const assignment = { variable, value };
@@ -317,43 +335,61 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
   const client = useQueryClient();
   const [option, setOption] = useState<RepairOption>(REPAIR_OPTIONS[0]);
   const [open, setOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const repair = useMutation({
     mutationFn: (body: RepairBody) => postRepair(nodeId, body),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["nodes", nodeId] }); setOpen(false); },
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["nodes", nodeId] }); setOpen(false); setEditorOpen(false); },
   });
   const failure = repair.error instanceof Error ? repair.error.message : copy("ui.repair.failed");
 
   return (
-    <div className="ui-form max-w-sm">
-      <label className="ui-field">
-        <span className="text-sm">{copy("ui.repair.type")}</span>
-        <select
-          className="ui-input"
-          value={option.value}
-          onChange={(event) => {
-            const next = REPAIR_OPTIONS.find((item) => item.value === event.target.value);
-            if (!next) {
-              return;
-            }
-            setOption(next);
-          }}
-        >
-          {REPAIR_OPTIONS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {translate(item.label)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button
-        className="ui-button"
-        type="button"
-        disabled={repair.isPending}
-        onClick={() => {
-          setOpen(true);
-        }}
-      >
-        {copy("ui.start.repair")}</button>
+    <div className="ui-page">
+      <Dialog.Root open={editorOpen} onOpenChange={(next) => {
+        if (!repair.isPending && !open) setEditorOpen(next);
+      }}>
+        <Dialog.Trigger><Button type="button" size="2" variant="soft" color="gray">{copy("ui.start.repair")}</Button></Dialog.Trigger>
+        <Dialog.Content maxWidth="440px"
+          onEscapeKeyDown={(event) => { if (repair.isPending || open) event.preventDefault(); }}
+          onPointerDownOutside={(event) => { if (repair.isPending || open) event.preventDefault(); }}>
+          <Dialog.Title>{copy("ui.start.repair")}</Dialog.Title>
+          <Dialog.Description size="2">{copy("ui.this.starts.a.repair.on.the.node")}</Dialog.Description>
+          <div className="ui-form">
+            <label className="ui-field">
+              <span className="text-sm">{copy("ui.repair.type")}</span>
+              <Select.Root size="2"
+                value={option.value}
+                disabled={repair.isPending || open}
+                onValueChange={(value) => {
+                  const next = REPAIR_OPTIONS.find((item) => item.value === value);
+                  if (!next) {
+                    return;
+                  }
+                  setOption(next);
+                }}
+              >
+                <Select.Trigger aria-label={copy("ui.repair.type")} />
+                <Select.Content>
+                  {REPAIR_OPTIONS.map((item) => (
+                    <Select.Item key={item.value} value={item.value}>{translate(item.label)}</Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
+            </label>
+            <Button size="2" variant="solid" color="orange"
+              type="button"
+              disabled={repair.isPending}
+              onClick={() => {
+                setEditorOpen(false);
+                setOpen(true);
+              }}
+            >
+              {copy("ui.start.repair")}</Button>
+            <div className="ui-actions">
+              <Dialog.Close><Button type="button" size="2" variant="soft" color="gray" disabled={repair.isPending || open}>{copy("ui.cancel")}</Button></Dialog.Close>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Root>
       {repair.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {repair.isError ? <p>{failure}</p> : null}
       {repair.isSuccess ? <p>{copy("ui.repair.started")}</p> : null}
@@ -365,7 +401,9 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
           scope={translate(option.label)}
           consequence={`${copy("ui.this.starts.a.repair.on.the.node")}${repair.error instanceof Error ? ` ${repair.error.message}` : ""}`}
           onCancel={() => {
+            if (repair.isPending) return;
             setOpen(false);
+            setEditorOpen(true);
           }}
           onConfirm={() => {
             const body = option.body;
@@ -404,9 +442,9 @@ function WorkerDetail({ nodeId, worker, request, focusedRequest }: {
       {detail.data !== undefined ? <p role="status">{detail.data === null ? translate("No error reported") : detail.data}</p> : null}
       {failure ? <>
         <p role="alert">{failure.message}{failure.code ? ` ${failure.code}` : ""}</p>
-        <button className="ui-button" type="button" disabled={detail.isFetching} onClick={() => { void detail.refetch(); }}>
+        <Button size="2" variant="soft" color="gray" type="button" disabled={detail.isFetching} onClick={() => { void detail.refetch(); }}>
           {copy("ui.retry")}
-        </button>
+        </Button>
       </> : null}
     </div>
   );
@@ -435,29 +473,23 @@ function WorkersList({ nodeId }: { nodeId: string }) {
       <p className="ui-muted ui-identifier">{nodeId === "*" ? copy("operations.allNodes") : nodeId}</p>
       <div className="ui-toolbar text-sm">
         <label className="ui-checkbox-field">
-          <input
-            type="checkbox"
+          <Checkbox size="2"
             checked={filter.busyOnly}
-            onChange={(event) => {
-              setFilter((current) => ({ ...current, busyOnly: event.target.checked }));
-            }}
+            onCheckedChange={(checked) => setFilter((current) => ({ ...current, busyOnly: checked === true }))}
           />
           {copy("ui.busy.only")}</label>
         <label className="ui-checkbox-field">
-          <input
-            type="checkbox"
+          <Checkbox size="2"
             checked={filter.errorOnly}
-            onChange={(event) => {
-              setFilter((current) => ({ ...current, errorOnly: event.target.checked }));
-            }}
+            onCheckedChange={(checked) => setFilter((current) => ({ ...current, errorOnly: checked === true }))}
           />
           {copy("ui.errors.only")}</label>
       </div>
       <details className="ui-disclosure">
         <summary>{copy("tab.maintenance")}</summary>
-        <div className="grid gap-4">
-          <details className="ui-disclosure"><summary>{copy("ui.start.repair")}</summary><NodeRepair nodeId={nodeId} /></details>
-          <details className="ui-disclosure"><summary>{copy("ui.variable")}</summary><WorkerVariable nodeId={nodeId} /></details>
+        <div className="ui-actions">
+          <NodeRepair nodeId={nodeId} />
+          <WorkerVariable nodeId={nodeId} />
         </div>
       </details>
       {view.busy ? (
@@ -468,14 +500,13 @@ function WorkersList({ nodeId }: { nodeId: string }) {
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void workers.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {view.empty ? <p>{copy("ui.there.are.no.workers")}</p> : null}
@@ -484,25 +515,25 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           <div key={group.nodeId} className="grid gap-2">
             {nodeId === "*" ? <p className="ui-identifier">{group.nodeId}</p> : null}
             <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Worker list")}>
-              <table className="ui-table ui-table-records ui-workers-table" role="table">
-                <thead>
-                  <tr role="row">
-                    <th className="py-2 pr-3 font-medium" scope="col">
-                      {copy("ui.name")}</th>
-                    <th className="py-2 pr-3 font-medium" scope="col">
-                      {copy("ui.state")}</th>
-                    <th className="py-2 pr-3 font-medium" scope="col">
-                      {copy("ui.errors")}</th>
-                    <th className="py-2 pr-3 font-medium" scope="col">
-                      {copy("ui.progress")}</th>
-                    <th className="relative py-2 font-medium" scope="col">
+              <Table.Root className="ui-table ui-table-records ui-workers-table">
+                <Table.Header>
+                  <Table.Row role="row">
+                    <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                      {copy("ui.name")}</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                      {copy("ui.state")}</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                      {copy("ui.errors")}</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                      {copy("ui.progress")}</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell className="relative py-2 font-medium" scope="col">
                       <span className="sr-only">{copy("ui.details")}</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </Table.ColumnHeaderCell>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
                   {group.rows.map((worker) => (
-                    <tr key={worker.id} role="row">
+                    <Table.Row key={worker.id} role="row">
                       <DataCell label={copy("ui.name")} kind="identity">
                         <span className="block">{worker.name}</span>
                         <span className="block ui-muted ui-identifier">{translate("Worker ID")}: {worker.id}</span>
@@ -511,8 +542,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                       <DataCell label={copy("ui.errors")} className="ui-worker-errors">{worker.errors}</DataCell>
                       <DataCell label={copy("ui.progress")} className={`ui-worker-progress${worker.progress.length === 0 ? " ui-worker-progress-empty" : ""}`}>{worker.progress}</DataCell>
                       <DataCell label={copy("ui.details")} kind="actions">
-                        <button
-                          className="ui-button ui-button-quiet"
+                        <Button size="2" variant="soft" color="gray"
                           type="button"
                           aria-label={`${fill(copy("ui.details.2"), { id: worker.id })}: ${worker.name}`}
                           aria-expanded={selected?.nodeId === group.nodeId && selected.workerId === worker.id}
@@ -521,15 +551,15 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                           }}
                         >
                           {copy("ui.details")}
-                        </button>
+                        </Button>
                         {selected?.nodeId === group.nodeId && selected.workerId === worker.id ? (
                           <WorkerDetail key={selected.request} nodeId={group.nodeId} worker={worker} request={selected.request} focusedRequest={focusedRequest} />
                         ) : null}
                       </DataCell>
-                    </tr>
+                    </Table.Row>
                   ))}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table.Root>
             </div>
           </div>
         ),

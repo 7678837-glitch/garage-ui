@@ -1,3 +1,4 @@
+import { Button, Checkbox, DropdownMenu, Select, Table, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
@@ -536,17 +537,16 @@ function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (ha
     <>
       <label className="block break-all">
         <span className="text-sm">{copy("ui.block.hash")}</span>
-        <input
+        <TextField.Root size="2"
           aria-label={fill(copy("ui.block.hash.for"), { id })}
-          className="ui-input"
           value={hash}
           onChange={(event) => {
             setHash(event.target.value);
           }}
         />
       </label>
-      <button
-        className="ui-button ui-button-danger max-w-full break-all"
+      <Button size="2" variant="soft" color="red"
+        className="max-w-full break-all"
         aria-label={fill(copy("ui.purge.blocks.on"), { id })}
         disabled={pending}
         type="button"
@@ -558,7 +558,7 @@ function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (ha
           onAsk(next);
         }}
       >
-        {copy("ui.purge")}</button>
+        {copy("ui.purge")}</Button>
     </>
   );
 }
@@ -711,12 +711,12 @@ export function OperationNodeSelection({ route, all = false }: {
       {nodes.isPending ? <p role="status">{copy("ui.loading.nodes")}</p> : null}
       {nodes.error instanceof Error && !isGarageDown(nodes.error) ? <p role="alert">{nodes.error.message}</p> : null}
       {shownCode(nodes.error) ? <p className="ui-identifier">{shownCode(nodes.error)}</p> : null}
-      {nodes.isError ? <button className="ui-button" onClick={() => { void nodes.refetch(); }}>{copy("ui.retry.nodes")}</button> : null}
+      {nodes.isError ? <Button size="2" variant="soft" color="gray" onClick={() => { void nodes.refetch(); }}>{copy("ui.retry.nodes")}</Button> : null}
       <div className="ui-actions">
-        {all ? <a className="ui-button" href="#workers/*" onClick={(event) => navigate(event, "#workers/*")}>{translate("All nodes")}</a> : null}
+        {all ? <Button asChild size="2" variant="soft" color="gray"><a href="#workers/*" onClick={(event) => navigate(event, "#workers/*")}>{translate("All nodes")}</a></Button> : null}
         {nodes.data?.nodes.map(node => {
           const next = `#${route}/${encodeURIComponent(node.id)}`;
-          return <a className="ui-button" key={node.id} href={next} aria-label={node.hostname ?? fill(copy("ui.node"), { id: node.id })} onClick={(event) => navigate(event, next)}>{node.hostname ?? (node.id.length > 15 ? `${node.id.slice(0, 8)}…${node.id.slice(-6)}` : node.id)}</a>;
+          return <Button key={node.id} asChild size="2" variant="soft" color="gray"><a href={next} aria-label={node.hostname ?? fill(copy("ui.node"), { id: node.id })} onClick={(event) => navigate(event, next)}>{node.hostname ?? (node.id.length > 15 ? `${node.id.slice(0, 8)}…${node.id.slice(-6)}` : node.id)}</a></Button>;
         })}
       </div>
       {nodes.isSuccess && nodes.data.nodes.length === 0 ? <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p> : null}
@@ -854,7 +854,7 @@ export function ClusterNodes() {
             goHash(hashForDetail({ resource: "node", id: nodeDetail.id, tab }));
           }}
         >
-          <div className="ui-actions"><a className="ui-button" href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a><a className="ui-button" href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></div>
+          <div className="ui-actions"><Button asChild size="2" variant="soft" color="gray"><a href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a></Button><Button asChild size="2" variant="soft" color="gray"><a href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></Button></div>
           {openedNode && nodeDetail.tab === "information" ? (
             <>
               <dl className="ui-panel grid gap-4 sm:grid-cols-2">
@@ -863,15 +863,14 @@ export function ClusterNodes() {
                 <div><dt>{copy("ui.status")}</dt><dd><span className="ui-status">{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</span>{openedNode.draining ? <p>{copy("ui.draining")}</p> : null}</dd></div>
                 <div><dt>{copy("ui.capacity")}</dt><dd>{openedNode.capacity !== null ? <CompactCapacityText digits={openedNode.capacity} /> : "—"}</dd></div>
               </dl>
-              <button
-                className="ui-button"
+              <Button size="2" variant="soft" color="gray"
                 disabled={snapshot.isPending}
                 type="button"
                 onClick={() => {
                   if (!snapshot.isPending) snapshot.mutate(openedNode.id);
                 }}
               >
-                {copy("ui.snapshot.metadata")}</button>
+                {copy("ui.snapshot.metadata")}</Button>
               {snapshot.isSuccess && snapshot.variables === openedNode.id ? (
                 <p>{copy("ui.metadata.snapshot.started")}</p>
               ) : null}
@@ -899,8 +898,7 @@ export function ClusterNodes() {
       <div className="ui-toolbar">
         <label className="ui-field">
           <span className="text-sm">{copy("ui.filter.nodes")}</span>
-          <input
-            className="ui-input"
+          <TextField.Root size="2"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -911,21 +909,23 @@ export function ClusterNodes() {
         </label>
         <label className="ui-field">
           <span className="text-sm">{copy("ui.sort.nodes")}</span>
-          <select
-            className="ui-input"
+          <Select.Root size="2"
             value={query.sort}
-            onChange={(event) => {
+            onValueChange={(value) => {
               const next = {
                 filter: query.filter,
-                sort: nodeSortFrom(event.target.value),
+                sort: nodeSortFrom(value),
               };
               setQuery(next);
               writeNodeQuery(next);
             }}
           >
-            <option value="id">Id</option>
-            <option value="hostname">{copy("ui.hostname")}</option>
-          </select>
+            <Select.Trigger aria-label={copy("ui.sort.nodes")} />
+            <Select.Content>
+              <Select.Item value="id">Id</Select.Item>
+              <Select.Item value="hostname">{copy("ui.hostname")}</Select.Item>
+            </Select.Content>
+          </Select.Root>
         </label>
         <p>{copy("ui.default.order.is.id")}</p>
       </div>
@@ -938,14 +938,13 @@ export function ClusterNodes() {
         <>
           <p>{message}</p>
           {code ? <p>{code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void nodes.refetch();
             }}
           >
-            {copy("ui.retry.nodes")}</button>
+            {copy("ui.retry.nodes")}</Button>
         </>
       ) : null}
       {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
@@ -954,40 +953,40 @@ export function ClusterNodes() {
       {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>
       <div className="grid gap-2">
         <div className="ui-actions">
-          <button
-            className="ui-button max-w-full whitespace-normal"
+          <Button size="2" variant="soft" color="gray"
+            className="max-w-full whitespace-normal"
             disabled={snapshot.isPending}
             type="button"
             onClick={() => {
               if (!snapshot.isPending) snapshot.mutate("*");
             }}
           >
-            {copy("ui.snapshot.every.node")}</button>
-          <button
-            className="ui-button max-w-full whitespace-normal"
+            {copy("ui.snapshot.every.node")}</Button>
+          <Button size="2" variant="soft" color="gray"
+            className="max-w-full whitespace-normal"
             type="button"
             onClick={() => {
               setLayoutHistory({phase:"loading"});
               void loadLayoutHistory().then(setLayoutHistory).catch((error: unknown) => setLayoutHistory({phase:"failed",message:error instanceof Error ? error.message : historyFailedMessage()}));
             }}
           >
-            {copy("ui.layout.history")}</button>
+            {copy("ui.layout.history")}</Button>
         </div>
         {snapshot.isSuccess && snapshot.variables === "*" ? (
           <p>{copy("ui.metadata.snapshot.started")}</p>
         ) : null}
         <div className="ui-actions">
-          <button
-            className="ui-button max-w-full whitespace-normal"
+          <Button size="2" variant="soft" color="gray"
+            className="max-w-full whitespace-normal"
             type="button"
             onClick={() => {
               setLayoutPreview({phase:"loading"});
               void previewLayout().then(setLayoutPreview).catch((error: unknown) => setLayoutPreview({phase:"failed",message:error instanceof Error ? error.message : previewFailedMessage()}));
             }}
           >
-            {copy("ui.preview.layout")}</button>
-          <button
-            className="ui-button ui-button-danger max-w-full whitespace-normal"
+            {copy("ui.preview.layout")}</Button>
+          <Button size="2" variant="soft" color="red"
+            className="max-w-full whitespace-normal"
             type="button"
             disabled={layoutWriting || layoutPreview.phase !== "ready" || nextLayoutVersion === null}
             onClick={() => {
@@ -997,29 +996,27 @@ export function ClusterNodes() {
               setApplyOpen(true);
             }}
           >
-            {copy("ui.apply.layout")}</button>
-          <button
-            className="ui-button max-w-full whitespace-normal"
+            {copy("ui.apply.layout")}</Button>
+          <Button size="2" variant="soft" color="gray"
+            className="max-w-full whitespace-normal"
             disabled={layoutWriting}
             type="button"
             onClick={() => {
               if (!layoutWriting) revert.mutate();
             }}
           >
-            {copy("ui.revert.staged.changes")}</button>
+            {copy("ui.revert.staged.changes")}</Button>
         </div>
         <div className="ui-actions">
           <label className="ui-checkbox-field text-sm">
-            <input
-              type="checkbox"
+            <Checkbox size="2"
               checked={allowMissingData}
-              onChange={(event) => {
-                setAllowMissingData(event.target.checked);
-              }}
+              disabled={layoutWriting || skipStep !== null}
+              onCheckedChange={(checked) => setAllowMissingData(checked === true)}
             />
             {copy("ui.allow.missing.data")}</label>
-          <button
-            className="ui-button ui-button-danger max-w-full whitespace-normal"
+          <Button size="2" variant="soft" color="red"
+            className="max-w-full whitespace-normal"
             type="button"
             disabled={layoutWriting || layoutVersion === null}
             onClick={() => {
@@ -1029,7 +1026,7 @@ export function ClusterNodes() {
               setSkipStep("risk");
             }}
           >
-            {copy("ui.skip.dead.nodes")}</button>
+            {copy("ui.skip.dead.nodes")}</Button>
         </div>
         {layoutPreview.phase === "loading" || layoutHistory.phase === "loading" ? <p role="status">{copy("ui.working")}</p> : null}
         {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
@@ -1060,20 +1057,19 @@ export function ClusterNodes() {
       <form className="ui-form" onSubmit={submit}>
         <label className="ui-field">
           <span className="text-sm">{copy("ui.node.address")}</span>
-          <input
-            className="ui-input"
+          <TextField.Root size="2"
             value={address}
             onChange={(event) => setAddress(event.target.value)}
           />
         </label>
         <div className="ui-actions">
-          <button
-            className="ui-button ui-button-primary max-w-full whitespace-normal"
+          <Button size="2" variant="solid" color="orange"
+            className="max-w-full whitespace-normal"
             type="submit"
             disabled={trimmed.length === 0 || connect.isPending}
           >
             {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
-          </button>
+          </Button>
         </div>
       </form>
       {connect.isError ? <p>{fill(copy("ui.connect"), { connectFailure: connectFailure })}</p> : null}
@@ -1090,16 +1086,16 @@ export function ClusterNodes() {
 </details> : null}
       {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={translate("Node list")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table">
-            <thead><tr role="row">
-              <th scope="col">{copy("ui.hostname")}</th>
-              <th scope="col">{copy("ui.status")}</th>
-              <th scope="col">{copy("ui.capacity")}</th>
-              <th scope="col">{copy("tab.maintenance")}</th>
-            </tr></thead>
-            <tbody role="rowgroup">
+          <Table.Root className="ui-table ui-table-records">
+            <Table.Header><Table.Row role="row">
+              <Table.ColumnHeaderCell scope="col">{copy("ui.hostname")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.status")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.capacity")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("tab.maintenance")}</Table.ColumnHeaderCell>
+            </Table.Row></Table.Header>
+            <Table.Body role="rowgroup">
           {shown.map((node) => (
-            <tr key={node.id} role="row">
+            <Table.Row key={node.id} role="row">
               <DataCell label={copy("ui.hostname")} kind="identity"><a aria-label={`${node.hostname ?? "—"} · ${fill(copy("ui.node"), { id: node.id })}`} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a>
                 {node.id.length > 15 ? <details className="ui-identity-details"><summary className="ui-identifier">{node.id.slice(0, 8)}…{node.id.slice(-6)} <span className="ui-muted">{copy("common.fullId")}</span></summary><code className="ui-identifier">{node.id}</code></details> : <p className="ui-identifier">{node.id}</p>}
                 {node.addr !== null ? <p className="ui-muted ui-identifier">{node.addr}</p> : null}
@@ -1112,10 +1108,13 @@ export function ClusterNodes() {
               <DataCell label={copy("ui.capacity")}>{node.capacity !== null ? <CompactCapacityText digits={node.capacity} /> : "—"}</DataCell>
               <DataCell label={copy("tab.maintenance")} kind="actions" className="ui-record-actions-wide"><details className="ui-disclosure">
                 <summary>{copy("tab.maintenance")}</summary>
-                <div className="ui-actions">
-                  <a className="ui-button" href={`#workers/${encodeURIComponent(node.id)}`}>{copy("nav.workers")}</a>
-                  <a className="ui-button" href={`#block-errors/${encodeURIComponent(node.id)}`}>{copy("nav.blockErrors")}</a>
-                </div>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger><Button size="2" variant="soft" color="gray">{copy("ui.details")}<DropdownMenu.TriggerIcon /></Button></DropdownMenu.Trigger>
+                  <DropdownMenu.Content>
+                    <DropdownMenu.Item asChild><a href={`#workers/${encodeURIComponent(node.id)}`}>{copy("nav.workers")}</a></DropdownMenu.Item>
+                    <DropdownMenu.Item asChild><a href={`#block-errors/${encodeURIComponent(node.id)}`}>{copy("nav.blockErrors")}</a></DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
               {node.capacity !== null ? (
                 <CapacityField
                   pending={layoutWriting}
@@ -1133,10 +1132,10 @@ export function ClusterNodes() {
                 }}
               />
               </details></DataCell>
-            </tr>
+            </Table.Row>
           ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table.Root>
         </div>
       ) : null}
       {purgeTarget !== null ? (

@@ -1,7 +1,24 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+
+function render(ui: Parameters<typeof renderBase>[0]) {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  return renderBase(<Theme>{ui}</Theme>);
+}
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+
+function chooseOption(label: string, name: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name }));
+}
 
 afterEach(() => {
   cleanup();
@@ -552,10 +569,11 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
     nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
   ]);
   expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("APPLE");
-  const sort = screen.getByLabelText("Sort nodes") as HTMLSelectElement;
-  expect(sort.value).toBe("id");
-  expect(Array.from(sort.options).map((option) => option.value)).toEqual(["id", "hostname"]);
-  expect(Array.from(sort.options).map((option) => option.text)).toEqual(["Id", "Hostname"]);
+  const sort = screen.getByRole("combobox", { name: "Sort nodes" });
+  expect(sort.textContent).toBe("Id");
+  fireEvent.keyDown(sort, { key: "ArrowDown" });
+  expect(screen.getAllByRole("option").map(option => option.textContent)).toEqual(["Id", "Hostname"]);
+  fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
   expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
   expect(screen.queryByText("Only loaded rows")).toBeNull();
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
@@ -581,7 +599,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
-  fireEvent.change(screen.getByLabelText("Sort nodes"), { target: { value: "hostname" } });
+  chooseOption("Sort nodes", "Hostname");
   expect(nodeCardText()).toEqual([
     nodeCard("n-c", "n-cDown"),
     nodeCard("n-z", "n-zDown"),
@@ -618,7 +636,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   expect(screen.queryByText("Nodes are unavailable")).toBeNull();
   expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("missing");
-  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByRole("combobox", { name: "Sort nodes" }).textContent).toBe("Id");
   expect(window.location.hash).toBe("#nodes/stay");
   expect(statusCalls()).toBe(1);
 
@@ -626,7 +644,7 @@ test("filters loaded nodes from the query string and keeps that choice in the ad
     window.history.pushState(null, "", "/?nodesSort=capacity&keep=1#nodes/stay");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
-  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByRole("combobox", { name: "Sort nodes" }).textContent).toBe("Id");
   expect(nodeCardText()).toEqual([
     nodeCard("n-b", "n-bApple10.0.0.2:3901v2.4.1Up"),
     nodeCard("n-a", "n-aapple10.0.0.3:3901v2.4.1Up"),
@@ -682,7 +700,7 @@ test("shows the node list code and retries only cluster status", async () => {
     "abcd@127.0.0.1:3901",
   );
   expect((screen.getByLabelText("Filter nodes") as HTMLInputElement).value).toBe("");
-  expect((screen.getByLabelText("Sort nodes") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByRole("combobox", { name: "Sort nodes" }).textContent).toBe("Id");
   expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
   expect(callsFor(fetchMock, "/api/cluster/status")).toBe(statusSeen + 1);
   expect(callsFor(fetchMock, "/api/cluster/health")).toBe(healthSeen);
@@ -1079,7 +1097,7 @@ test("skip dead nodes passes the current version and confirms when data may be l
     fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/skip-dead-nodes");
   const allow = screen.getByRole("checkbox", { name: "Allow missing data" }) as HTMLInputElement;
   const skip = screen.getByRole("button", { name: "Skip dead nodes" });
-  expect(allow.checked).toBe(false);
+  expect(allow.getAttribute("aria-checked")).toBe("false");
   expect(skipPosts()).toHaveLength(0);
   expect(screen.queryByText("Data may be lost.")).toBeNull();
 
@@ -1108,7 +1126,7 @@ test("skip dead nodes passes the current version and confirms when data may be l
   expect(new Headers(kept?.headers).get("x-confirm")).toBe("yes");
 
   fireEvent.click(allow);
-  expect(allow.checked).toBe(true);
+  expect(allow.getAttribute("aria-checked")).toBe("true");
   expect(skipPosts()).toHaveLength(1);
   fireEvent.click(skip);
   expect(screen.queryByText("Data may be lost.")).toBeNull();
@@ -1220,7 +1238,7 @@ test("node records retain capacity editing and maintenance in the same semantic 
   renderApp();
   const identity = await screen.findByText("node-up");
   const row = identity.closest("tr");
-  expect(row?.closest("table")?.classList.contains("ui-table-records")).toBe(true);
+  expect(row?.closest(".ui-table-records") !== null).toBe(true);
   const disclosure = row?.querySelector('[data-kind="actions"] details') as HTMLDetailsElement;
   expect(disclosure.querySelector("summary")?.textContent).toBe("Maintenance");
   disclosure.open = true;

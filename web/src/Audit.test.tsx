@@ -1,8 +1,18 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { Audit, auditSearch } from "./Audit";
+
+function render(ui: Parameters<typeof renderBase>[0]) {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  return renderBase(<Theme>{ui}</Theme>);
+}
 
 afterEach(() => {
   cleanup();

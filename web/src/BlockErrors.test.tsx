@@ -1,9 +1,19 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { BlockErrors } from "./BlockErrors";
 import { blockErrorsNodeId } from "./Nav";
+
+function render(ui: Parameters<typeof renderBase>[0]) {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  return renderBase(<Theme>{ui}</Theme>);
+}
 
 afterEach(() => {
   cleanup();
@@ -416,7 +426,7 @@ test("block records keep every diagnostic field and concise actions within one s
   stubAdminBlockErrors();
   renderApp();
   const row = (await screen.findByText("aa11")).closest("tr");
-  expect(row?.closest("table")?.classList.contains("ui-table-records")).toBe(true);
+  expect(row?.closest(".ui-table-records") !== null).toBe(true);
   expect(row?.querySelectorAll('[data-kind="metadata"]')).toHaveLength(4);
   const retry = screen.getByRole("button", { name: "Retry aa11" });
   expect(retry.textContent).toBe("Retry");

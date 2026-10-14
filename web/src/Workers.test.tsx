@@ -1,9 +1,26 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderBase, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { workersNodeId } from "./Nav";
 import { Workers } from "./Workers";
+
+function render(ui: Parameters<typeof renderBase>[0]) {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  return renderBase(<Theme>{ui}</Theme>);
+}
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+
+function chooseOption(label: string, name: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name }));
+}
 
 afterEach(() => {
   cleanup();
@@ -207,9 +224,8 @@ test("an admin on #workers/n1 starts a tables repair after typing n1", async () 
   );
   renderApp();
   expect(await screen.findByText("block_resync")).toBeTruthy();
-  fireEvent.change(screen.getByRole("combobox", { name: "Repair type" }), {
-    target: { value: "tables" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+    chooseOption("Repair type", "tables");
   fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
   const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   expect(confirm.disabled).toBe(true);
@@ -285,9 +301,8 @@ test("an admin on #workers/n1 posts scrub start, pause, resume, and cancel after
   expect(await screen.findByText("block_resync")).toBeTruthy();
   const commands = ["start", "pause", "resume", "cancel"] as const;
   for (const command of commands) {
-    fireEvent.change(screen.getByRole("combobox", { name: "Repair type" }), {
-      target: { value: `scrub:${command}` },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+    chooseOption("Repair type", `scrub ${command}`);
     fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
     const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
@@ -441,10 +456,11 @@ test("saving scrub_tranquility sends the new value after typing its name", async
   renderApp();
   expect(await screen.findByText("block_resync")).toBeTruthy();
   expect(screen.getAllByText("3").map((node) => node.textContent)).toEqual(["3"]);
-  fireEvent.change(screen.getByLabelText("Variable"), { target: { value: "scrub_tranquility" } });
-  fireEvent.change(screen.getByLabelText("Value"), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
-  expect(screen.getByText("This changes a worker variable on the node.")).toBeTruthy();
+  fireEvent.change(screen.getByRole("textbox", { name: "Variable" }), { target: { value: "scrub_tranquility" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Value" }), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
+  expect(screen.getByRole("dialog", { name: "Confirm scrub_tranquility" }).textContent).toContain("This changes a worker variable on the node.");
   const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   expect(confirm.disabled).toBe(true);
   expect(writes).toEqual([]);
@@ -600,9 +616,8 @@ test("starting repair on #workers/* posts tables after typing the star", async (
   expect(screen.getByText("block_resync")).toBeTruthy();
   expect(screen.getByText("n2")).toBeTruthy();
   expect(screen.getByText("block_rc")).toBeTruthy();
-  fireEvent.change(screen.getByRole("combobox", { name: "Repair type" }), {
-    target: { value: "tables" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+    chooseOption("Repair type", "tables");
   fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
   const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   expect(confirm.disabled).toBe(true);
@@ -885,4 +900,58 @@ test.each([undefined, {}, { message: 4 }])("missing or malformed worker last err
   expect(await within(panel).findByRole("alert")).toHaveProperty("textContent", "Workers are unavailable");
   expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(within(panel).queryByText("No error reported")).toBeNull();
+});
+
+
+test("canceling variable confirmation returns to the unchanged draft and closing restores its trigger", async () => {
+  const fetchMock = vi.fn(async () => json([workerRow]));
+  vi.stubGlobal("fetch", fetchMock);
+  renderWorkers();
+  await screen.findByText("block_resync");
+  const trigger = screen.getByRole("button", { name: "Save variable" });
+  fireEvent.click(trigger);
+  fireEvent.change(screen.getByRole("textbox", { name: "Variable" }), { target: { value: "scrub_tranquility" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Value" }), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save variable" }));
+  expect(screen.getByRole("dialog", { name: "Confirm scrub_tranquility" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const editor = screen.getByRole("dialog", { name: "Variable" });
+  expect((within(editor).getByRole("textbox", { name: "Variable" }) as HTMLInputElement).value).toBe("scrub_tranquility");
+  expect((within(editor).getByRole("textbox", { name: "Value" }) as HTMLInputElement).value).toBe("3");
+  expect(fetchMock.mock.calls).toHaveLength(1);
+  fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("a pending repair cannot be dismissed or submitted twice", async () => {
+  let release: (response: Response) => void = () => {};
+  const repairs: RequestInit[] = [];
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/repair")) {
+      repairs.push(init ?? {});
+      return new Promise<Response>(resolve => { release = resolve; });
+    }
+    return Promise.resolve(json([workerRow]));
+  }));
+  renderWorkers();
+  await screen.findByText("block_resync");
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+  fireEvent.change(screen.getByLabelText("Type n1 to confirm"), { target: { value: "n1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(repairs).toHaveLength(1));
+  const confirmation = screen.getByRole("dialog", { name: "Confirm n1" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(confirmation, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "Confirm n1" })).toBe(confirmation);
+  const pending = within(confirmation).getByRole("button", { name: "Working" }) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  fireEvent.click(pending);
+  expect(repairs).toHaveLength(1);
+  expect(repairs[0]?.body).toBe(JSON.stringify({ repairType: "tables" }));
+  expect(new Headers(repairs[0]?.headers).get("x-confirm")).toBe("yes");
+  release(json(null));
+  await screen.findByText("Repair started.");
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

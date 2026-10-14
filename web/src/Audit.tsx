@@ -1,3 +1,4 @@
+import { Button, Table, TextField } from "@radix-ui/themes";
 import type { CopyKey } from "./copy-en";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -159,8 +160,7 @@ export function Audit() {
         {FILTER_FIELDS.map(([key, label]) => (
           <label className="ui-field" key={key}>
             {translate(label)}
-            <input
-              className="ui-input"
+            <TextField.Root size="2"
               type={key === "from" || key === "to" ? "datetime-local" : "text"}
               step={key === "from" || key === "to" ? 1 : undefined}
               aria-invalid={invalidInputs[key] || undefined}
@@ -176,8 +176,7 @@ export function Audit() {
             />
           </label>
         ))}
-      <button
-        className="ui-button"
+      <Button size="2" variant="soft" color="gray"
         type="button"
         disabled={filterError !== null}
         onClick={() => {
@@ -187,7 +186,7 @@ export function Audit() {
           });
         }}
       >
-        {copy("ui.export.audit")}</button>
+        {copy("ui.export.audit")}</Button>
       </div>
       {filterError ? <p className="ui-alert" role="alert">{filterError}</p> : null}
       {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
@@ -197,40 +196,39 @@ export function Audit() {
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void listed.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {view.empty ? <p>{copy("ui.there.are.no.audit.events")}</p> : null}
       <div className="ui-table-container" role="region" aria-label={translate("Audit events")} tabIndex={0}>
-        <table className="ui-table ui-table-records ui-audit-table" role="table">
-          <thead role="rowgroup">
-            <tr role="row">
+        <Table.Root className="ui-table ui-table-records ui-audit-table">
+          <Table.Header role="rowgroup">
+            <Table.Row role="row">
               {COLUMNS.map((column) => (
-                <th key={column} scope="col">
+                <Table.ColumnHeaderCell key={column} scope="col">
                   {copy(columnLabel[column])}
-                </th>
+                </Table.ColumnHeaderCell>
               ))}
-            </tr>
-          </thead>
-          <tbody role="rowgroup">
+            </Table.Row>
+          </Table.Header>
+          <Table.Body role="rowgroup">
             {items.map((row, index) => (
-              <tr role="row" key={`${row.at}-${row.path}-${index}`}>
+              <Table.Row role="row" key={`${row.at}-${row.path}-${index}`}>
                 {COLUMNS.map((column) => (
                   <DataCell label={copy(columnLabel[column])} kind={column === "at" ? "identity" : "metadata"} className={`ui-audit-${column}${column === "path" || column === "target" ? " ui-identifier" : ""}`} key={column}>
                     {column === "at" ? <ReadableInstantText value={auditInstant(row[column])} /> : String(row[column] ?? "")}
                   </DataCell>
                 ))}
-              </tr>
+              </Table.Row>
             ))}
-          </tbody>
-        </table>
+          </Table.Body>
+        </Table.Root>
       </div>
       <Pagination page={Math.floor(offset / 100) + 1} hasPrevious={offset > 0}
         hasNext={listed.data?.hasMore === true} pending={listed.isFetching || filterError !== null}

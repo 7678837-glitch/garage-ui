@@ -1,3 +1,4 @@
+import { Button, Table } from "@radix-ui/themes";
 import { OperationNodeSelection } from "./ClusterNodes";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -150,30 +151,30 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
           <ResourceIdentity id={info.data.blockHash} />
           <dl><dt>{copy("ui.refcount")}</dt><dd>{info.data.refcount}</dd></dl>
         <div className="ui-table-container" role="region" tabIndex={0} aria-label={copy("ui.block.information")}>
-          <table className="ui-table ui-table-records" role="table" aria-label={copy("ui.block.information")}>
-            <thead>
-              <tr role="row">
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.version")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.ref.deleted")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.version.deleted")}</th>
-                <th className="py-2 font-medium" scope="col">
-                  {copy("ui.garbage.collected")}</th>
-              </tr>
-            </thead>
-            <tbody role="rowgroup">
+          <Table.Root className="ui-table ui-table-records" aria-label={copy("ui.block.information")}>
+            <Table.Header>
+              <Table.Row role="row">
+                <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                  {copy("ui.version")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                  {copy("ui.ref.deleted")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                  {copy("ui.version.deleted")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell className="py-2 font-medium" scope="col">
+                  {copy("ui.garbage.collected")}</Table.ColumnHeaderCell>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body role="rowgroup">
               {info.data.versions.map((version) => (
-                <tr key={version.versionId} role="row">
+                <Table.Row key={version.versionId} role="row">
                   <DataCell label={copy("ui.version")} kind="identity">{version.versionId}</DataCell>
                   <DataCell label={copy("ui.ref.deleted")}>{yesNo(version.refDeleted)}</DataCell>
                   <DataCell label={copy("ui.version.deleted")}>{yesNo(version.versionDeleted)}</DataCell>
                   <DataCell label={copy("ui.garbage.collected")}>{yesNo(version.garbageCollected)}</DataCell>
-                </tr>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table.Root>
         </div>
         </div>
       ) : null}
@@ -226,14 +227,13 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void blockErrors.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {retry.error instanceof Error && !isGarageDown(retry.error) ? (
@@ -247,77 +247,73 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       {view.empty ? <p>{copy("ui.there.are.no.block.errors")}</p> : null}
       {rows.length > 0 ? (
         <>
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={retry.isPending}
             onClick={() => retry.mutate({ all: true })}
           >
-            {copy("ui.retry.all")}</button>
+            {copy("ui.retry.all")}</Button>
           <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Block error list")}>
-            <table className="ui-table ui-table-records" role="table">
-              <thead>
-                <tr role="row">
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.block.hash")}</th>
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.refcount")}</th>
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.error.count")}</th>
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.last.try.seconds.ago")}</th>
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.next.try.in.seconds")}</th>
-                  <th className="py-2 pr-3 font-medium" scope="col">
-                    {copy("ui.retry")}</th>
-                  <th className="py-2 font-medium" scope="col">
-                    {copy("ui.purge")}</th>
-                  <th className="py-2 pl-3 font-medium" scope="col">
-                    {copy("ui.info")}</th>
-                </tr>
-              </thead>
-              <tbody role="rowgroup">
+            <Table.Root className="ui-table ui-table-records">
+              <Table.Header>
+                <Table.Row role="row">
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.block.hash")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.refcount")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.error.count")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.last.try.seconds.ago")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.next.try.in.seconds")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                    {copy("ui.retry")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 font-medium" scope="col">
+                    {copy("ui.purge")}</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell className="py-2 pl-3 font-medium" scope="col">
+                    {copy("ui.info")}</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body role="rowgroup">
                 {rows.map((row) => (
-                  <tr key={row.blockHash} role="row">
+                  <Table.Row key={row.blockHash} role="row">
                     <DataCell label={copy("ui.block.hash")} kind="identity">{row.blockHash}</DataCell>
                     <DataCell label={copy("ui.refcount")}>{row.refcount}</DataCell>
                     <DataCell label={copy("ui.error.count")}>{row.errorCount}</DataCell>
                     <DataCell label={copy("ui.last.try.seconds.ago")}>{row.lastTrySecsAgo}</DataCell>
                     <DataCell label={copy("ui.next.try.in.seconds")}>{row.nextTryInSecs}</DataCell>
                     <DataCell label={copy("ui.retry")} kind="actions">
-                      <button aria-label={fill(copy("ui.retry.2"), { blockHash: row.blockHash })}
-                        className="ui-button"
+                      <Button size="2" variant="soft" color="gray" aria-label={fill(copy("ui.retry.2"), { blockHash: row.blockHash })}
                         type="button"
                         disabled={retry.isPending}
             onClick={() => retry.mutate({ blockHashes: [row.blockHash] })}
                       >
-                        {copy("ui.retry")}</button>
+                        {copy("ui.retry")}</Button>
                     </DataCell>
                     <DataCell label={copy("ui.purge")} kind="actions">
-                      <button aria-label={fill(copy("ui.purge.2"), { blockHash: row.blockHash })}
-                        className="ui-button ui-button-danger"
+                      <Button size="2" variant="soft" color="red" aria-label={fill(copy("ui.purge.2"), { blockHash: row.blockHash })}
                         type="button"
                         disabled={purge.isPending}
                         onClick={() => {
                           setPurgeHash(row.blockHash);
                         }}
                       >
-                        {copy("ui.purge")}</button>
+                        {copy("ui.purge")}</Button>
                     </DataCell>
                     <DataCell label={copy("ui.info")} kind="actions">
-                      <button aria-label={fill(copy("ui.info.2"), { blockHash: row.blockHash })}
-                        className="ui-button"
+                      <Button size="2" variant="soft" color="gray" aria-label={fill(copy("ui.info.2"), { blockHash: row.blockHash })}
                         type="button"
                         onClick={() => {
                           setInfoHash(row.blockHash);
                         }}
                       >
-                        {copy("ui.info")}</button>
+                        {copy("ui.info")}</Button>
                     </DataCell>
-                  </tr>
+                  </Table.Row>
                 ))}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table.Root>
           </div>
           {infoHash !== null ? <BlockInfoPanel nodeId={nodeId} blockHash={infoHash} /> : null}
         </>
