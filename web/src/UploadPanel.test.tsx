@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render as renderTree, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { hashForObjects } from "./Nav";
 import { Objects } from "./Objects";
 import { UploadPanel } from "./UploadPanel";
 import { releaseHash, setFormDirty } from "./unsaved";
@@ -66,6 +67,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   window.onbeforeunload = null;
   document.cookie = "garage_csrf=; Max-Age=0";
   vi.unstubAllGlobals();
@@ -633,4 +635,59 @@ test("departure cancels a dropped directory still being read before any upload s
     deliver?.([]);
   });
   expect(FakeRequest.sent).toHaveLength(0);
+});
+
+test("staying during prefix navigation retains page, selection and active upload; leaving cancels", async () => {
+  window.history.replaceState(null, "", `/${hashForObjects("bkt-1", "")}`);
+  const entry = (key: string) => ({ kind: "object", key, size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    const prefix = url.searchParams.get("prefix") ?? "";
+    const entries = prefix === "folder/" ? [entry("folder/destination.txt")] : url.searchParams.has("next") ? [entry("second.txt"), { kind: "prefix", prefix: "folder/" }] : [entry("first.txt")];
+    return new Response(JSON.stringify({ prefix, entries, next: prefix === "" && !url.searchParams.has("next") ? "page-2" : null }), { status: 200 });
+  }));
+  render(<Objects bucketId="bkt-1" onBack={() => {}} canWrite canTransfer={false} />);
+  await screen.findByRole("button", { name: "first.txt" });
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByRole("button", { name: "second.txt" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select second.txt" }));
+  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  choose(["active.txt"]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "folder/" }));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(screen.getByText("Page 2")).toBeTruthy();
+  expect((screen.getByRole("checkbox", { name: "Select second.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(window.location.hash).toBe(hashForObjects("bkt-1", ""));
+  expect(FakeRequest.sent[0]?.aborted).toBe(false);
+  expect(within(row("active.txt")).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "folder/" }));
+  await screen.findByRole("button", { name: "folder/destination.txt" });
+  expect(FakeRequest.sent[0]?.aborted).toBe(true);
+  expect(row("active.txt").textContent).toContain("Cancelled");
+  expect(screen.getByText("Page 1")).toBeTruthy();
+});
+
+test("staying during breadcrumb navigation retains search and selection during a pending directory read", async () => {
+  window.history.replaceState(null, "", `/${hashForObjects("bkt-1", "folder/")}`);
+  const match = { key: "search.txt", size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).includes("/search?") ? { matches: [match], truncated: false } : { prefix: "", entries: [], next: null }), { status: 200 })));
+  render(<Objects bucketId="bkt-1" onBack={() => {}} canWrite canTransfer={false} />);
+  await screen.findByText("There are no objects. Upload the first object.");
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "search" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select search.txt" }));
+  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  let deliver: ((entries: DropEntry[]) => void) | undefined;
+  dropEntries([{ isFile: false, isDirectory: true, name: "docs", createReader: () => ({ readEntries(done) { deliver = done; } }) }]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  // Leaving the current prefix must guard before clearing local search state.
+  fireEvent.click(screen.getByRole("button", { name: "bkt-1" }));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect((screen.getByLabelText("Search") as HTMLInputElement).value).toBe("search");
+  expect((screen.getByRole("checkbox", { name: "Select search.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect(window.location.search).toContain("objects=search");
+  expect(screen.getByText("Queued · 1")).toBeTruthy();
+  await act(async () => { deliver?.([]); });
 });

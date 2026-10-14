@@ -7,6 +7,7 @@ import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
+import { releaseHash } from "./unsaved";
 import { Pagination } from "./ui";
 import { UploadPanel } from "./UploadPanel";
 
@@ -984,6 +985,8 @@ export function Objects({
     !searching && page && page.next && page.next !== pageToken && !list.isError ? page.next : null;
 
   function openPrefix(nextPrefix: string) {
+    const destination = hashForObjects(bucketId, nextPrefix);
+    if (!releaseHash(destination)) return;
     setCursors([null]);
     setPageIndex(0);
     setDraft("");
@@ -996,7 +999,7 @@ export function Objects({
       picked: [],
       anchor: null,
     }));
-    assignHash(hashForObjects(bucketId, nextPrefix));
+    assignHash(destination);
   }
 
   function pick(key: string, shift: boolean) {
