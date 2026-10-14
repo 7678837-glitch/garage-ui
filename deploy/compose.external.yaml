@@ -11,6 +11,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     depends_on:
       garage-ui-init:
         condition: service_completed_successfully

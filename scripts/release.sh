@@ -9,6 +9,11 @@ fi
 caller_dir=$PWD
 cd "$(dirname "$0")/.."
 version=$(cat VERSION)
+commit=$(git rev-parse --verify HEAD)
+if ! git diff --quiet HEAD --; then
+  echo "Release requires clean tracked source" >&2
+  exit 1
+fi
 out=${1:-/tmp/garage-ui-release/$version}
 case "$out" in
   /*) ;;
@@ -152,10 +157,10 @@ copy_bin() {
   dest=$3
   cid=$(docker create --platform "$platform" "$tag")
   if ! docker cp "$cid:/garage-ui" "$dest"; then
-    docker rm "$cid" >/dev/null || true
+    docker rm -v "$cid" >/dev/null || true
     exit 1
   fi
-  docker rm "$cid" >/dev/null
+  docker rm -v "$cid" >/dev/null
 }
 
 copy_bin linux/amd64 "garage-ui:$version-amd64" "$out/garage-ui-linux-amd64"
@@ -217,9 +222,49 @@ static_one() {
 static_one linux/amd64 "$out/garage-ui-linux-amd64"
 static_one linux/arm64 "$out/garage-ui-linux-arm64"
 
-# Verify the exact final images can start without a loader or writable root.
-docker run --rm --network none --read-only --platform linux/amd64 "garage-ui:$version-amd64" --version
-docker run --rm --network none --read-only --platform linux/arm64 "garage-ui:$version-arm64" --version
+# Verify build identity and runtime restrictions on the exact final images.
+python3 - "$version" "$commit" <<'PY'
+import json
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+version, commit = sys.argv[1:]
+if commit == "unknown":
+    raise SystemExit("Release commit identity must be known")
+if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
+    raise SystemExit("Repository HEAD changed during the release build")
+for arch in ("amd64", "arm64"):
+    image = f"garage-ui:{version}-{arch}"
+    cid = subprocess.check_output([
+        "docker", "run", "-d", "--read-only", "--platform", f"linux/{arch}",
+        "--tmpfs", "/data:rw,uid=65532,gid=65532,mode=700",
+        "--tmpfs", "/tmp:rw", "-p", "127.0.0.1::3909", image,
+    ], text=True).strip()
+    try:
+        info = json.loads(subprocess.check_output(["docker", "inspect", cid]))[0]
+        if info["Config"]["User"] != "65532:65532" or not info["HostConfig"]["ReadonlyRootfs"]:
+            raise SystemExit(f"Runtime restrictions missing for {image}")
+        port = info["NetworkSettings"]["Ports"]["3909/tcp"][0]["HostPort"]
+        url = f"http://127.0.0.1:{port}/healthz"
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                with urllib.request.urlopen(url, timeout=2) as response:
+                    health = json.load(response)
+                break
+            except (urllib.error.URLError, TimeoutError):
+                if time.monotonic() >= deadline:
+                    raise SystemExit(f"Health probe timed out for {image}")
+                time.sleep(1)
+        if health.get("status") != "ok" or health.get("commit") != commit or health.get("version") != version:
+            raise SystemExit(f"Build identity mismatch for {image}: {health!r}")
+        print(f"Verified {image}: commit={commit} version={version}, nonroot, read-only")
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", cid], check=True, stdout=subprocess.DEVNULL)
+PY
 
 python3 - "$out" <<'PY'
 import hashlib

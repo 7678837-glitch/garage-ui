@@ -4,6 +4,8 @@
 # Local image tags are garage-ui:<VERSION>-<architecture>; nothing is pushed.
 set -eu
 cd "$(dirname "$0")/.."
+commit=$(git rev-parse --verify HEAD)
+export GIT_COMMIT=$commit
 
 if [ "$#" -eq 0 ]; then
   (cd web && bun install --frozen-lockfile && bun run build)
@@ -24,5 +26,5 @@ esac
 version=$(cat VERSION)
 for arch in $architectures; do
   docker buildx build --platform "linux/$arch" --no-cache --load \
-    -f deploy/Dockerfile -t "garage-ui:$version-$arch" .
+    --build-arg "GIT_COMMIT=$commit" -f deploy/Dockerfile -t "garage-ui:$version-$arch" .
 done

@@ -16,6 +16,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends musl-tools cmake curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
 COPY rust-toolchain.toml Cargo.toml Cargo.lock VERSION ./
 COPY crates ./crates
 COPY --from=web /src/web/dist ./web/dist
