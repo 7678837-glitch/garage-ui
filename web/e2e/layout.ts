@@ -15,8 +15,20 @@ function ensureDir(): void {
 }
 
 export async function assertRenderedLayout(page: Page, name: string): Promise<void> {
-  const measured = await page.evaluate(() => {
+  const measured = await page.evaluate(async () => {
     const visible = (element: Element) => element.checkVisibility() && element.getClientRects().length > 0;
+    // Portals animate their transform, so measure only after the visible finite animations settle.
+    for (let attempt = 0; ; attempt += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const animations = document.getAnimations().filter((animation) => {
+        const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+        return (animation.playState === "running" || animation.pending) && target instanceof Element && visible(target)
+          && animation.effect?.getComputedTiming().endTime !== Infinity;
+      });
+      if (animations.length === 0) break;
+      if (attempt === 3) throw new Error("Visible layout animations did not settle");
+      await Promise.allSettled(animations.map((animation) => animation.finished));
+    }
     const tables = Array.from(document.querySelectorAll("main table")).filter(visible).flatMap((table) => {
       const row = Array.from(table.querySelectorAll("tbody tr")).find(visible);
       if (!row) return [];
@@ -36,7 +48,8 @@ export async function assertRenderedLayout(page: Page, name: string): Promise<vo
     const controls = innerWidth <= 639 ? Array.from(document.querySelectorAll("button:not([role=checkbox]):not([role=radio]),summary,[role=tab],input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=hidden]),textarea,select"))
       .filter((element) => visible(element) && element.getAttribute("aria-hidden") !== "true")
       .map((element) => ({ label: element.getAttribute("aria-label") ?? element.textContent?.trim(),
-        height: element.getBoundingClientRect().height, field: ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName), font: parseFloat(getComputedStyle(element).fontSize) })) : [];
+        // Radix focuses the input when its wrapper padding is pressed; that wrapper is the hit target.
+        height: (element.matches(".rt-TextFieldInput") ? element.closest(".rt-TextFieldRoot") ?? element : element).getBoundingClientRect().height, field: ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName), font: parseFloat(getComputedStyle(element).fontSize) })) : [];
     return { tables, controls };
   });
   for (const table of measured.tables) {

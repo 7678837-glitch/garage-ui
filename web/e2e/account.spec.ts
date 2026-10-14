@@ -1,5 +1,5 @@
 import { assertAuthenticated, chooseTheme, openAccount, openRowActions } from "./interactions";
-import { expect, type Page, type Route, test } from "@playwright/test";
+import { expect, type Page, request, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
 
@@ -47,6 +47,47 @@ function isUserList(route: Route): boolean {
 }
 
 test.describe.serial("accounts", () => {
+  // Serial tests can skip the final UI restoration after a failure; teardown must still restore shared accounts.
+  test.afterAll(async (_, testInfo) => {
+    test.setTimeout(120_000);
+    const cleanup = await request.newContext({ baseURL: testInfo.project.use.baseURL, timeout: 10_000 });
+    try {
+      let password = administrator.password;
+      let login = await cleanup.post("/api/auth/login", { data: { username: administrator.username, password } });
+      if (login.status() === 401) {
+        expect(await login.json()).toMatchObject({ code: "invalid_credentials" });
+        password = nextPassword;
+        login = await cleanup.post("/api/auth/login", { data: { username: administrator.username, password } });
+      }
+      expect(login.status(), "Account cleanup login").toBe(200);
+      const csrf = (await cleanup.storageState()).cookies.find((cookie) => cookie.name === "garage_csrf")?.value;
+      expect(csrf, "Account cleanup CSRF cookie").toBeTruthy();
+      const headers = { "x-csrf-token": decodeURIComponent(csrf ?? "") };
+      try {
+        const response = await cleanup.get("/api/users?offset=0&limit=100");
+        expect(response.status(), "Account cleanup user list").toBe(200);
+        const users = await response.json() as { items: { id: number; username: string; can_download: boolean; can_share: boolean }[] };
+        const viewer = users.items.find((user) => user.username === readOnlyUser.username);
+        if (!viewer) throw new Error("Account cleanup could not find the read-only user");
+        if (viewer.can_download || viewer.can_share) {
+          const restored = await cleanup.patch(`/api/users/${viewer.id}`, { headers, data: { can_download: false, can_share: false } });
+          expect(restored.status(), "Account cleanup viewer permissions").toBe(200);
+          expect(await restored.json()).toMatchObject({ can_download: false, can_share: false });
+        }
+      } finally {
+        if (password === nextPassword) {
+          const restored = await cleanup.post("/api/auth/change-password", {
+            headers, data: { current_password: nextPassword, new_password: administrator.password },
+          });
+          expect(restored.status(), "Account cleanup administrator password").toBe(200);
+          const verified = await cleanup.post("/api/auth/login", { data: administrator });
+          expect(verified.status(), "Restored administrator can log in").toBe(200);
+        }
+      }
+    } finally {
+      await cleanup.dispose();
+    }
+  });
   test("hides write entries from a read-only account", async ({ page }) => {
     test.setTimeout(120_000);
     await logIn(page, readOnlyUser.username, readOnlyUser.password);
@@ -71,7 +112,22 @@ test.describe.serial("accounts", () => {
     }
     await nav.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
-    await page.getByLabel("Current password").fill(administrator.password);
+    await page.setViewportSize({ width: 360, height: 800 });
+    const currentPassword = page.getByLabel("Current password");
+    const field = currentPassword.locator("..");
+    await field.scrollIntoViewIfNeeded();
+    const box = await field.boundingBox();
+    if (!box) throw new Error("Current password field has no visible hit target");
+    expect(box.height, "Phone TextField wrapper hit target").toBeGreaterThanOrEqual(36);
+    expect(await currentPassword.evaluate((input) => parseFloat(getComputedStyle(input).fontSize))).toBeGreaterThanOrEqual(16);
+    expect(await field.evaluate((wrapper) => {
+      const bounds = wrapper.getBoundingClientRect();
+      return document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 0.5) === wrapper;
+    }), "TextField border press targets the wrapper").toBe(true);
+    await field.click({ position: { x: box.width / 2, y: 0.5 } });
+    await expect(currentPassword, "TextField border press focuses the input").toBeFocused();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await currentPassword.fill(administrator.password);
     await page.getByLabel("New password").fill(nextPassword);
     await page.getByRole("button", { name: "Change password" }).click();
     await expect(page.getByText("Password updated", { exact: true })).toBeVisible();
