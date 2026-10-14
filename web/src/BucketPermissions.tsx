@@ -169,7 +169,7 @@ function parseKeys(payload: unknown): BucketKeyGrant[] {
   return grants;
 }
 
-function GrantForm({ bucketId, onPendingChange }: { bucketId: string; onPendingChange: (pending: boolean) => void }) {
+function GrantForm({ bucketId, onPendingChange, onCancel }: { bucketId: string; onPendingChange: (pending: boolean) => void; onCancel: () => void }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(blankGrant);
   const grant = useMutation({
@@ -226,12 +226,15 @@ function GrantForm({ bucketId, onPendingChange }: { bucketId: string; onPendingC
         {copy("ui.write.2")}</label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {grant.isSuccess ? <p>{copy("ui.permissions.granted")}</p> : null}
-      <Button size="2" variant="solid"
-        type="submit"
-        disabled={!ready || grant.isPending}
-      >
-        {grant.isPending ? copy("ui.granting") : copy("ui.grant")}
-      </Button>
+      <div className="ui-actions">
+        <Button size="2" color="gray" variant="soft" type="button" disabled={grant.isPending} onClick={onCancel}>{copy("ui.cancel")}</Button>
+        <Button size="2" variant="solid"
+          type="submit"
+          disabled={!ready || grant.isPending}
+        >
+          {grant.isPending ? copy("ui.granting") : copy("ui.grant")}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -318,8 +321,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           onInteractOutside={(event) => { if (grantPending) event.preventDefault(); }}>
           <Dialog.Title>{copy("ui.grant.key")}</Dialog.Title>
           <Dialog.Description>{fill(copy("ui.grant.permissions.on"), { bucketId })}</Dialog.Description>
-          <GrantForm bucketId={bucketId} onPendingChange={setGrantPending} />
-          <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={grantPending} onClick={() => setGrantOpen(false)}>{copy("ui.cancel")}</Button></div>
+          <GrantForm bucketId={bucketId} onPendingChange={setGrantPending} onCancel={() => setGrantOpen(false)} />
         </Dialog.Content>
       </Dialog.Root> : null}
       {target !== null ? (

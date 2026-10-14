@@ -1387,7 +1387,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
   );
 }
 
-function CreateBucketForm({ onPendingChange }: { onPendingChange: (pending: boolean) => void }) {
+function CreateBucketForm({ onPendingChange, onCancel }: { onPendingChange: (pending: boolean) => void; onCancel: () => void }) {
   const client = useQueryClient();
   const [globalAlias, setGlobalAlias] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -1427,12 +1427,15 @@ function CreateBucketForm({ onPendingChange }: { onPendingChange: (pending: bool
       </label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
-      <Button size="2" variant="solid"
-        type="submit"
-        disabled={create.isPending}
-      >
-        {create.isPending ? copy("ui.creating.bucket") : copy("ui.create.bucket")}
-      </Button>
+      <div className="ui-actions">
+        <Button size="2" color="gray" variant="soft" type="button" disabled={create.isPending} onClick={onCancel}>{copy("ui.cancel")}</Button>
+        <Button size="2" variant="solid"
+          type="submit"
+          disabled={create.isPending}
+        >
+          {create.isPending ? copy("ui.creating.bucket") : copy("ui.create.bucket")}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -1508,16 +1511,18 @@ function AliasControls({ bucketId }: { bucketId: string }) {
           )}
           {error ? <p className="ui-alert">{error}</p> : null}
           {note ? <p>{note}</p> : null}
-          <Button size="2" variant="solid"
-            className={wrap}
-            type="submit"
-            disabled={add.isPending}
-            aria-label={add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
-          >
-            {add.isPending ? copy("ui.adding.alias") : copy("ui.add.alias")}
-          </Button>
+          <div className="ui-actions">
+            <Button size="2" color="gray" variant="soft" type="button" disabled={add.isPending} onClick={() => setOpen(false)}>{copy("ui.cancel")}</Button>
+            <Button size="2" variant="solid"
+              className={wrap}
+              type="submit"
+              disabled={add.isPending}
+              aria-label={add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
+            >
+              {add.isPending ? copy("ui.adding.alias") : copy("ui.add.alias")}
+            </Button>
+          </div>
         </form>
-        <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={add.isPending} onClick={() => setOpen(false)}>{copy("ui.cancel")}</Button></div>
       </Dialog.Content>
     </Dialog.Root>
   );
@@ -1755,13 +1760,11 @@ export function Buckets({
         <h2>{copy("nav.buckets")}</h2>
         {listing && canManage ? <Dialog.Root open={creating} onOpenChange={(open) => { if (!createPending) setCreating(open); }}>
           <Dialog.Trigger><Button size="2" type="button">{copy("common.create")}</Button></Dialog.Trigger>
-          <Dialog.Content maxWidth="480px" aria-busy={createPending}
+          <Dialog.Content maxWidth="480px" aria-busy={createPending} aria-describedby={undefined}
             onEscapeKeyDown={(event) => { if (createPending) event.preventDefault(); }}
             onInteractOutside={(event) => { if (createPending) event.preventDefault(); }}>
             <Dialog.Title>{copy("ui.create.bucket")}</Dialog.Title>
-            <Dialog.Description>{copy("ui.global.alias")}</Dialog.Description>
-            <CreateBucketForm onPendingChange={setCreatePending} />
-            <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={createPending} onClick={() => setCreating(false)}>{copy("ui.cancel")}</Button></div>
+            <CreateBucketForm onPendingChange={setCreatePending} onCancel={() => setCreating(false)} />
           </Dialog.Content>
         </Dialog.Root> : null}
       </header> : null}
