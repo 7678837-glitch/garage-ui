@@ -506,7 +506,7 @@ export function UploadPanel({
       <div className="ui-toolbar items-end">
       <label className="ui-field flex-1">
         {copy("ui.choose.files")}<input
-          className="ui-input w-full min-w-0 max-w-full"
+          className="ui-file-input w-full min-w-0 max-w-full"
           multiple
           type="file"
           onChange={(event) => {
@@ -517,7 +517,7 @@ export function UploadPanel({
       </label>
       <label className="ui-field">
         {copy("ui.choose.folder")}<input
-          className="ui-input w-full min-w-0 max-w-full"
+          className="ui-file-input w-full min-w-0 max-w-full"
           multiple
           type="file"
           webkitdirectory=""

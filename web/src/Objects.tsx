@@ -1163,6 +1163,7 @@ export function Objects({
       >
         <label className="ui-field">
           {copy("ui.search")}<TextField.Root size="2"
+            placeholder={copy("ui.search")}
             value={draft}
             autoComplete="off"
             onChange={(event) => {
