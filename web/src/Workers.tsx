@@ -1,11 +1,12 @@
 import { OperationNodeSelection } from "./ClusterNodes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { useLocationHash, workersNodeId } from "./Nav";
 import { copy, fill, translate } from "./i18n";
+import { DataCell } from "./ui";
 
 function unavailableMessage(): string {
   return copy("ui.workers.are.unavailable");
@@ -372,20 +373,45 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
   );
 }
 
-function WorkerDetail({ nodeId, workerId }: { nodeId: string; workerId: number }) {
+function WorkerDetail({ nodeId, worker, request, focusedRequest }: {
+  nodeId: string;
+  worker: WorkerRow;
+  request: number;
+  focusedRequest: MutableRefObject<number>;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
   const detail = useQuery({
-    queryKey: ["nodes", nodeId, "worker", workerId],
-    queryFn: () => loadWorkerMessage(nodeId, workerId),
+    queryKey: ["nodes", nodeId, "worker", worker.id],
+    queryFn: () => loadWorkerMessage(nodeId, worker.id),
   });
-  if (detail.data === undefined) {
-    return null;
-  }
-  return <p>{detail.data}</p>;
+  const label = `${fill(copy("ui.details.2"), { id: worker.id })}: ${worker.name}`;
+  const failure = detail.isError ? failureOf(detail.error) : null;
+  useEffect(() => {
+    if (focusedRequest.current === request) return;
+    focusedRequest.current = request;
+    panel.current?.focus();
+    panel.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [request, focusedRequest]);
+  return (
+    <div ref={panel} role="region" aria-label={label} tabIndex={-1} className="ui-worker-detail">
+      <p className="font-medium">{label}</p>
+      {detail.isPending ? <p role="status">{translate("Loading worker details")}</p> : null}
+      {detail.isFetching && !detail.isPending ? <p role="status">{translate("Refreshing worker details")}</p> : null}
+      {detail.data !== undefined ? <p>{detail.data}</p> : null}
+      {failure ? <>
+        <p role="alert">{failure.message}{failure.code ? ` ${failure.code}` : ""}</p>
+        <button className="ui-button" type="button" disabled={detail.isFetching} onClick={() => { void detail.refetch(); }}>
+          {copy("ui.retry")}
+        </button>
+      </> : null}
+    </div>
+  );
 }
 
 function WorkersList({ nodeId }: { nodeId: string }) {
   const [filter, setFilter] = useState<WorkerFilter>({ busyOnly: false, errorOnly: false });
-  const [selected, setSelected] = useState<{ nodeId: string; workerId: number } | null>(null);
+  const [selected, setSelected] = useState<{ nodeId: string; workerId: number; request: number } | null>(null);
+  const focusedRequest = useRef(0);
   const workers = useQuery({
     queryKey: ["nodes", nodeId, "workers", filter.busyOnly, filter.errorOnly],
     queryFn: () => loadWorkers(nodeId, filter),
@@ -402,6 +428,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
   return (
     <section className="ui-page" aria-label={copy("nav.workers")} aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
+      <p className="ui-muted ui-identifier">{nodeId === "*" ? copy("operations.allNodes") : nodeId}</p>
       <div className="ui-toolbar text-sm">
         <label className="flex items-center gap-2">
           <input
@@ -422,6 +449,13 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           />
           {copy("ui.errors.only")}</label>
       </div>
+      <details className="ui-disclosure">
+        <summary>{copy("tab.maintenance")}</summary>
+        <div className="grid gap-4">
+          <details className="ui-disclosure"><summary>{copy("ui.start.repair")}</summary><NodeRepair nodeId={nodeId} /></details>
+          <details className="ui-disclosure"><summary>{copy("ui.variable")}</summary><WorkerVariable nodeId={nodeId} /></details>
+        </div>
+      </details>
       {view.busy ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.workers")}>{copy("ui.loading.workers")}</div>
       ) : null}
@@ -446,9 +480,9 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           <div key={group.nodeId} className="grid gap-2">
             {nodeId === "*" ? <p className="ui-identifier">{group.nodeId}</p> : null}
             <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Worker list")}>
-              <table className="ui-table">
+              <table className="ui-table ui-table-records ui-workers-table" role="table">
                 <thead>
-                  <tr>
+                  <tr role="row">
                     <th className="py-2 pr-3 font-medium" scope="col">
                       {copy("ui.name")}</th>
                     <th className="py-2 pr-3 font-medium" scope="col">
@@ -464,21 +498,30 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                 </thead>
                 <tbody>
                   {group.rows.map((worker) => (
-                    <tr key={worker.id}>
-                      <td className="py-2 pr-3">{worker.name}</td>
-                      <td className="py-2 pr-3">{worker.state}</td>
-                      <td className="py-2 pr-3">{worker.errors}</td>
-                      <td className="py-2 pr-3">{worker.progress}</td>
-                      <td className="py-2">
+                    <tr key={worker.id} role="row">
+                      <DataCell label={copy("ui.name")} kind="identity">
+                        <span className="block">{worker.name}</span>
+                        <span className="block ui-muted ui-identifier">{translate("Worker ID")}: {worker.id}</span>
+                      </DataCell>
+                      <DataCell label={copy("ui.state")} className="ui-worker-state"><span className="ui-status">{worker.state}</span></DataCell>
+                      <DataCell label={copy("ui.errors")} className="ui-worker-errors">{worker.errors}</DataCell>
+                      <DataCell label={copy("ui.progress")} className="ui-worker-progress">{worker.progress}</DataCell>
+                      <DataCell label={copy("ui.details")} kind="actions">
                         <button
-                          className="ui-button"
+                          className="ui-button ui-button-quiet"
                           type="button"
+                          aria-label={`${fill(copy("ui.details.2"), { id: worker.id })}: ${worker.name}`}
+                          aria-expanded={selected?.nodeId === group.nodeId && selected.workerId === worker.id}
                           onClick={() => {
-                            setSelected({ nodeId: group.nodeId, workerId: worker.id });
+                            setSelected((current) => ({ nodeId: group.nodeId, workerId: worker.id, request: (current?.request ?? 0) + 1 }));
                           }}
                         >
-                          {fill(copy("ui.details.2"), { id: worker.id })}</button>
-                      </td>
+                          {fill(copy("ui.details.2"), { id: worker.id })}
+                        </button>
+                        {selected?.nodeId === group.nodeId && selected.workerId === worker.id ? (
+                          <WorkerDetail key={selected.request} nodeId={group.nodeId} worker={worker} request={selected.request} focusedRequest={focusedRequest} />
+                        ) : null}
+                      </DataCell>
                     </tr>
                   ))}
                 </tbody>
@@ -487,11 +530,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           </div>
         ),
       )}
-      <details className="ui-disclosure"><summary>{copy("ui.start.repair")}</summary><NodeRepair nodeId={nodeId} /></details>
-      <details className="ui-disclosure"><summary>{copy("ui.variable")}</summary><WorkerVariable nodeId={nodeId} /></details>
-      {selected !== null ? (
-        <WorkerDetail nodeId={selected.nodeId} workerId={selected.workerId} />
-      ) : null}
+
     </section>
   );
 }

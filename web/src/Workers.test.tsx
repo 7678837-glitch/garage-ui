@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { workersNodeId } from "./Nav";
@@ -369,7 +369,7 @@ test("clicking Details 7 shows rpc timeout", async () => {
   expect(await screen.findByText("block_resync")).toBeTruthy();
   expect(details).toEqual([]);
   expect(screen.queryByText("rpc timeout")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Details 7" }));
+  fireEvent.click(screen.getByRole("button", { name: /Details 7/ }));
   expect(await screen.findByText("rpc timeout")).toBeTruthy();
   expect(details).toEqual([{ url: "/api/nodes/n1/workers/7", method: "GET" }]);
   expect(window.location.hash).toBe("#workers/n1");
@@ -671,9 +671,9 @@ test("shows Loading workers and marks the workers section busy on the first load
   expect(screen.getByRole("checkbox", { name: "Errors only" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save variable" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Details 7" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Details 7/ })).toBeNull();
   release(json([workerRow]));
-  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: /Details 7/ })).toBeTruthy();
   expect(screen.getByText("block_resync")).toBeTruthy();
   expect(screen.getByRole("region", { name: "Workers" }).getAttribute("aria-busy")).toBe("false");
   expect(screen.queryByLabelText("Loading workers")).toBeNull();
@@ -696,7 +696,7 @@ test("says there are no workers", async () => {
   );
   expect(screen.getByText("There are no workers.").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Details 7" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Details 7/ })).toBeNull();
   expect(screen.getByRole("checkbox", { name: "Busy only" })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "Errors only" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
@@ -732,7 +732,7 @@ test("shows the API code and requests the worker list again from Retry", async (
   expect(screen.getByRole("checkbox", { name: "Busy only" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Start repair" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: /Details 7/ })).toBeTruthy();
   expect(screen.getByText("block_resync")).toBeTruthy();
   expect(screen.queryByText("upstream_failed")).toBeNull();
   expect(screen.queryByText("Garage returned an error")).toBeNull();
@@ -759,13 +759,13 @@ test("keeps one visible worker row while a later fetch refreshes", async () => {
     }),
   );
   const client = renderWorkers();
-  expect(await screen.findByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: /Details 7/ })).toBeTruthy();
   expect(screen.getByText("block_resync")).toBeTruthy();
   expect(screen.queryByText("Refreshing workers")).toBeNull();
   const refresh = client.refetchQueries({ queryKey: ["nodes", "n1", "workers"] });
   expect(await screen.findByText("Refreshing workers")).toBeTruthy();
   expect(screen.getByText("block_resync")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Details 7/ })).toBeTruthy();
   expect(screen.queryByLabelText("Loading workers")).toBeNull();
   expect(screen.queryByText("Loading workers")).toBeNull();
   expect(screen.getByRole("region", { name: "Workers" }).getAttribute("aria-busy")).toBe("false");
@@ -775,7 +775,7 @@ test("keeps one visible worker row while a later fetch refreshes", async () => {
   await waitFor(() => {
     expect(screen.queryByText("Refreshing workers")).toBeNull();
   });
-  expect(screen.getByRole("button", { name: "Details 7" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Details 7/ })).toBeTruthy();
   expect(calls).toBe(2);
 });
 
@@ -803,3 +803,58 @@ test("says no node is selected", () => {
   fireEvent.click(link);
   expect(window.location.hash).toBe("#workers/n1");
  });
+
+
+test("worker details focus the originating row panel while loading and keep focus unchanged on refresh", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    if (String(input).endsWith("/workers/7")) {
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }
+    return Promise.resolve(json([workerRow]));
+  }));
+  const client = renderWorkers();
+  fireEvent.click(await screen.findByRole("button", { name: /Details 7/ }));
+  const panel = await screen.findByRole("region", { name: "Details 7: block_resync" });
+  expect(panel.closest("tr")?.textContent).toContain("block_resync");
+  expect(document.activeElement).toBe(panel);
+  expect(within(panel).getByRole("status").textContent).toBe("Loading worker details");
+  release(json({ lastError: { message: "rpc timeout" } }));
+  expect(await within(panel).findByText("rpc timeout")).toBeTruthy();
+  const filter = screen.getByRole("checkbox", { name: "Busy only" });
+  filter.focus();
+  const refresh = client.refetchQueries({ queryKey: ["nodes", "n1", "worker", 7] });
+  await waitFor(() => expect(within(panel).getByRole("status").textContent).toBe("Refreshing worker details"));
+  release(json({ lastError: { message: "updated timeout" } }));
+  await refresh;
+  expect(await within(panel).findByText("updated timeout")).toBeTruthy();
+  expect(document.activeElement).toBe(filter);
+  client.setQueryData(["nodes", "n1", "workers", false, false], []);
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Details 7: block_resync" })).toBeNull());
+  client.setQueryData(["nodes", "n1", "workers", false, false], [{ nodeId: "n1", rows: [workerRow] }]);
+  const restored = await screen.findByRole("region", { name: "Details 7: block_resync" });
+  expect(document.activeElement).toBe(filter);
+  fireEvent.click(screen.getByRole("button", { name: /Details 7/ }));
+  await waitFor(() => expect(document.activeElement).not.toBe(restored));
+  expect(document.activeElement).toBe(screen.getByRole("region", { name: "Details 7: block_resync" }));
+});
+
+test("worker detail failure stays associated with its row and retries the same worker", async () => {
+  let requests = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/workers/7")) {
+      requests += 1;
+      return requests === 1
+        ? json({ code: "upstream_failed", message: "Details unavailable" }, 502)
+        : json({ lastError: { message: "rpc timeout" } });
+    }
+    return json([workerRow]);
+  }));
+  renderWorkers();
+  fireEvent.click(await screen.findByRole("button", { name: /Details 7/ }));
+  const panel = await screen.findByRole("region", { name: "Details 7: block_resync" });
+  expect(await within(panel).findByRole("alert")).toHaveProperty("textContent", "Details unavailable upstream_failed");
+  fireEvent.click(within(panel).getByRole("button", { name: "Retry" }));
+  expect(await within(panel).findByText("rpc timeout")).toBeTruthy();
+  expect(requests).toBe(2);
+});
