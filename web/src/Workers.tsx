@@ -198,7 +198,7 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
   const ready = variable.length > 0 && value.length > 0 && !save.isPending;
 
   return (
-    <div className="ui-page">
+    <div className="ui-form">
       <Dialog.Root open={editorOpen} onOpenChange={(next) => {
         if (!save.isPending && !open) setEditorOpen(next);
       }}>
@@ -343,7 +343,7 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
   const failure = repair.error instanceof Error ? repair.error.message : copy("ui.repair.failed");
 
   return (
-    <div className="ui-page">
+    <div className="ui-form">
       <Dialog.Root open={editorOpen} onOpenChange={(next) => {
         if (!repair.isPending && !open) setEditorOpen(next);
       }}>

@@ -412,7 +412,7 @@ function RenameKey({ id, name, allowed }: { id: string; name: string | null; all
   );
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!rename.isPending && !permissionPending) setOpen(next); }}>
-      <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")} (${id})`}>{copy("ui.edit")}</Button></Dialog.Trigger>
+      <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")} (${id})`}>{copy("ui.actions")}</Button></Dialog.Trigger>
       <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (rename.isPending || permissionPending) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
       <Dialog.Title>{copy("ui.name")}</Dialog.Title>
       <p className="ui-identifier">{id}</p>

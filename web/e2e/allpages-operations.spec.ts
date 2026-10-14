@@ -178,16 +178,32 @@ for (const width of [360, 390, 768, 1280]) {
       await capture(page, "workers-single-top", "Selected one actual node; long node ID shown above the list");
       const id = new URL(page.url()).hash.split("/")[1];
       await openDisclosure(workers.locator(":scope > details > summary", { hasText: "Maintenance" }));
-      await workers.getByRole("button", { name: "Start repair", exact: true }).click();
+      const repairLauncher = workers.getByRole("button", { name: "Start repair", exact: true });
+      const variableLauncher = workers.getByRole("button", { name: "Save variable", exact: true });
+      await expect(repairLauncher).toBeVisible();
+      await expect(variableLauncher).toBeVisible();
+      const repairBox = await repairLauncher.boundingBox();
+      const variableBox = await variableLauncher.boundingBox();
+      if (repairBox === null || variableBox === null) throw new Error("Maintenance launchers require visible bounds");
+      expect(
+        repairBox.x + repairBox.width <= variableBox.x ||
+        variableBox.x + variableBox.width <= repairBox.x ||
+        repairBox.y + repairBox.height <= variableBox.y ||
+        variableBox.y + variableBox.height <= repairBox.y,
+        "Maintenance launchers do not overlap",
+      ).toBe(true);
+      await repairLauncher.click();
       const repair = page.getByRole("dialog", { name: "Start repair", exact: true });
+      await expect(repair).toBeVisible();
       await selectChoice(repair.getByRole("combobox", { name: "Repair type", exact: true }), "scrub pause");
       await capture(page, "workers-repair-form", "Selected one node, opened Maintenance and scrub pause repair type");
       await repair.getByRole("button", { name: "Start repair", exact: true }).click();
       await cancel(page, decodeURIComponent(id));
       await expect(repair.getByRole("combobox", { name: "Repair type", exact: true })).toContainText("scrub pause");
       await repair.getByRole("button", { name: "Cancel", exact: true }).click();
-      await workers.getByRole("button", { name: "Save variable", exact: true }).click();
+      await variableLauncher.click();
       const variable = page.getByRole("dialog", { name: "Variable", exact: true });
+      await expect(variable).toBeVisible();
       await expect(variable.getByRole("button", { name: "Save variable", exact: true })).toBeDisabled();
       await variable.getByLabel("Variable", { exact: true }).fill("allpages-inspect-only");
       await variable.getByLabel("Value", { exact: true }).fill("1");

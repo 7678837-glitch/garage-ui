@@ -1049,6 +1049,7 @@ test("the key buckets tab shows the grant bits", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: "compact", name: "Existing", createBucket: false }], hasMore: false })));
   renderKeys(true);
   expect(await screen.findByText("compact")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Actions (compact)" }).textContent).toBe("Actions");
   expect(screen.queryByRole("textbox", { name: "Key name" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("textbox", { name: "Key name" })).toBeTruthy();

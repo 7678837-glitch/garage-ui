@@ -328,7 +328,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         <DataCell label={copy("ui.share")}>{shown.can_share ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide">
           <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) { setOpen(next); } }}>
-            <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")}: ${account.username}`}>{copy("ui.edit")}</Button></Dialog.Trigger>
+            <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")}: ${account.username}`}>{copy("ui.actions")}</Button></Dialog.Trigger>
             <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
             <Dialog.Title>{account.username}</Dialog.Title>
             <div className="ui-form">

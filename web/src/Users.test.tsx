@@ -985,6 +985,7 @@ test("row actions contain the account editor and password reset controls", async
   if (!row) throw new Error("Missing user row");
   const actions = within(row).getByRole("button", { name: "Actions: Bea" });
   expect(actions.getAttribute("aria-label")).toBe("Actions: Bea");
+  expect(actions.textContent).toBe("Actions");
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(actions);
   expect(screen.getByRole("dialog", { name: "Bea" })).toBeTruthy();
