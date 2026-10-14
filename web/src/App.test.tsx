@@ -1152,6 +1152,26 @@ test("a viewport below 900px hides section links until Menu opens them", async (
   expect(await findSectionLink("Buckets")).toBeTruthy();
 });
 
+test("the mobile detail parent link preserves the unsaved navigation guard", async () => {
+  stubNavMedia(true);
+  stubSignedIn("admin");
+  window.location.hash = "#buckets/bucket-ada/photos/2024/";
+  renderApp();
+  const back = await screen.findByRole("link", { name: "← Buckets" });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  setFormDirty("mobile-parent-test", true);
+  try {
+    fireEvent.click(back);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe("#buckets/bucket-ada/photos/2024/");
+    confirm.mockReturnValue(true);
+    fireEvent.click(back);
+    expect(window.location.hash).toBe("#buckets");
+  } finally {
+    setFormDirty("mobile-parent-test", false);
+  }
+});
+
 test("a signed-in page shows one breadcrumb built from the section labels", async () => {
   stubSignedIn("admin");
   renderApp();

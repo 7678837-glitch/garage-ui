@@ -795,7 +795,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {keyDetail === null ? (
-      <div className="ui-toolbar">
+      <div className="ui-toolbar ui-resource-filters">
         <label className="ui-field">
           {copy("ui.filter.keys")}<input
             className="ui-input"
@@ -825,8 +825,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p className="ui-muted">{copy("ui.default.order.is.id")}</p>
-        <p className="ui-muted">{copy("ui.only.loaded.rows")}</p>
+        <details className="ui-filter-help"><summary>{copy("ui.only.loaded.rows")}</summary><p className="ui-muted">{copy("ui.default.order.is.id")}</p></details>
       </div>
       ) : null}
       {keyDetail === null && view.empty ? (
@@ -834,7 +833,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.key.2")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table">
+          <table className="ui-table ui-table-records ui-key-list" role="table">
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
@@ -869,21 +868,21 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                           ? copy("ui.reading.secret")
                           : copy("ui.show.secret")}
                       </button>
-                      <button
-                        className="ui-button"
-                        type="button"
-                        aria-label={fill(copy("ui.delete"), { id: accessKey.id })}
-                        onClick={() => {
-                          removeKey.reset();
-                          setDeleteId(accessKey.id);
-                        }}
-                      >
-                        {copy("ui.delete.2")}</button>
                       {viewSecret.variables === accessKey.id && viewError ? (
                         <p className="ui-alert">{viewError}</p>
                       ) : null}
                       <details className="ui-disclosure">
                         <summary aria-label={`${copy("ui.actions")} (${accessKey.id})`}>{copy("ui.actions")}</summary>
+                        <button
+                          className="ui-button"
+                          type="button"
+                          aria-label={fill(copy("ui.delete"), { id: accessKey.id })}
+                          onClick={() => {
+                            removeKey.reset();
+                            setDeleteId(accessKey.id);
+                          }}
+                        >
+                          {copy("ui.delete.2")}</button>
                         {accessKey.id.length > 24 ? <p className="ui-identifier">{accessKey.id}</p> : null}
                         <RenameKey id={accessKey.id} name={accessKey.name} />
                         <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />

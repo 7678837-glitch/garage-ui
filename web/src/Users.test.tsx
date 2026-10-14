@@ -577,7 +577,7 @@ test("shows Ada before Zed when the API returns Zed first", async () => {
   const names = screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value")?.textContent);
+    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value > strong")?.textContent);
   expect(names).toEqual(["Ada", "Zed"]);
 });
 
@@ -609,7 +609,7 @@ test("sorts loaded users by created time and keeps the choice in the address", a
   const names = screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value")?.textContent);
+    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value > strong")?.textContent);
   expect(names).toEqual(["Ada", "Zed", "Mina"]);
   expect(window.location.search).toContain("usersSort=created");
   expect(window.location.search).toContain("keep=1");

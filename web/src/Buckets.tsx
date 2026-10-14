@@ -1908,7 +1908,7 @@ export function Buckets({
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {listing ? (
-        <div className="ui-toolbar">
+        <div className="ui-toolbar ui-resource-filters">
           <label className="ui-field">
             {copy("ui.filter.buckets")}<input
               className="ui-input"
@@ -1938,8 +1938,7 @@ export function Buckets({
               <option value="created">{copy("ui.created")}</option>
             </select>
           </label>
-          <p className="ui-muted">{copy("ui.default.order.is.id")}</p>
-          <p className="ui-muted">{copy("ui.only.loaded.rows")}</p>
+          <details className="ui-filter-help"><summary>{copy("ui.only.loaded.rows")}</summary><p className="ui-muted">{copy("ui.default.order.is.id")}</p></details>
         </div>
       ) : null}
       {location.kind === "objects" && bucketDetail === null ? (
@@ -1963,7 +1962,7 @@ export function Buckets({
       ) : null}
       {listing && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.bucket")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table">
+          <table className="ui-table ui-table-records ui-bucket-list" role="table">
             <thead><tr>
               <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.usage")}</th><th scope="col">{copy("ui.actions")}</th>
             </tr></thead>
@@ -1976,7 +1975,7 @@ export function Buckets({
                     {bucket.aliases[0]?.name || copy("ui.bucket")}
                   </a>
                   {bucket.aliases.slice(1).map((alias, aliasIndex) => <span key={aliasIndex}> · <span>{alias.name}</span></span>)}
-                  <ResourceIdentity id={bucket.id} />
+                  <ResourceIdentity id={bucket.id} compact />
                 </DataCell>
                 <DataCell label={copy("ui.usage")}><UsageText bucket={bucket} /></DataCell>
                 <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}><div className="ui-actions">

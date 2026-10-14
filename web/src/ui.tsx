@@ -17,22 +17,24 @@ export function Pagination({ page, hasPrevious, hasNext, pending = false, onPrev
   </nav>;
 }
 
-export function ResourceIdentity({ id, name }: { id: string; name?: string }) {
+export function ResourceIdentity({ id, name, compact = false }: { id: string; name?: string; compact?: boolean }) {
   const { t } = useI18n();
   const [result, setResult] = useState<"copied" | "failed" | null>(null);
   const abbreviated = id.length > 15 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
-  return <div className="ui-resource-identity">
+  const copyButton = <button type="button" className="ui-button ui-button-quiet" onClick={async () => {
+    setResult(null);
+    try { await navigator.clipboard.writeText(id); setResult("copied"); }
+    catch { setResult("failed"); }
+  }}>{t("common.copyId")}</button>;
+  return <div className={`ui-resource-identity${compact ? " ui-resource-identity-compact" : ""}`}>
     {name ? <span className="ui-resource-name">{name}</span> : null}
     <div className="ui-actions">
       <details className="ui-identity-details">
         <summary><span className="ui-identifier">{abbreviated}</span><span className="ui-muted">{t("common.fullId")}</span></summary>
         <code className="ui-identifier">{id}</code>
+        {compact ? copyButton : null}
       </details>
-      <button type="button" className="ui-button ui-button-quiet" onClick={async () => {
-        setResult(null);
-        try { await navigator.clipboard.writeText(id); setResult("copied"); }
-        catch { setResult("failed"); }
-      }}>{t("common.copyId")}</button>
+      {compact ? null : copyButton}
     </div>
     {result === "copied" ? <p role="status" className="ui-muted">{t("common.idCopied")}</p> : null}
     {result === "failed" ? <p role="alert" className="text-danger">{t("common.idCopyFailed")}</p> : null}

@@ -5,6 +5,7 @@ import { App } from "./App";
 import { LanguageProvider } from "./i18n";
 import { bootTheme } from "./theme";
 import "./index.css";
+import "./mobile.css";
 
 bootTheme(document.documentElement, localStorage);
 

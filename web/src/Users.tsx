@@ -319,9 +319,9 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
   return (
     <>
       <tr role="row">
-        <DataCell label={copy("ui.username")} kind="identity">{account.username}</DataCell>
-        <DataCell label={copy("ui.role")}>{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</DataCell>
-        <DataCell label={copy("ui.disabled")}>{account.disabled ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
+        <DataCell label={copy("ui.username")} kind="identity"><strong>{account.username}</strong><span className="ui-user-mobile-summary" aria-hidden="true"><span>{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</span>{account.disabled ? <span className="text-danger">{copy("ui.disabled")}</span> : null}</span></DataCell>
+        <DataCell label={copy("ui.role")} className="ui-user-role">{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</DataCell>
+        <DataCell label={copy("ui.disabled")} className="ui-user-disabled">{account.disabled ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.download")}>{shown.can_download ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.share")}>{shown.can_share ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide">
@@ -614,12 +614,12 @@ export function Users({ selfUsername }: { selfUsername: string }) {
 
   return (
     <section className="ui-page" aria-label={copy("nav.users")} aria-busy={view.busy}>
-      <div className="ui-page-header"><h2>{copy("nav.users")}</h2></div>
+      <div className="ui-page-header ui-users-header"><h2>{copy("nav.users")}</h2>
       <details className="ui-disclosure" ref={createDisclosure}>
         <summary className="ui-button ui-button-primary">{copy("ui.create.user")}</summary>
         <CreateAccount onCancel={() => { if (createDisclosure.current) createDisclosure.current.open = false; }} />
-      </details>
-      <div className="ui-toolbar">
+      </details></div>
+      <div className="ui-toolbar ui-resource-filters">
         <label className="ui-field">
           {copy("ui.filter.users")}<input
             className="ui-input"
@@ -645,8 +645,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
             <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p>{copy("ui.default.order.is.username")}</p>
-        <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
+        <details className="ui-filter-help"><summary>{translate("Filtering and sorting apply to the current page")}</summary><p className="ui-muted">{copy("ui.default.order.is.username")}</p></details>
 
       </div>
       {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.users")}>{copy("ui.loading.users")}</div> : null}
@@ -669,7 +668,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
       {view.empty ? <p>{offset === 0 && users.data?.hasMore === false ? copy("ui.there.are.no.users.create.the.first.user") : translate("No matches on this page.")}</p> : null}
       {users.data && shown.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={translate("User list")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table">
+          <table className="ui-table ui-table-records ui-user-list" role="table">
             <thead role="rowgroup">
               <tr role="row">
                 <th scope="col">

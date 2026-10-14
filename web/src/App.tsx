@@ -245,6 +245,22 @@ function breadcrumbCrumbs(
   ];
 }
 
+function MobileContext({ section, hash, onSelect }: {
+  section: SectionId;
+  hash: string;
+  onSelect: (id: SectionId) => void;
+}) {
+  const { t } = useI18n();
+  const crumbs = breadcrumbCrumbs(section, hash, t);
+  const parent = crumbs.length > 2 ? crumbs[crumbs.length - 2] : null;
+  return <div className="console-mobile-brand">
+    {parent?.kind === "link" ? <a className="console-parent-link" href={`#${parent.id}`} onClick={(event) => {
+      event.preventDefault();
+      onSelect(parent.id);
+    }}>← {parent.label}</a> : <><img src="./brand/garage-ui.svg" width="24" height="24" alt="" /><span>Garage UI</span></>}
+  </div>;
+}
+
 export function Breadcrumb({
   section,
   hash,
@@ -419,7 +435,7 @@ function Home({ status }: { status: SessionStatus }) {
       <div className="console-workspace">
         <header className="console-topbar">
           <button ref={menuTrigger} className="ui-button console-menu" type="button" aria-expanded={menuOpen} aria-controls="console-navigation" onClick={toggleMenu}>{t("nav.menu")}</button>
-          <div className="console-mobile-brand"><img src="./brand/garage-ui.svg" width="24" height="24" alt="" /><span>Garage UI</span></div>
+          <MobileContext section={section} hash={hash} onSelect={select} />
           <Breadcrumb section={section} hash={hash} onSelect={select} />
           <details ref={account} className="console-session console-header-disclosure">
             <summary aria-label={`${status.username} · ${status.role}`}><span className="console-account-name">{status.username}</span></summary>
