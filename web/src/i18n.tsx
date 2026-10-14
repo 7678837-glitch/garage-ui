@@ -52,6 +52,29 @@ export function useI18n(): LanguageValue {
   };
 }
 
+const utcInstant = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
+export function formatInstant(value: string, language: Language): string {
+  if (language === "en" || !utcInstant.test(value)) {
+    return value;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+export function InstantText({ value }: { value: string }) {
+  const { language } = useI18n();
+  return <time dateTime={value}>{formatInstant(value, language)}</time>;
+}
+
 export function LanguageChooser() {
   const { language, setLanguage, t } = useI18n();
   return (

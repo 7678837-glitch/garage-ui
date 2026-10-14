@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
+import { InstantText } from "./i18n";
 import { isGarageDown } from "./garageDown";
 
 type AdminToken = {
@@ -806,7 +807,9 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
               <tr key={`${token.name}-${token.created}-${index}`}>
                 <td className="py-2 pr-3">{token.name}</td>
                 <td className="py-2 pr-3">{token.scope.join(", ")}</td>
-                <td className="py-2 pr-3">{token.expiration}</td>
+                <td className="py-2 pr-3">
+                  <InstantText value={token.expiration} />
+                </td>
                 <td className="py-2 pr-3">{token.expired ? "Yes" : "No"}</td>
                 <td className="py-2">
                   {sourceLabel(token)}
@@ -888,7 +891,9 @@ function CurrentToken({ token }: { token: AdminToken }) {
         </div>
         <div>
           <dt>Expiration</dt>
-          <dd>{token.expiration}</dd>
+          <dd>
+            <InstantText value={token.expiration} />
+          </dd>
         </div>
         <div>
           <dt>Expired</dt>

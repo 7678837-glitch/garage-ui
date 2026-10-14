@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { Breadcrumb } from "./App";
 import { en } from "./copy-en";
 import { zh } from "./copy-zh";
-import { LanguageChooser, LanguageProvider } from "./i18n";
+import { InstantText, LanguageChooser, LanguageProvider } from "./i18n";
 
 afterEach(() => {
   cleanup();
@@ -76,4 +76,24 @@ test("a chinese breadcrumb names sections and tabs from the catalog", () => {
   const permissions = screen.getByRole("navigation", { name: "路径" });
   expect(within(permissions).getByText("权限").textContent).toBe("权限");
   expect(within(permissions).queryByText("Permissions")).toBeNull();
+});
+
+test("a timestamp follows the language and english keeps the source text", () => {
+  localStorage.setItem("garage-ui-language", "zh-CN");
+  const chinese = render(
+    <LanguageProvider>
+      <InstantText value="2026-10-11T00:00:00Z" />
+    </LanguageProvider>,
+  );
+  expect(screen.getByText("2026年10月11日 00:00").textContent).toBe("2026年10月11日 00:00");
+  expect(screen.queryByText("2026-10-11T00:00:00Z")).toBeNull();
+  chinese.unmount();
+
+  localStorage.setItem("garage-ui-language", "en");
+  render(
+    <LanguageProvider>
+      <InstantText value="2026-10-11T00:00:00Z" />
+    </LanguageProvider>,
+  );
+  expect(screen.getByText("2026-10-11T00:00:00Z").textContent).toBe("2026-10-11T00:00:00Z");
 });

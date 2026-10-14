@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
+import { InstantText } from "./i18n";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
@@ -1226,7 +1227,9 @@ export function Objects({
           <p>Size {preview.size}</p>
           <p>Content type {preview.contentType}</p>
           <p>ETag {preview.etag}</p>
-          <p>Last modified {preview.lastModified}</p>
+          <p>
+            Last modified <InstantText value={preview.lastModified} />
+          </p>
           {kind !== null ? (
             <InlineBody
               kind={kind}
@@ -1335,7 +1338,9 @@ export function Objects({
                       </div>
                     </td>
                     <td className="py-2 pr-3">{entry.size}</td>
-                    <td className="py-2">{entry.lastModified}</td>
+                    <td className="py-2">
+                      <InstantText value={entry.lastModified} />
+                    </td>
                   </tr>
                 ),
               )}
