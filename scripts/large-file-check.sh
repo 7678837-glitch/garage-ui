@@ -189,6 +189,12 @@ def load_secrets():
         for line in session.read_text(encoding="utf-8").splitlines():
             if len(line) >= 8:
                 found.append(line)
+    cookies = root / "cookies"
+    if cookies.is_file():
+        for line in cookies.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) == 7 and fields[5] in ("garage_session", "garage_csrf"):
+                found.append(fields[6])
     return found
 
 
