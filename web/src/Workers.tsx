@@ -423,7 +423,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           {copy("ui.errors.only")}</label>
       </div>
       {view.busy ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.workers")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.workers")}>{copy("ui.loading.workers")}</div>
       ) : null}
       {view.refreshing ? <p>{copy("ui.refreshing.workers")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (

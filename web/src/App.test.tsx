@@ -863,7 +863,7 @@ test("shows a bucket id and its alias to an admin", async () => {
   fireEvent.click(screen.getByLabelText("Edit key-ada"));
   expect(screen.getByRole("button", { name: "Rename key-ada" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete key-ada" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "View secret for key-ada" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Show secret (key-ada)" })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "Allow create bucket for key-ada" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETADA");
 });
@@ -941,7 +941,7 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Rename key-bea" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete key-bea" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "View secret for key-bea" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Show secret (key-bea)" })).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Allow create bucket for key-bea" })).toBeNull();
   expect(
     fetchMock.mock.calls.filter((call) => {

@@ -283,7 +283,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       aria-label={fill(copy("ui.permissions.for"), { bucketId: bucketId })}
       aria-busy={view.busy}
     >
-      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.keys")} /> : null}
+      {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

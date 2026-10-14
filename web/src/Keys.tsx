@@ -185,9 +185,9 @@ function KeyBuckets({ keyId }: { keyId: string }) {
   const rows = buckets.data ?? [];
   const failure = buckets.isError ? keyListFailure(buckets.error) : null;
   return (
-    <div aria-label={fill(copy("ui.buckets.for"), { keyId: keyId })}>
+    <div role="region" aria-label={fill(copy("ui.buckets.for"), { keyId: keyId })}>
       {buckets.isPending ? (
-        <div className="h-16 border border-line" aria-label={fill(copy("ui.loading.buckets.for"), { keyId: keyId })} />
+        <div className="h-16 border border-line" role="status" aria-label={fill(copy("ui.loading.buckets.for"), { keyId: keyId })}>{fill(copy("ui.loading.buckets.for"), { keyId: keyId })}</div>
       ) : null}
       {failure && !isGarageDown(failure) ? (
         <>
@@ -739,7 +739,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           }}
         >
           <p className="ui-identifier">{keyDetail.id}</p>
-          {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
+          {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
           {["settings", "overview"].includes(keyDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
             <button className="ui-button" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</button>
@@ -760,7 +760,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && canManage ? <div className="ui-panel" hidden={!creating}><CreateKeyForm onSecret={setReveal} /></div> : null}
       {keyDetail === null && view.busy ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.keys")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div>
       ) : null}
       {keyDetail === null && view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
       {keyDetail === null && view.failure && !isGarageDown(view.failure) ? (
@@ -834,10 +834,10 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <tbody>
               {shown.map((accessKey, index) => (
                 <tr key={`${accessKey.id}-${index}`}>
-                  <td><a className="ui-identifier" title={accessKey.id} aria-label={accessKey.id}
+                  <td><a className="ui-identifier ui-identifier-truncated" title={accessKey.id} aria-label={accessKey.id}
                     href={hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })}
                     onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })); }}>
-                    {accessKey.id.length > 24 ? `${accessKey.id.slice(0, 12)}…${accessKey.id.slice(-8)}` : accessKey.id}
+                    {accessKey.id}
                   </a></td>
                   <td className="py-2 align-top">{accessKey.name}</td>
                   {canManage ? (
@@ -845,7 +845,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                       <button
                         className="ui-button"
                         type="button"
-                        aria-label={viewSecret.isPending && viewSecret.variables === accessKey.id ? copy("ui.reading.secret") : fill(copy("ui.view.secret.for"), { id: accessKey.id })}
+                        aria-label={viewSecret.isPending && viewSecret.variables === accessKey.id ? copy("ui.reading.secret") : `${copy("ui.show.secret")} (${accessKey.id})`}
                         disabled={viewSecret.isPending && viewSecret.variables === accessKey.id}
                         onClick={() => {
                           viewSecret.reset();

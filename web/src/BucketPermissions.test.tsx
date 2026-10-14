@@ -177,8 +177,8 @@ test("shows Loading keys and marks the panel busy on the first load", async () =
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   const panel = screen.getByRole("region", { name: "Permissions for bkt-1" });
   expect(panel.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading keys")).toBeNull();
+  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading keys")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("This bucket has no keys.")).toBeNull();
   expect(screen.queryByText("Refreshing keys")).toBeNull();

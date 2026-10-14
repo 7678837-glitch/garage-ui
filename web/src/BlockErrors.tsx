@@ -213,7 +213,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
     <section className="ui-page" aria-label={copy("nav.blockErrors")} aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
       {view.busy ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.block.errors")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.block.errors")}>{copy("ui.loading.block.errors")}</div>
       ) : null}
       {view.refreshing ? <p>{copy("ui.refreshing.block.errors")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (

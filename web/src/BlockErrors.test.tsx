@@ -236,8 +236,8 @@ test("shows Loading block errors and marks the block errors section busy on the 
   renderBlockErrors();
   const section = screen.getByRole("region", { name: "Block errors" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading block errors").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading block errors")).toBeNull();
+  expect(screen.getByLabelText("Loading block errors").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading block errors")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no block errors.")).toBeNull();
   expect(screen.queryByText("Refreshing block errors")).toBeNull();

@@ -195,8 +195,8 @@ test("shows Loading audit and marks the audit section busy on the first load", a
   renderAudit();
   const section = screen.getByRole("region", { name: "Audit" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading audit").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading audit")).toBeNull();
+  expect(screen.getByLabelText("Loading audit").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading audit")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no audit events.")).toBeNull();
   expect(screen.queryByText("Refreshing audit")).toBeNull();

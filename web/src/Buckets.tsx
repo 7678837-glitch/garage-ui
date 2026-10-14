@@ -1827,7 +1827,7 @@ export function Buckets({
           }}
         >
           <p className="ui-identifier">{bucketDetail.id}</p>
-          {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div> : null}
+          {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div> : null}
           {["settings", "overview"].includes(bucketDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
             <button className="ui-button" onClick={() => { void addressedBucket.refetch(); }}>{copy("ui.retry")}</button>
@@ -1867,7 +1867,7 @@ export function Buckets({
       ) : null}
       {listing && canManage ? <div className="ui-panel" hidden={!creating}><CreateBucketForm /></div> : null}
       {bucketDetail === null && view.loading ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.buckets")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div>
       ) : null}
       {bucketDetail === null && view.refreshing ? <p>{copy("ui.refreshing.buckets")}</p> : null}
       {bucketDetail === null && view.failure && !isGarageDown(view.failure) ? (
@@ -1948,10 +1948,10 @@ export function Buckets({
             </tr></thead>
             <tbody>{shown.map((bucket, index) => (
               <tr key={`${bucket.id}-${index}`}>
-                <td><a className="ui-identifier" title={bucket.id} aria-label={bucket.id}
+                <td><a className="ui-identifier ui-identifier-truncated" title={bucket.id} aria-label={bucket.id}
                   href={hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })}
                   onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })); }}>
-                  {bucket.id.length > 24 ? `${bucket.id.slice(0, 12)}…${bucket.id.slice(-8)}` : bucket.id}
+                  {bucket.id}
                 </a></td>
                 <td><UsageText bucket={bucket} /></td>
                 <td>{bucket.aliases.map((alias, aliasIndex) => <Fragment key={aliasIndex}>{aliasIndex > 0 ? ", " : null}<span>{alias.name}</span></Fragment>)}</td>

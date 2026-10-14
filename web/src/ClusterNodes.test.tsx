@@ -170,6 +170,7 @@ test("shows an up node with a hostname and a down draining node", async () => {
   const down = screen.getByText("node-down").closest("tr");
   expect(up?.textContent).toContain("node-up");
   expect(up?.textContent).toContain("alpha");
+  expect(screen.getByRole("link", { name: "alpha · Node node-up" }).textContent).toBe("alpha");
   expect(up?.textContent).toContain("10.0.0.1:3901");
   expect(up?.textContent).toContain("v2.4.1");
   expect(up?.textContent).toContain("Up");
@@ -206,8 +207,8 @@ test("shows Loading nodes and marks the nodes section busy on the first load", a
   const section = await screen.findByRole("region", { name: "Cluster nodes" });
   const loading = screen.getByLabelText("Loading nodes");
   expect(section.contains(loading)).toBe(true);
-  expect(loading.getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading nodes")).toBeNull();
+  expect(loading.getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading nodes")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no nodes. Connect the first node.")).toBeNull();
   release(json({ layoutVersion: 3, nodes: [] }));

@@ -662,8 +662,8 @@ test("shows Loading workers and marks the workers section busy on the first load
   renderWorkers();
   const section = screen.getByRole("region", { name: "Workers" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading workers").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading workers")).toBeNull();
+  expect(screen.getByLabelText("Loading workers").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading workers")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no workers.")).toBeNull();
   expect(screen.queryByText("Refreshing workers")).toBeNull();

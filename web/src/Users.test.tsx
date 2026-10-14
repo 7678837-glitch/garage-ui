@@ -459,8 +459,8 @@ test("shows Loading users and marks the users section busy on the first load", a
   renderUsers();
   const section = screen.getByRole("region", { name: "Users" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading users").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading users")).toBeNull();
+  expect(screen.getByLabelText("Loading users").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading users")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.queryByText("Refreshing users")).toBeNull();

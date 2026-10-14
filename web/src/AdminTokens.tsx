@@ -960,7 +960,7 @@ export function AdminTokens() {
 
       </div>
       {list.isPending ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.admin.tokens")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.admin.tokens")}>{copy("ui.loading.admin.tokens")}</div>
       ) : null}
       {listFailure ? (
         <>

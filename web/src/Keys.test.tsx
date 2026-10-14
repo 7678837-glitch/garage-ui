@@ -164,8 +164,8 @@ test("shows Loading keys and marks the keys section busy on the first load", asy
   renderKeys();
   const section = screen.getByRole("region", { name: "Keys" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading keys")).toBeNull();
+  expect(screen.getByLabelText("Loading keys").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading keys")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no keys.")).toBeNull();
   expect(screen.queryByText("Refreshing keys")).toBeNull();
@@ -321,7 +321,7 @@ test("a viewer sees the key list and does not call key write routes", async () =
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Rename GK1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete GK1" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "View secret for GK1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Show secret (GK1)" })).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Allow create bucket for GK1" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(calls.every((call) => call.method === "GET" && call.url.startsWith("/api/keys?"))).toBe(
@@ -806,7 +806,7 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   renderKeys(true);
   expect(await screen.findByText("photos")).toBeTruthy();
   expect(pageHolds("LISTSECRET")).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "View secret for a b&c=d" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show secret (a b&c=d)" }));
   const field = (await screen.findByLabelText("Secret access key")) as HTMLInputElement;
   expect(field.value).toBe("VIEWSECRET");
   expect(screen.queryByText("NOTINLIST")).toBeNull();
@@ -838,18 +838,18 @@ test("shows the API message when a secret view fails and does not open the dialo
     }),
   );
   renderKeys(true);
-  fireEvent.click(await screen.findByRole("button", { name: "View secret for GK1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Show secret (GK1)" }));
   expect(await screen.findByText("Confirmation required")).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-test("summarizes a long key identifier while keeping the complete address inspectable", async () => {
+test("keeps a long key identifier complete for accessible naming and inspection", async () => {
   const resourceId = "b".repeat(64);
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, name: "Long key" }], hasMore: false })));
   renderKeys(true);
   const link = await screen.findByRole("link", { name: resourceId });
-  expect(link.textContent).toBe(`${resourceId.slice(0, 12)}…${resourceId.slice(-8)}`);
+  expect(link.textContent).toBe(resourceId);
   expect(link.getAttribute("title")).toBe(resourceId);
   expect(link.getAttribute("href")).toBe(`#key/${resourceId}/overview`);
   fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));

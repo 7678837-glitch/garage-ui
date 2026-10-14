@@ -1136,7 +1136,7 @@ export function Objects({
         </details>
       ) : null}
       {loading && !showRows ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.objects")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.objects")}>{copy("ui.loading.objects")}</div>
       ) : null}
       {showFailure && failure ? <p className="ui-alert">{failure.message}</p> : null}
       {showFailure && failure?.code ? <p>{failure.code}</p> : null}

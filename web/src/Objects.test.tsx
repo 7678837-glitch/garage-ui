@@ -458,8 +458,8 @@ test("says there are no objects after the list loads", async () => {
   renderObjects();
   const section = screen.getByRole("region", { name: "Objects" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading objects")).toBeTruthy();
-  expect(screen.queryByText("Loading objects")).toBeNull();
+  expect(screen.getByRole("status", { name: "Loading objects" })).toBeTruthy();
+  expect(screen.getByText("Loading objects")).toBeTruthy();
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   release(json(page([])));
   expect(await screen.findByText("There are no objects. Upload the first object.")).toBeTruthy();

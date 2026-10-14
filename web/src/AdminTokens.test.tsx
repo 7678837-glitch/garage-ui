@@ -879,8 +879,8 @@ test("shows Loading admin tokens and marks the admin tokens section busy on the 
   renderTokens();
   const section = screen.getByRole("region", { name: "Admin tokens" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading admin tokens").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading admin tokens")).toBeNull();
+  expect(screen.getByLabelText("Loading admin tokens").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading admin tokens")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("No admin tokens")).toBeNull();
   expect(screen.getByRole("button", { name: "Create token" })).toBeTruthy();

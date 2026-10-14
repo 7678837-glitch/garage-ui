@@ -156,7 +156,7 @@ export function Audit() {
         {copy("ui.export.audit")}</button>
       </div>
       {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
-      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.audit")} /> : null}
+      {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.audit")}>{copy("ui.loading.audit")}</div> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.audit")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

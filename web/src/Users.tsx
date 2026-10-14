@@ -631,7 +631,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
 
       </div>
-      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.users")} /> : null}
+      {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.users")}>{copy("ui.loading.users")}</div> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.users")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>

@@ -157,8 +157,8 @@ test("shows Loading buckets and marks the buckets section busy on the first load
   renderBuckets();
   const section = screen.getByRole("region", { name: "Buckets" });
   expect(section.getAttribute("aria-busy")).toBe("true");
-  expect(screen.getByLabelText("Loading buckets").getAttribute("role")).toBeNull();
-  expect(screen.queryByText("Loading buckets")).toBeNull();
+  expect(screen.getByLabelText("Loading buckets").getAttribute("role")).toBe("status");
+  expect(screen.getByText("Loading buckets")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no buckets.")).toBeNull();
   expect(screen.queryByText("Refreshing buckets")).toBeNull();
@@ -1385,12 +1385,12 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
   expect(screen.queryByRole("button", { name: "Clean up" })).toBeNull();
 });
 
-test("summarizes a long bucket identifier while keeping the complete address inspectable", async () => {
+test("keeps a long bucket identifier complete for accessible naming and inspection", async () => {
   const resourceId = "b".repeat(64);
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, quotas: { maxSize: 5000, maxObjects: 12 } }], hasMore: false })));
   renderBuckets(true);
   const link = await screen.findByRole("link", { name: resourceId });
-  expect(link.textContent).toBe(`${resourceId.slice(0, 12)}…${resourceId.slice(-8)}`);
+  expect(link.textContent).toBe(resourceId);
   expect(link.getAttribute("title")).toBe(resourceId);
   expect(link.getAttribute("href")).toBe(`#bucket/${resourceId}/overview`);
   fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));

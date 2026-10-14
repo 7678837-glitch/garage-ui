@@ -926,7 +926,7 @@ export function ClusterNodes() {
         </>
       ) : null}
       {nodes.isPending ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.nodes")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.nodes")}>{copy("ui.loading.nodes")}</div>
       ) : null}
       {nodes.isError && !isGarageDown(nodes.error) ? (
         <>
@@ -958,9 +958,9 @@ export function ClusterNodes() {
             <tbody>
           {shown.map((node) => (
             <tr key={node.id}>
-              <td><a aria-label={fill(copy("ui.node"), {id:node.id})} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a></td>
+              <td><a aria-label={`${node.hostname ?? "—"} · ${fill(copy("ui.node"), { id: node.id })}`} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a></td>
               <td>
-                <p className="ui-identifier" title={node.id}>{node.id}</p>
+                <p className="ui-identifier ui-identifier-truncated" title={node.id}>{node.id}</p>
                 {node.addr !== null ? <p className="ui-muted ui-identifier">{node.addr}</p> : null}
                 {node.garageVersion !== null ? <p className="ui-muted">{node.garageVersion}</p> : null}
               </td>

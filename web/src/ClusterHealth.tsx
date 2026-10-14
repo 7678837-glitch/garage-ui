@@ -351,7 +351,7 @@ export function ClusterHealth() {
     <section className="ui-page" aria-label={copy("ui.cluster.health")}>
       <h2 className="text-lg font-semibold">{copy("ui.cluster.health")}</h2>
       {health.isPending ? (
-        <div className="h-16 border border-line" aria-label={copy("ui.loading.cluster.health")} />
+        <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.cluster.health")}>{copy("ui.loading.cluster.health")}</div>
       ) : null}
       {health.isError && !isGarageDown(health.error) ? (
         <>
