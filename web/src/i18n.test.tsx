@@ -5,7 +5,7 @@ import { CapacityField } from "./CapacityField";
 import { ConfirmDialog } from "./confirm";
 import { en } from "./copy-en";
 import { zh } from "./copy-zh";
-import { CapacityText, InstantText, LanguageChooser, LanguageProvider, phrase } from "./i18n";
+import { CompactCapacityText, ReadableInstantText, CapacityText, InstantText, LanguageChooser, LanguageProvider, phrase } from "./i18n";
 
 afterEach(() => {
   cleanup();
@@ -169,4 +169,53 @@ test("the confirm dialog follows the language", () => {
   expect(screen.getByRole("heading", { name: "确认 key-1" }).textContent).toBe("确认 key-1");
   expect(screen.getByRole("button", { name: "取消" }).textContent).toBe("取消");
   expect(screen.getByRole("button", { name: "确认" }).textContent).toBe("确认");
+});
+
+
+test("compact capacity rounds huge bytes without losing the exact original value", () => {
+  const { container } = render(<CompactCapacityText digits="9007199254740993" />);
+  expect(screen.getByText((_, element) => element?.textContent === "≈ 9.01 PB", { selector: ".ui-value-text > span" })).toBeTruthy();
+  const details = container.querySelector("details");
+  expect(details?.querySelector("summary")?.textContent).toBe("Exact bytes");
+  expect(details?.querySelector("code")?.textContent).toBe("9007199254740993 B");
+  expect(container.querySelector('[aria-label="Approximate"]')).toBeTruthy();
+});
+
+test.each([
+  ["0", "0 B"], ["1000", "1 KB"], ["1230", "1.23 KB"],
+  ["1234", "≈ 1.23 KB"], ["999999", "≈ 1 MB"],
+  ["999999999999999999999999", "≈ 1000000000 PB"],
+])("compact capacity renders %s as %s", (digits, expected) => {
+  render(<CompactCapacityText digits={digits} />);
+  expect(screen.getByText((_, element) => element?.textContent === expected, { selector: ".ui-value-text > span" })).toBeTruthy();
+});
+
+test("compact capacity follows the selected locale and preserves unknown text", () => {
+  localStorage.setItem("garage-ui-language", "zh-CN");
+  const { container } = render(<LanguageProvider><CompactCapacityText digits="1234" /></LanguageProvider>);
+  expect(screen.getByText((_, element) => element?.textContent === "≈ 1.23 千字节", { selector: ".ui-value-text > span" })).toBeTruthy();
+  expect(container.querySelector("summary")?.textContent).toBe("精确字节数");
+  cleanup();
+  render(<CompactCapacityText digits="unknown" />);
+  expect(screen.getByText("unknown")).toBeTruthy();
+});
+
+test.each(["en", "zh-CN"])("readable timestamp uses %s and UTC with exact ISO disclosure", (language) => {
+  localStorage.setItem("garage-ui-language", language);
+  const value = "2026-10-11T23:04:05.123Z";
+  const { container } = render(<LanguageProvider><ReadableInstantText value={value} /></LanguageProvider>);
+  const time = container.querySelector("time");
+  const expected = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium", timeStyle: "medium", timeZone: "UTC", hourCycle: "h23",
+  }).format(new Date(value));
+  expect(time?.textContent).toBe(`${expected} UTC`);
+  expect(time?.dateTime).toBe(value);
+  expect(container.querySelector("details code")?.textContent).toBe(value);
+});
+
+test.each(["unknown", "", "2026-02-30T00:00:00Z", "2026-13-11T00:00:00Z"])("readable timestamp preserves invalid or unknown %s", (value) => {
+  const { container } = render(<ReadableInstantText value={value} />);
+  expect(container.textContent).toBe(value);
+  expect(container.querySelector("time")).toBeNull();
+  expect(container.querySelector("details")).toBeNull();
 });

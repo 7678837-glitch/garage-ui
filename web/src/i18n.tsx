@@ -182,6 +182,63 @@ export function InstantText({ value }: { value: string }) {
   return <time dateTime={value}>{formatInstant(value, language)}</time>;
 }
 
+export function CompactCapacityText({ digits }: { digits: string }) {
+  const { language } = useI18n();
+  if (!/^[0-9]+$/.test(digits)) {
+    return <>{digits}</>;
+  }
+  const bytes = BigInt(digits);
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
+  let index = 0;
+  let divisor = 1n;
+  while (index < units.length - 1 && bytes >= divisor * 1000n) {
+    divisor *= 1000n;
+    index += 1;
+  }
+  let hundredths = (bytes * 100n + divisor / 2n) / divisor;
+  if (hundredths >= 100000n && index < units.length - 1) {
+    divisor *= 1000n;
+    index += 1;
+    hundredths = (bytes * 100n + divisor / 2n) / divisor;
+  }
+  const whole = hundredths / 100n;
+  const fraction = (hundredths % 100n).toString().padStart(2, "0").replace(/0+$/, "");
+  const amount = fraction ? `${whole}.${fraction}` : whole.toString();
+  const approximate = hundredths * divisor !== bytes * 100n;
+  return (
+    <div className="ui-value-text">
+      <span>{approximate ? <span aria-label={phrase(language, "Approximate")}>≈ </span> : null}{amount} {catalogs[language][capacityUnitKey[units[index]]]}</span>
+      <details className="ui-value-details">
+        <summary>{phrase(language, "Exact bytes")}</summary>
+        <code>{digits} B</code>
+      </details>
+    </div>
+  );
+}
+
+export function ReadableInstantText({ value }: { value: string }) {
+  const { language } = useI18n();
+  const date = new Date(value);
+  if (!utcInstant.test(value) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 19) !== value.slice(0, 19)) {
+    return <>{value}</>;
+  }
+  const readable = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    timeZone: "UTC",
+    hourCycle: "h23",
+  }).format(date);
+  return (
+    <div className="ui-value-text">
+      <time dateTime={value}>{readable} UTC</time>
+      <details className="ui-value-details">
+        <summary>{phrase(language, "Exact timestamp")}</summary>
+        <code>{value}</code>
+      </details>
+    </div>
+  );
+}
+
 export function LanguageChooser() {
   const { language, setLanguage, t } = useI18n();
   return (
