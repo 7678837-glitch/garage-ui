@@ -194,9 +194,9 @@ function GrantForm({ bucketId }: { bucketId: string }) {
         grant.mutate(draft);
       }}
     >
-      <label className="block text-sm">
+      <label className="ui-field">
         {copy("ui.access.key")}<input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           autoComplete="off"
           value={draft.accessKeyId}
           onChange={(event) => {
@@ -205,7 +205,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
       </label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           className="mr-2"
           type="checkbox"
@@ -216,7 +216,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
         {copy("ui.owner.2")}</label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           className="mr-2"
           type="checkbox"
@@ -227,7 +227,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
         {copy("ui.read.2")}</label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           className="mr-2"
           type="checkbox"
@@ -238,10 +238,10 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
         {copy("ui.write.2")}</label>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {grant.isSuccess ? <p>{copy("ui.permissions.granted")}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="submit"
         disabled={!ready || grant.isPending}
       >
@@ -279,7 +279,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
   const revokeError = revoke.error instanceof Error ? revoke.error.message : null;
   return (
     <section
-      className="mt-3 grid max-w-sm gap-2"
+      className="ui-page"
       aria-label={fill(copy("ui.permissions.for"), { bucketId: bucketId })}
       aria-busy={view.busy}
     >
@@ -290,7 +290,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void keys.refetch();
@@ -307,30 +307,26 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
         </p>
       ) : null}
       {keys.data && keys.data.length > 0 ? (
-        <ul className="grid gap-2">
-          {keys.data.map((key, index) => (
-            <li key={`${key.accessKeyId}-${index}`}>
-              <p>{key.accessKeyId}</p>
-              {key.name !== null && key.name.length > 0 ? <p>{key.name}</p> : null}
-              <p>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</p>
-              <p>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</p>
-              <p>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</p>
-              {canManage && hasPermission(key) ? (
-                <button
-                  className="border border-ink px-2 py-1 text-left"
-                  type="button"
-                  onClick={() => {
-                    revoke.reset();
-                    setTarget(key);
-                  }}
-                >
-                  {fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}</button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <div className="ui-table-container" role="region" aria-label={copy("nav.keys")} tabIndex={0}>
+          <table className="ui-table"><thead><tr>
+            <th scope="col">{copy("ui.key.2")}</th><th scope="col">{copy("ui.name")}</th>
+            <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
+            {canManage ? <th scope="col">{copy("ui.actions")}</th> : null}
+          </tr></thead><tbody>{keys.data.map((key, index) => (
+            <tr key={`${key.accessKeyId}-${index}`}>
+              <td className="ui-identifier">{key.accessKeyId}</td><td>{key.name}</td>
+              <td>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</td>
+              <td>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</td><td>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</td>
+              {canManage ? <td>{hasPermission(key) ? <button className="ui-button ui-button-danger" type="button"
+                onClick={() => { revoke.reset(); setTarget(key); }}>{fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}</button> : null}</td> : null}
+            </tr>
+          ))}</tbody></table>
+        </div>
       ) : null}
-      {canManage ? <GrantForm bucketId={bucketId} /> : null}
+      {canManage ? <details className="ui-disclosure">
+        <summary aria-label={copy("ui.grant.key")}>{copy("ui.grant.key")}</summary>
+        <GrantForm bucketId={bucketId} />
+      </details> : null}
       {target !== null ? (
         <ConfirmDialog
           action="revoke-permission"
@@ -369,7 +365,7 @@ export function BucketPermissions({
   return (
     <>
       <button
-        className="ml-2 border border-ink px-2 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setOpen(true);

@@ -492,7 +492,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
   );
   return (
     <form
-      className="mt-3 grid min-w-0 max-w-sm gap-2"
+      className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
         const size = fieldLiteral(maxSize);
@@ -507,7 +507,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
     >
       <label className={`${wrap} block text-sm`}>
         {fill(copy("ui.max.size.for"), { bucketId: bucketId })}<input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="ui-input"
           inputMode="numeric"
           autoComplete="off"
           value={maxSize}
@@ -518,7 +518,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
       </label>
       <label className={`${wrap} block text-sm`}>
         {fill(copy("ui.max.objects.for"), { bucketId: bucketId })}<input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="ui-input"
           inputMode="numeric"
           autoComplete="off"
           value={maxObjects}
@@ -527,10 +527,10 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
           }}
         />
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {quotaStatus ? <p>{quotaStatus}</p> : null}
       <button
-        className={`${wrap} border border-neutral-900 px-3 py-1 text-left`}
+        className={`${wrap} ui-button`}
         type="submit"
         disabled={save.isPending}
       >
@@ -716,7 +716,7 @@ function CorsEditor({ bucketId }: { bucketId: string }) {
   if (!open) {
     return (
       <button
-        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setOpen(true);
@@ -756,17 +756,17 @@ function CorsForm({ bucketId }: { bucketId: string }) {
     setDrafts(drafts.map((item, itemIndex) => (itemIndex === index ? rule : item)));
   };
   return (
-    <div className="mt-3 grid max-w-sm gap-2">
+    <div className="ui-form">
       {drafts.map((rule, index) => (
         <div key={index} className="grid gap-2">
           {rule.preserved !== undefined ? (
             <p>{JSON.stringify(rule.preserved)}</p>
           ) : (
             CORS_FIELDS.map(([key, label]) => (
-              <label key={label} className="block text-sm">
+              <label key={label} className="ui-field">
                 {translate(label)}
                 <input
-                  className="mt-1 w-full border border-neutral-300 px-2 py-1"
+                  className="ui-input"
                   value={rule[key]}
                   onChange={(event) => {
                     replaceRule(index, { ...rule, [key]: event.target.value });
@@ -776,7 +776,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
             ))
           )}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
@@ -786,7 +786,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
         </div>
       ))}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setDrafts([...drafts, emptyCorsDraft()]);
@@ -794,7 +794,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
       >
         {copy("ui.add.cors.rule")}</button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={!ready}
         onClick={() => {
@@ -816,7 +816,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
           <pre aria-label={copy("ui.current")}>{current}</pre>
           <pre aria-label={copy("ui.next")}>{nextCorsText(drafts)}</pre>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               setCurrent(null);
@@ -824,7 +824,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
           >
             {copy("ui.cancel")}</button>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             disabled={save.isPending || !ready}
             onClick={() => {
@@ -1127,7 +1127,7 @@ function LifecycleEditor({ bucketId }: { bucketId: string }) {
   if (!open) {
     return (
       <button
-        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setOpen(true);
@@ -1169,17 +1169,17 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
     setDrafts(drafts.map((item, itemIndex) => (itemIndex === index ? rule : item)));
   };
   return (
-    <div className="mt-3 grid max-w-sm gap-2">
+    <div className="ui-form">
       {drafts.map((rule, index) => (
         <div key={index} className="grid gap-2">
           {rule.preserved !== undefined ? (
             <p>{JSON.stringify(rule.preserved)}</p>
           ) : (
             LIFECYCLE_FIELDS.map(([key, label]) => (
-              <label key={label} className="block text-sm">
+              <label key={label} className="ui-field">
                 {translate(label)}
                 <input
-                  className="mt-1 w-full border border-neutral-300 px-2 py-1"
+                  className="ui-input"
                   value={rule[key]}
                   onChange={(event) => {
                     replaceRule(index, { ...rule, [key]: event.target.value });
@@ -1189,7 +1189,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
             ))
           )}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
@@ -1199,7 +1199,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
         </div>
       ))}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setDrafts([...drafts, emptyLifecycleDraft()]);
@@ -1207,7 +1207,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
       >
         {copy("ui.add.lifecycle.rule")}</button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={!ready}
         onClick={() => {
@@ -1231,7 +1231,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
           <pre aria-label={copy("ui.current")}>{current}</pre>
           <pre aria-label={copy("ui.next")}>{nextLifecycleText(drafts)}</pre>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               setCurrent(null);
@@ -1239,7 +1239,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
           >
             {copy("ui.cancel")}</button>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             disabled={save.isPending || !ready}
             onClick={() => {
@@ -1310,7 +1310,7 @@ function IncompleteUploads({ bucketId }: { bucketId: string }) {
   if (!open) {
     return (
       <button
-        className="mt-3 border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setOpen(true);
@@ -1353,7 +1353,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
   const secs = olderThanSecs(hours);
   const deleted = uploadsDeletedFrom(cleanup.data);
   return (
-    <div className="mt-3 grid max-w-sm gap-2">
+    <div className="ui-form">
       {uploadsFrom(query.data).map((upload) => (
         <p key={`${upload.key}:${upload.uploadId}`}>
           <span>{upload.key}</span>
@@ -1361,9 +1361,9 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
           <span>{upload.initiated}</span>
         </p>
       ))}
-      <label className="block text-sm">
+      <label className="ui-field">
         {copy("ui.older.than.hours")}<input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="ui-input"
           inputMode="numeric"
           value={hours}
           onChange={(event) => {
@@ -1372,7 +1372,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
         />
       </label>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={secs === null || cleanup.isPending}
         onClick={() => {
@@ -1410,26 +1410,26 @@ function CreateBucketForm() {
   const error = create.error instanceof Error ? create.error.message : null;
   return (
     <form
-      className="grid max-w-sm gap-3"
+      className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
         create.mutate(globalAlias);
       }}
     >
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.global.alias")}</span>
         <input
-          className="mt-1 w-full border border-neutral-300 px-2 py-1"
+          className="ui-input"
           value={globalAlias}
           onChange={(event) => {
             setGlobalAlias(event.target.value);
           }}
         />
       </label>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="submit"
         disabled={create.isPending}
       >
@@ -1458,7 +1458,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
   const error = add.error instanceof Error ? add.error.message : null;
   return (
     <form
-      className="mt-3 grid min-w-0 max-w-sm gap-2"
+      className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
         add.mutate(draftBody(draft));
@@ -1492,7 +1492,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       {draft.scope === "global" ? (
         <label className={`${wrap} block text-sm`}>
           {fill(copy("ui.global.alias.for"), { bucketId: bucketId })}<input
-            className="mt-1 w-full border border-neutral-300 px-2 py-1"
+            className="ui-input"
             value={draft.globalAlias}
             onChange={(event) => {
               setDraft((current) => ({ ...current, globalAlias: event.target.value }));
@@ -1503,7 +1503,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         <>
           <label className={`${wrap} block text-sm`}>
             {fill(copy("ui.local.alias.for"), { bucketId: bucketId })}<input
-              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              className="ui-input"
               value={draft.localAlias}
               onChange={(event) => {
                 setDraft((current) => ({ ...current, localAlias: event.target.value }));
@@ -1512,7 +1512,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
           </label>
           <label className={`${wrap} block text-sm`}>
             {fill(copy("ui.access.key.for"), { bucketId: bucketId })}<input
-              className="mt-1 w-full border border-neutral-300 px-2 py-1"
+              className="ui-input"
               value={draft.accessKeyId}
               onChange={(event) => {
                 setDraft((current) => ({ ...current, accessKeyId: event.target.value }));
@@ -1521,10 +1521,10 @@ function AliasControls({ bucketId }: { bucketId: string }) {
           </label>
         </>
       )}
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className={`${wrap} border border-neutral-900 px-3 py-1 text-left`}
+        className={`${wrap} ui-button`}
         type="submit"
         disabled={add.isPending}
       >
@@ -1552,7 +1552,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
   return (
     <>
       <button
-        className="ml-2 border border-neutral-900 px-2 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={remove.isPending}
         onClick={() => {
@@ -1561,7 +1561,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
       >
         {remove.isPending ? copy("ui.removing.alias") : label}
       </button>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
     </>
   );
 }
@@ -1600,7 +1600,7 @@ function DeleteBucketDialog({
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby="delete-bucket-title"
-      className="border border-neutral-900 bg-white p-4 text-neutral-900"
+      className="ui-dialog"
       onCancel={(event) => {
         event.preventDefault();
         onCancel();
@@ -1616,16 +1616,16 @@ function DeleteBucketDialog({
         {fill(copy("ui.delete.bucket"), { bucketId: bucketId })}</h3>
       <p>
         {fill(copy("ui.this.permanently.deletes.bucket.and.its.aliases.garage"), { bucketId: bucketId })}</p>
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       <button
         ref={cancelRef}
-        className="mr-2 border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={onCancel}
       >
         {copy("ui.cancel")}</button>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={pending}
         onClick={onConfirm}
@@ -1722,6 +1722,20 @@ function compareCreated(left: string | null, right: string | null): number {
 }
 
 // A caller that passes only canManage still shows object writes and preview.
+function BucketRowSettings({ bucket, canManage }: { bucket: Bucket; canManage: boolean }) {
+  const [inspected, setInspected] = useState(false);
+  return <details className="ui-disclosure" onToggle={(event) => { if (event.currentTarget.open) setInspected(true); }}>
+    <summary aria-label={`${copy(canManage ? "ui.edit" : "nav.settings")} ${bucket.id}`}>{copy(canManage ? "ui.edit" : "nav.settings")}</summary>
+    <div className="ui-form">
+      {bucket.id.length > 24 ? <p className="ui-identifier">{bucket.id}</p> : null}
+      {canManage && bucket.quotas ? <QuotaEditor key={`${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`} bucketId={bucket.id} quotas={bucket.quotas} /> : null}
+      {canManage ? <><CorsEditor bucketId={bucket.id} /><LifecycleEditor bucketId={bucket.id} /><IncompleteUploads bucketId={bucket.id} />
+        {bucket.aliases.map((alias, aliasIndex) => <RemoveAliasButton key={aliasIndex} bucketId={bucket.id} alias={alias} />)}
+        <AliasControls bucketId={bucket.id} /></> : inspected ? <><CorsSummary bucketId={bucket.id} /><LifecycleSummary bucketId={bucket.id} /></> : null}
+    </div>
+  </details>;
+}
+
 export function Buckets({
   canManage = false,
   canWrite = canManage,
@@ -1732,6 +1746,7 @@ export function Buckets({
   canTransfer?: boolean;
 }) {
   const client = useQueryClient();
+  const [creating, setCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [hash, assignHash] = useLocationHash();
@@ -1787,7 +1802,7 @@ export function Buckets({
   const deleteError = removeBucket.error instanceof Error ? removeBucket.error.message : null;
   const addressedBucket = useQuery({
     queryKey: ["buckets", "detail", bucketDetail?.id],
-    queryFn: () => loadBucket(bucketDetail!.id),
+    queryFn: bucketDetail === null ? undefined : () => loadBucket(bucketDetail.id),
     enabled: bucketDetail !== null && ["settings", "overview"].includes(bucketDetail.tab),
     initialData: () => rows.find((bucket) => bucket.id === bucketDetail?.id),
     staleTime: 30_000,
@@ -1796,8 +1811,11 @@ export function Buckets({
   const detailFailure = addressedBucket.isError ? bucketListFailure(addressedBucket.error) : null;
 
   return (
-    <section className="grid gap-4" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">{copy("nav.buckets")}</h2>
+    <section className="ui-page" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
+      <header className="ui-page-header">
+        <h2>{copy("nav.buckets")}</h2>
+        {listing && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
+      </header>
       {bucketDetail ? (
         <DetailTabs
           label={fill(copy("ui.bucket.2"), { id: bucketDetail.id })}
@@ -1809,7 +1827,7 @@ export function Buckets({
           }}
         >
           <p className="ui-identifier">{bucketDetail.id}</p>
-          {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.buckets")} /> : null}
+          {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div> : null}
           {["settings", "overview"].includes(bucketDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
             <button className="ui-button" onClick={() => { void addressedBucket.refetch(); }}>{copy("ui.retry")}</button>
@@ -1828,6 +1846,9 @@ export function Buckets({
           {bucketDetail.tab === "permissions" ? (
             <BucketPermissions bucketId={bucketDetail.id} canManage={canManage} expanded />
           ) : null}
+          {bucketDetail.tab === "overview" && openedBucket ? <div className="ui-panel"><UsageText bucket={openedBucket} />
+            {openedBucket.aliases.map((alias, index) => <p key={index}>{alias.name}</p>)}
+          </div> : null}
           {bucketDetail.tab === "settings" && canManage && openedBucket?.quotas ? (
             <QuotaEditor
               key={`${openedBucket.id}:${fieldText(openedBucket.quotas.maxSize)}:${fieldText(openedBucket.quotas.maxObjects)}`}
@@ -1835,9 +1856,16 @@ export function Buckets({
               quotas={openedBucket.quotas}
             />
           ) : null}
+          {bucketDetail.tab === "settings" && openedBucket ? <div className="ui-form">
+            {canManage ? <><AliasControls bucketId={openedBucket.id} />
+              {openedBucket.aliases.map((alias, index) => <RemoveAliasButton key={index} bucketId={openedBucket.id} alias={alias} />)}
+              <CorsEditor bucketId={openedBucket.id} /><LifecycleEditor bucketId={openedBucket.id} /><IncompleteUploads bucketId={openedBucket.id} />
+              <button className="ui-button ui-button-danger" type="button" onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{fill(copy("ui.delete"), { id: openedBucket.id })}</button>
+            </> : <><CorsSummary bucketId={openedBucket.id} /><LifecycleSummary bucketId={openedBucket.id} /></>}
+          </div> : null}
         </DetailTabs>
       ) : null}
-      {canManage && listing ? <CreateBucketForm /> : null}
+      {listing && canManage ? <div className="ui-panel" hidden={!creating}><CreateBucketForm /></div> : null}
       {bucketDetail === null && view.loading ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.buckets")} />
       ) : null}
@@ -1847,7 +1875,7 @@ export function Buckets({
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void list.refetch();
@@ -1858,10 +1886,10 @@ export function Buckets({
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {listing ? (
-        <div className="grid max-w-sm gap-3">
-          <label className="block text-sm">
+        <div className="ui-toolbar">
+          <label className="ui-field">
             {copy("ui.filter.buckets")}<input
-              className="mt-1 w-full border border-neutral-900 px-2 py-1"
+              className="ui-input"
               value={query.filter}
               onChange={(event) => {
                 const next = { filter: event.target.value, sort: query.sort };
@@ -1870,9 +1898,9 @@ export function Buckets({
               }}
             />
           </label>
-          <label className="block text-sm">
+          <label className="ui-field">
             {copy("ui.sort.buckets")}<select
-              className="mt-1 w-full border border-neutral-900 px-2 py-1"
+              className="ui-input"
               value={query.sort}
               onChange={(event) => {
                 const next = {
@@ -1888,8 +1916,8 @@ export function Buckets({
               <option value="created">{copy("ui.created")}</option>
             </select>
           </label>
-          <p>{copy("ui.default.order.is.id")}</p>
-          <p>{copy("ui.only.loaded.rows")}</p>
+          <p className="ui-muted">{copy("ui.default.order.is.id")}</p>
+          <p className="ui-muted">{copy("ui.only.loaded.rows")}</p>
         </div>
       ) : null}
       {location.kind === "objects" && bucketDetail === null ? (
@@ -1912,76 +1940,32 @@ export function Buckets({
         </p>
       ) : null}
       {listing && list.data && shown.length > 0 ? (
-        <div className="min-w-0 overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.bucket")}</th>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.usage")}</th>
-                <th className="py-2 font-medium" scope="col">
-                  {copy("ui.aliases")}</th>
+        <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.bucket")} tabIndex={0}>
+          <table className="ui-table">
+            <thead><tr>
+              <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.usage")}</th>
+              <th scope="col">{copy("ui.aliases")}</th><th scope="col">{copy("ui.actions")}</th>
+            </tr></thead>
+            <tbody>{shown.map((bucket, index) => (
+              <tr key={`${bucket.id}-${index}`}>
+                <td><a className="ui-identifier" title={bucket.id} aria-label={bucket.id}
+                  href={hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })}
+                  onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })); }}>
+                  {bucket.id.length > 24 ? `${bucket.id.slice(0, 12)}…${bucket.id.slice(-8)}` : bucket.id}
+                </a></td>
+                <td><UsageText bucket={bucket} /></td>
+                <td>{bucket.aliases.map((alias, aliasIndex) => <Fragment key={aliasIndex}>{aliasIndex > 0 ? ", " : null}<span>{alias.name}</span></Fragment>)}</td>
+                <td><div className="ui-actions">
+                  <button className="ui-button" type="button" aria-label={fill(copy("ui.objects.for"), { id: bucket.id })}
+                    onClick={() => goHash(hashForObjects(bucket.id, ""))}>{copy("nav.objects")}</button>
+                  <button className="ui-button" type="button" aria-label={fill(copy("ui.permissions.for"), { bucketId: bucket.id })}
+                    onClick={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "permissions" }))}>{copy("tab.permissions")}</button>
+                  {canManage ? <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: bucket.id })}
+                    onClick={() => { removeBucket.reset(); setDeleteId(bucket.id); }}>{copy("ui.delete.2")}</button> : null}
+                  <BucketRowSettings bucket={bucket} canManage={canManage} />
+                </div></td>
               </tr>
-            </thead>
-            <tbody>
-              {shown.map((bucket, index) => (
-                <tr key={`${bucket.id}-${index}`}>
-                  <td className={`${wrap} py-2 pr-3 align-top`}>
-                    <span className={wrap}>{bucket.id}</span>
-                    <button
-                      className={`${wrap} ml-2 border border-neutral-900 px-2 py-1 text-left`}
-                      type="button"
-                      onClick={() => {
-                        goHash(hashForObjects(bucket.id, ""));
-                      }}
-                    >
-                      {fill(copy("ui.objects.for"), { id: bucket.id })}</button>
-                    <BucketPermissions bucketId={bucket.id} canManage={canManage} />
-                    {canManage ? (
-                      <button
-                        className={`${wrap} ml-2 border border-neutral-900 px-2 py-1 text-left`}
-                        type="button"
-                        onClick={() => {
-                          removeBucket.reset();
-                          setDeleteId(bucket.id);
-                        }}
-                      >
-                        {fill(copy("ui.delete"), { id: bucket.id })}</button>
-                    ) : null}
-                  </td>
-                  <td className={`${wrap} py-2 pr-3 align-top`}>
-                    <UsageText bucket={bucket} />
-                    {canManage && bucket.quotas ? (
-                      <QuotaEditor
-                        key={`${index}:${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`}
-                        bucketId={bucket.id}
-                        quotas={bucket.quotas}
-                      />
-                    ) : null}
-                    {canManage ? <CorsEditor bucketId={bucket.id} /> : <CorsSummary bucketId={bucket.id} />}
-                    {canManage ? (
-                      <>
-                        <LifecycleEditor bucketId={bucket.id} />
-                        <IncompleteUploads bucketId={bucket.id} />
-                      </>
-                    ) : (
-                      <LifecycleSummary bucketId={bucket.id} />
-                    )}
-                  </td>
-                  <td className={`${wrap} py-2 align-top`}>
-                    {bucket.aliases.map((alias, aliasIndex) => (
-                      <Fragment key={`${bucket.id}-${aliasIndex}`}>
-                        {aliasIndex > 0 ? ", " : null}
-                        <span>{alias.name}</span>
-                        {canManage ? <RemoveAliasButton bucketId={bucket.id} alias={alias} /> : null}
-                      </Fragment>
-                    ))}
-                    {canManage ? <AliasControls bucketId={bucket.id} /> : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+            ))}</tbody>
           </table>
         </div>
       ) : null}
@@ -1989,7 +1973,7 @@ export function Buckets({
         <>
           <p>{copy("ui.more.buckets.are.available")}</p>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             disabled={list.isFetchingNextPage}
             onClick={() => {

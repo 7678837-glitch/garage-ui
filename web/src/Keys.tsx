@@ -194,7 +194,7 @@ function KeyBuckets({ keyId }: { keyId: string }) {
           <p>{failure.message}</p>
           {failure.code ? <p>{failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void buckets.refetch();
@@ -205,22 +205,18 @@ function KeyBuckets({ keyId }: { keyId: string }) {
       ) : null}
       {buckets.data && rows.length === 0 ? <p>{copy("ui.this.key.cannot.access.any.buckets")}</p> : null}
       {rows.length > 0 ? (
-        <ul className="grid gap-2">
-          {rows.map((bucket, index) => (
-            <li key={`${bucket.id}-${index}`} aria-label={bucket.id}>
-              <p>{bucket.id}</p>
-              {bucket.globalAliases.map((alias, aliasIndex) => (
-                <p key={`global-${alias}-${aliasIndex}`}>{alias}</p>
-              ))}
-              {bucket.localAliases.map((alias, aliasIndex) => (
-                <p key={`local-${alias}-${aliasIndex}`}>{alias}</p>
-              ))}
-              <p>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</p>
-              <p>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</p>
-              <p>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</p>
-            </li>
-          ))}
-        </ul>
+        <div className="ui-table-container" role="region" aria-label={copy("nav.buckets")} tabIndex={0}>
+          <table className="ui-table"><thead><tr>
+            <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.aliases")}</th>
+            <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
+          </tr></thead><tbody>{rows.map((bucket, index) => (
+            <tr key={`${bucket.id}-${index}`} aria-label={bucket.id}>
+              <td className="ui-identifier">{bucket.id}</td><td>{[...bucket.globalAliases, ...bucket.localAliases].map((alias, aliasIndex) => <span className="mr-2" key={aliasIndex}>{alias}</span>)}</td>
+              <td>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</td>
+              <td>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</td><td>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</td>
+            </tr>
+          ))}</tbody></table>
+        </div>
       ) : null}
     </div>
   );
@@ -358,26 +354,26 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
   const error = create.error instanceof Error ? create.error.message : null;
   return (
     <form
-      className="grid max-w-sm gap-3"
+      className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
         create.mutate(name);
       }}
     >
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.key.name")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={name}
           onChange={(event) => {
             setName(event.target.value);
           }}
         />
       </label>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="submit"
         disabled={create.isPending}
       >
@@ -414,26 +410,26 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
   );
   return (
     <form
-      className="mt-3 grid max-w-sm gap-2"
+      className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
         rename.mutate(draft);
       }}
     >
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{fill(copy("ui.name.for"), { id: id })}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value);
           }}
         />
       </label>
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
       {renameStatus ? <p>{renameStatus}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="submit"
         disabled={rename.isPending}
       >
@@ -481,7 +477,7 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
         />
         {fill(copy("ui.allow.create.bucket.for"), { id: id })}</label>
       {change.isPending ? <p>{copy("ui.saving")}</p> : null}
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {error ? <p className="ui-alert">{error}</p> : null}
     </div>
   );
 }
@@ -519,10 +515,10 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       <h3 id="key-secret-title" className="font-medium">
         {fill(copy("ui.secret.for"), { keyId: reveal.keyId })}</h3>
       <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.secret.access.key")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           readOnly
           autoComplete="off"
           type={visible ? "text" : "password"}
@@ -530,7 +526,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
         />
       </label>
       <button
-        className="mr-2 border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           setVisible(true);
@@ -539,7 +535,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
         {copy("ui.show.secret")}</button>
       <button
         ref={copyRef}
-        className="mr-2 border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={() => {
           void copySecret(reveal.secret).then((result) => {
@@ -555,7 +551,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
         {copy("ui.copy.secret")}</button>
       {feedback ? <p>{feedback}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={onClose}
       >
@@ -651,6 +647,7 @@ function compareCreated(left: string | null, right: string | null): number {
 
 export function Keys({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
+  const [creating, setCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -717,7 +714,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const keyDetail = detail?.resource === "key" ? detail : null;
   const addressedKey = useQuery({
     queryKey: ["keys", "detail", keyDetail?.id],
-    queryFn: () => loadKey(keyDetail!.id),
+    queryFn: keyDetail === null ? undefined : () => loadKey(keyDetail.id),
     enabled: keyDetail !== null && ["settings", "overview"].includes(keyDetail.tab),
     initialData: () => rows.find((accessKey) => accessKey.id === keyDetail?.id),
     staleTime: 30_000,
@@ -726,8 +723,11 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const detailFailure = addressedKey.isError ? keyListFailure(addressedKey.error) : null;
 
   return (
-    <section className="grid min-w-0 gap-4" aria-label={copy("nav.keys")} aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">{copy("nav.keys")}</h2>
+    <section className="ui-page" aria-label={copy("nav.keys")} aria-busy={view.busy}>
+      <header className="ui-page-header">
+        <h2>{copy("nav.keys")}</h2>
+        {keyDetail === null && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
+      </header>
       {keyDetail ? (
         <DetailTabs
           label={fill(copy("ui.key"), { id: keyDetail.id })}
@@ -739,31 +739,36 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           }}
         >
           <p className="ui-identifier">{keyDetail.id}</p>
-          {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.keys")} /> : null}
+          {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
           {["settings", "overview"].includes(keyDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
             <button className="ui-button" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</button>
           </div> : null}
+          {keyDetail.tab === "overview" && openedKey ? <div className="ui-panel"><p>{openedKey.name}</p>{openedKey.created ? <p>{openedKey.created}</p> : null}</div> : null}
           {keyDetail.tab === "buckets" ? <KeyBuckets keyId={keyDetail.id} /> : null}
           {keyDetail.tab === "settings" && openedKey && canManage ? (
             <>
-              <RenameKey id={openedKey.id} name={openedKey.name} />
-              <CreateBucketSwitch id={openedKey.id} allowed={openedKey.createBucket} />
+              <RenameKey key={openedKey.id} id={openedKey.id} name={openedKey.name} />
+              <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
+              <div className="ui-actions">
+                <button className="ui-button" type="button" disabled={viewSecret.isPending} onClick={() => { viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{fill(copy("ui.view.secret.for"), { id: openedKey.id })}</button>
+                <button className="ui-button ui-button-danger" type="button" onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{fill(copy("ui.delete"), { id: openedKey.id })}</button>
+              </div>{viewError ? <p className="ui-alert">{viewError}</p> : null}
             </>
           ) : null}
         </DetailTabs>
       ) : null}
-      {keyDetail === null && canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
+      {keyDetail === null && canManage ? <div className="ui-panel" hidden={!creating}><CreateKeyForm onSecret={setReveal} /></div> : null}
       {keyDetail === null && view.busy ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.keys")} />
       ) : null}
-      {view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
-      {view.failure && !isGarageDown(view.failure) ? (
+      {keyDetail === null && view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
+      {keyDetail === null && view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void list.refetch();
@@ -774,10 +779,10 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {keyDetail === null ? (
-      <div className="grid max-w-sm gap-3">
-        <label className="block text-sm">
+      <div className="ui-toolbar">
+        <label className="ui-field">
           {copy("ui.filter.keys")}<input
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -786,9 +791,9 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             }}
           />
         </label>
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.sort.keys")}<select
-            className="mt-1 w-full border border-ink px-2 py-1"
+            className="ui-input"
             value={query.sort}
             onChange={(event) => {
               const next = {
@@ -804,16 +809,16 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p>{copy("ui.default.order.is.id")}</p>
-        <p>{copy("ui.only.loaded.rows")}</p>
+        <p className="ui-muted">{copy("ui.default.order.is.id")}</p>
+        <p className="ui-muted">{copy("ui.only.loaded.rows")}</p>
       </div>
       ) : null}
       {keyDetail === null && view.empty ? (
         <p>{canManage ? copy("ui.there.are.no.keys.create.the.first.key") : copy("ui.there.are.no.keys")}</p>
       ) : null}
       {keyDetail === null && list.data && shown.length > 0 ? (
-        <div className="min-w-0 overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+        <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.key.2")} tabIndex={0}>
+          <table className="ui-table">
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
@@ -829,13 +834,18 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <tbody>
               {shown.map((accessKey, index) => (
                 <tr key={`${accessKey.id}-${index}`}>
-                  <td className="break-all py-2 pr-3 align-top">{accessKey.id}</td>
+                  <td><a className="ui-identifier" title={accessKey.id} aria-label={accessKey.id}
+                    href={hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })}
+                    onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })); }}>
+                    {accessKey.id.length > 24 ? `${accessKey.id.slice(0, 12)}…${accessKey.id.slice(-8)}` : accessKey.id}
+                  </a></td>
                   <td className="py-2 align-top">{accessKey.name}</td>
                   {canManage ? (
-                    <td className="break-all py-2 align-top">
+                    <td className="break-all py-2 align-top"><div className="ui-actions">
                       <button
-                        className="mr-2 border border-ink px-2 py-1 text-left"
+                        className="ui-button"
                         type="button"
+                        aria-label={viewSecret.isPending && viewSecret.variables === accessKey.id ? copy("ui.reading.secret") : fill(copy("ui.view.secret.for"), { id: accessKey.id })}
                         disabled={viewSecret.isPending && viewSecret.variables === accessKey.id}
                         onClick={() => {
                           viewSecret.reset();
@@ -844,23 +854,28 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                       >
                         {viewSecret.isPending && viewSecret.variables === accessKey.id
                           ? copy("ui.reading.secret")
-                          : fill(copy("ui.view.secret.for"), { id: accessKey.id })}
+                          : copy("ui.show.secret")}
                       </button>
                       <button
-                        className="border border-ink px-2 py-1 text-left"
+                        className="ui-button"
                         type="button"
+                        aria-label={fill(copy("ui.delete"), { id: accessKey.id })}
                         onClick={() => {
                           removeKey.reset();
                           setDeleteId(accessKey.id);
                         }}
                       >
-                        {fill(copy("ui.delete"), { id: accessKey.id })}</button>
+                        {copy("ui.delete.2")}</button>
                       {viewSecret.variables === accessKey.id && viewError ? (
-                        <p className="text-sm text-danger">{viewError}</p>
+                        <p className="ui-alert">{viewError}</p>
                       ) : null}
-                      <RenameKey id={accessKey.id} name={accessKey.name} />
-                      <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />
-                    </td>
+                      <details className="ui-disclosure">
+                        <summary aria-label={`${copy("ui.edit")} ${accessKey.id}`}>{copy("ui.edit")}</summary>
+                        {accessKey.id.length > 24 ? <p className="ui-identifier">{accessKey.id}</p> : null}
+                        <RenameKey id={accessKey.id} name={accessKey.name} />
+                        <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />
+                      </details>
+                    </div></td>
                   ) : null}
                 </tr>
               ))}
@@ -872,7 +887,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <>
           <p>{copy("ui.more.keys.are.available")}</p>
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             disabled={list.isFetchingNextPage}
             onClick={() => {

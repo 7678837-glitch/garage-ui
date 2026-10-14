@@ -222,7 +222,7 @@ test("cold bucket settings load addressed quotas beyond the first list page with
   expect(fetcher.mock.calls.filter(([input]) => String(input).includes("offset=")).length).toBe(1);
 });
 
-test.each(["bucket", "key"] as const)("cold %s settings show loading, not-found and retry", async (resource) => {
+test.each([["bucket", 404], ["key", 404], ["bucket", 500], ["key", 500]] as const)("cold %s settings show loading, failure %i and retry", async (resource, status) => {
   window.location.hash = `#${resource}/missing/settings`;
   let finish: ((response: Response) => void) | undefined;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -233,9 +233,9 @@ test.each(["bucket", "key"] as const)("cold %s settings show loading, not-found 
   renderStorage(resource);
   expect(screen.getByLabelText(resource === "bucket" ? "Loading buckets" : "Loading keys")).toBeTruthy();
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-  finish?.(json({ message: "Resource not found", code: "not_found" }, 404));
-  expect(await screen.findByText("Resource not found")).toBeTruthy();
-  expect(screen.getByText("not_found")).toBeTruthy();
+  finish?.(json({ message: "Resource unavailable", code: status === 404 ? "not_found" : "upstream_failed" }, status));
+  expect(await screen.findByText("Resource unavailable")).toBeTruthy();
+  expect(screen.getByText(status === 404 ? "not_found" : "upstream_failed")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await vi.waitFor(() => expect(screen.getByLabelText(resource === "bucket" ? "Loading buckets" : "Loading keys")).toBeTruthy());
 });

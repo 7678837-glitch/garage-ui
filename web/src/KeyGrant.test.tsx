@@ -35,3 +35,17 @@ test("shows the error text when the grant request fails", async () => {
   expect((await screen.findByRole("alert")).textContent).toBe("bucket key denied");
   expect(screen.queryByText("Key granted")).toBeNull();
 });
+
+test("disables another grant while the request is pending and restores the form on failure", async () => {
+  let rejectGrant: ((error: Error) => void) | undefined;
+  render(<KeyGrant keys={keys} submit={() => new Promise<void>((_resolve, reject) => { rejectGrant = reject; })} />);
+  fireEvent.change(screen.getByLabelText("Key"), { target: { value: "K1" } });
+  fireEvent.click(screen.getByLabelText("Write"));
+  fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+  expect((screen.getByRole("button", { name: "Granting" }) as HTMLButtonElement).disabled).toBe(true);
+  rejectGrant?.(new Error("Grant denied"));
+  expect((await screen.findByRole("alert")).textContent).toBe("Grant denied");
+  expect((screen.getByRole("button", { name: "Grant" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByLabelText("Key") as HTMLSelectElement).value).toBe("K1");
+  expect((screen.getByLabelText("Write") as HTMLInputElement).checked).toBe(true);
+});

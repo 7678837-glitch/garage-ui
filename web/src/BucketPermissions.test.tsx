@@ -312,9 +312,15 @@ test("does not grant when the access key is blank or no permission is checked", 
   fireEvent.submit(form);
   fireEvent.click(screen.getByLabelText("Owner"));
   expect(grant.disabled).toBe(true);
+  if (!screen.getByLabelText("Grant key").closest("details")?.open) {
+    fireEvent.click(screen.getByLabelText("Grant key"));
+  }
   fireEvent.change(screen.getByLabelText("Access key"), { target: { value: "  " } });
   expect(grant.disabled).toBe(true);
   fireEvent.submit(form);
+  if (!screen.getByLabelText("Grant key").closest("details")?.open) {
+    fireEvent.click(screen.getByLabelText("Grant key"));
+  }
   fireEvent.change(screen.getByLabelText("Access key"), { target: { value: "GK9" } });
   expect(grant.disabled).toBe(false);
   fireEvent.click(screen.getByLabelText("Owner"));
@@ -368,6 +374,9 @@ test("grants the trimmed access key and reloads that bucket", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
+  if (!screen.getByLabelText("Grant key").closest("details")?.open) {
+    fireEvent.click(screen.getByLabelText("Grant key"));
+  }
   fireEvent.change(screen.getByLabelText("Access key"), { target: { value: " GK9 " } });
   fireEvent.click(screen.getByLabelText("Owner"));
   fireEvent.click(screen.getByLabelText("Write"));
@@ -422,6 +431,9 @@ test("shows the API message when grant fails and keeps the entered values", asyn
   renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   expect(await screen.findByText("photos")).toBeTruthy();
+  if (!screen.getByLabelText("Grant key").closest("details")?.open) {
+    fireEvent.click(screen.getByLabelText("Grant key"));
+  }
   fireEvent.change(screen.getByLabelText("Access key"), { target: { value: "GK9" } });
   fireEvent.click(screen.getByLabelText("Read"));
   fireEvent.click(screen.getByRole("button", { name: "Grant" }));
@@ -616,6 +628,9 @@ test("shows Granting while the grant is submitting, then Permissions granted", a
   );
   renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
+  if (!screen.getByLabelText("Grant key").closest("details")?.open) {
+    fireEvent.click(screen.getByLabelText("Grant key"));
+  }
   fireEvent.change(screen.getByLabelText("Access key"), { target: { value: "GK9" } });
   fireEvent.click(screen.getByLabelText("Read"));
   fireEvent.click(screen.getByRole("button", { name: "Grant" }));

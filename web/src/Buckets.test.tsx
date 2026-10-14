@@ -298,6 +298,8 @@ test("explains an empty list and lets an admin create a bucket with only a globa
     }),
   );
   renderBuckets(true);
+  const createPanel = screen.queryByRole("button", { name: "Create" });
+  if (createPanel) fireEvent.click(createPanel);
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
@@ -349,6 +351,8 @@ test("refreshes after creating a bucket while the initial list response is pendi
     }),
   );
   renderBuckets(true);
+  const createPanel = screen.queryByRole("button", { name: "Create" });
+  if (createPanel) fireEvent.click(createPanel);
   expect(screen.getByLabelText("Loading buckets")).toBeTruthy();
   expect(listCalls).toBe(1);
   fireEvent.change(screen.getByLabelText("Global alias"), { target: { value: "photos" } });
@@ -377,6 +381,8 @@ test("omits globalAlias when the create form is blank and keeps the value when c
     }),
   );
   renderBuckets(true);
+  const createPanel = screen.queryByRole("button", { name: "Create" });
+  if (createPanel) fireEvent.click(createPanel);
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
   await waitFor(() => {
@@ -463,7 +469,7 @@ test("cancels a bucket delete without a request, then confirms the delete", asyn
   fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
   expect(await screen.findByText("Bucket deleted")).toBeTruthy();
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   expect(screen.queryByText("bkt-1")).toBeNull();
   expect(calls.find((call) => call.method === "DELETE")).toEqual({
     url: "/api/buckets/bkt-1",
@@ -536,6 +542,14 @@ test("adds and removes a global alias without sending a bucket id", async () => 
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByText("east")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Global alias for bkt-1"), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Add alias to bkt-1" }));
@@ -578,6 +592,14 @@ test("adds and removes a local alias with its access key and keeps the draft whe
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByText("bkt-1")).toBeTruthy();
   fireEvent.click(screen.getByRole("radio", { name: "Local for bkt-1" }));
   fireEvent.change(screen.getByLabelText("Local alias for bkt-1"), { target: { value: "site" } });
@@ -653,6 +675,14 @@ test("sends an unchanged maxSize as the digit text from the list response", asyn
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
   expect(
     screen.getByText("1000 of 9007199254740993 bytes (1.00 KB of 9.007199254740993 PB)"),
@@ -697,6 +727,14 @@ test("clears both quotas with null and keeps the entered values when save fails"
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
   expect(size.value).toBe("10");
@@ -739,6 +777,14 @@ test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps t
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
   expect(size.value).toBe("10");
@@ -805,6 +851,14 @@ test("hides the quota editor when the row has no quotas object", async () => {
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByText("4 objects")).toBeTruthy();
   expect(screen.getByText("9 bytes")).toBeTruthy();
   expect(screen.queryByText("Object quota is not set")).toBeNull();
@@ -812,7 +866,7 @@ test("hides the quota editor when the row has no quotas object", async () => {
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
   expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
   expect(screen.getByRole("button", { name: "Delete bkt-1" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   expect(calls.some((call) => call.method === "PUT")).toBe(false);
 });
 
@@ -934,7 +988,7 @@ test("an object address hides create and the table, and back returns to #buckets
   expect(screen.queryByLabelText("Filter buckets")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
   expect(window.location.hash).toBe("#buckets");
-  expect(await screen.findByRole("button", { name: "Create bucket" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Create" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
   expect(screen.getByLabelText("Filter buckets")).toBeTruthy();
@@ -1086,6 +1140,14 @@ test("saves a bucket CORS rule after showing the diff", async () => {
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByRole("button", { name: "Edit CORS" })).toBeTruthy();
   const corsGets = () =>
     calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/cors");
@@ -1128,6 +1190,7 @@ test("saves a bucket CORS rule after showing the diff", async () => {
   cleanup();
   calls.length = 0;
   renderBuckets(false);
+  fireEvent.click(await screen.findByLabelText("Settings bkt-1"));
   expect(await screen.findByText("photos")).toBeTruthy();
   expect(screen.getByText("https://old.example")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit CORS" })).toBeNull();
@@ -1176,6 +1239,14 @@ test("saves a bucket lifecycle rule after showing the diff", async () => {
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByRole("button", { name: "Edit lifecycle" })).toBeTruthy();
   const lifecycleGets = () =>
     calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/lifecycle");
@@ -1220,6 +1291,7 @@ test("saves a bucket lifecycle rule after showing the diff", async () => {
   cleanup();
   calls.length = 0;
   renderBuckets(false);
+  fireEvent.click(await screen.findByLabelText("Settings bkt-1"));
   expect(await screen.findByText("logs")).toBeTruthy();
   expect(screen.getByText("Enabled")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit lifecycle" })).toBeNull();
@@ -1273,6 +1345,14 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
     }),
   );
   renderBuckets(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   expect(await screen.findByRole("button", { name: "Incomplete uploads" })).toBeTruthy();
   expect(calls.some((call) => call.url.endsWith("/multipart"))).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Incomplete uploads" }));
@@ -1305,54 +1385,39 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
   expect(screen.queryByRole("button", { name: "Clean up" })).toBeNull();
 });
 
-test("wraps a long bucket id inside its column", async () => {
-  const bucketId = "b".repeat(64);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      json({
-        items: [{ id: bucketId, quotas: { maxSize: 5000, maxObjects: 12 } }],
-        hasMore: false,
-      }),
-    ),
-  );
+test("summarizes a long bucket identifier while keeping the complete address inspectable", async () => {
+  const resourceId = "b".repeat(64);
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, quotas: { maxSize: 5000, maxObjects: 12 } }], hasMore: false })));
   renderBuckets(true);
-  const id = await screen.findByText(bucketId);
-  const sizeLabel = screen.getByLabelText(`Max size for ${bucketId}`).closest("label");
-  const objectsLabel = screen.getByLabelText(`Max objects for ${bucketId}`).closest("label");
-  const save = screen.getByRole("button", { name: `Save quotas for ${bucketId}` });
-  const alias = screen.getByRole("button", { name: `Add alias to ${bucketId}` });
-  const legend = screen.getByText(`Add alias to ${bucketId}`, { selector: "legend" });
-  const globalChoice = screen.getByRole("radio", { name: `Global for ${bucketId}` }).closest("label");
-  const localChoice = screen.getByRole("radio", { name: `Local for ${bucketId}` }).closest("label");
-  const aliasField = screen.getByLabelText(`Global alias for ${bucketId}`).closest("label");
-  const idColumn = id.closest("td");
-  const quotaColumn = sizeLabel?.closest("td") ?? null;
-  const aliasColumn = alias.closest("td");
-  expect(idColumn).not.toBe(aliasColumn);
-  expect(quotaColumn).not.toBe(aliasColumn);
-  expect(legend.closest("td")).toBe(aliasColumn);
-  expect(id.className).toContain("break-all");
-  expect(id.className).toContain("min-w-0");
-  expect(id.className).toContain("max-w-full");
-  expect(sizeLabel?.className ?? "").toContain("break-all");
-  expect(sizeLabel?.className ?? "").toContain("min-w-0");
-  expect(sizeLabel?.className ?? "").toContain("max-w-full");
-  expect(objectsLabel?.className ?? "").toContain("break-all");
-  expect(objectsLabel?.className ?? "").toContain("min-w-0");
-  expect(save.className).toContain("break-all");
-  expect(save.className).toContain("min-w-0");
-  expect(idColumn?.className ?? "").toContain("break-all");
-  expect(idColumn?.className ?? "").toContain("min-w-0");
-  expect(quotaColumn?.className ?? "").toContain("break-all");
-  expect(quotaColumn?.className ?? "").toContain("min-w-0");
-  expect(legend.className).toContain("break-all");
-  expect(legend.className).toContain("min-w-0");
-  expect(globalChoice?.className ?? "").toContain("break-all");
-  expect(localChoice?.className ?? "").toContain("break-all");
-  expect(aliasField?.className ?? "").toContain("break-all");
-  expect(aliasField?.className ?? "").toContain("min-w-0");
-  expect(aliasColumn?.className ?? "").toContain("break-all");
-  expect(aliasColumn?.className ?? "").toContain("min-w-0");
-  expect(id.closest("table")?.parentElement?.className ?? "").toContain("min-w-0");
+  const link = await screen.findByRole("link", { name: resourceId });
+  expect(link.textContent).toBe(`${resourceId.slice(0, 12)}…${resourceId.slice(-8)}`);
+  expect(link.getAttribute("title")).toBe(resourceId);
+  expect(link.getAttribute("href")).toBe(`#bucket/${resourceId}/overview`);
+  fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));
+  expect(screen.getByText(resourceId, { selector: "p" })).toBeTruthy();
 });
+
+ test("creation and row editing open on demand and keep collapsed drafts", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: "compact", quotas: { maxSize: 10, maxObjects: 20 } }], hasMore: false })));
+  renderBuckets(true);
+  expect(await screen.findByText("compact")).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Global alias" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(screen.getByRole("textbox", { name: "Global alias" })).toBeTruthy();
+  const disclosure = screen.getByLabelText("Edit compact").closest("details");
+  expect(disclosure?.open).toBe(false);
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  const input = screen.getByLabelText("Max size for compact") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "42" } });
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  expect(disclosure?.open).toBe(false);
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  expect((screen.getByLabelText("Max size for compact") as HTMLInputElement).value).toBe("42");
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const before = window.location.hash;
+  fireEvent.click(screen.getByRole("link", { name: "compact" }));
+  expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  expect(window.location.hash).toBe(before);
+ });

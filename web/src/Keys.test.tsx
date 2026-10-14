@@ -344,6 +344,8 @@ test("keeps the typed name and shows the API message when create fails", async (
     }),
   );
   renderKeys(true);
+  const createPanel = screen.queryByRole("button", { name: "Create" });
+  if (createPanel) fireEvent.click(createPanel);
   expect(await screen.findByText("There are no keys. Create the first key.")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "my key" } });
   fireEvent.click(screen.getByRole("button", { name: "Create key" }));
@@ -395,6 +397,8 @@ test("shows a created secret once, copies it, and removes it when the dialog clo
     }),
   );
   renderKeys(true);
+  const createPanel = screen.queryByRole("button", { name: "Create" });
+  if (createPanel) fireEvent.click(createPanel);
   fireEvent.change(await screen.findByLabelText("Key name"), {
     target: { value: "photo_roll-1" },
   });
@@ -445,6 +449,7 @@ test("asks the operator to select the secret when the page is not a secure conte
     }),
   );
   renderKeys(true);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   fireEvent.change(await screen.findByLabelText("Key name"), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Create key" }));
   const field = (await screen.findByLabelText("Secret access key")) as HTMLInputElement;
@@ -473,6 +478,14 @@ test("renames a key with only the name and does not ask for confirmation", async
     }),
   );
   renderKeys(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const name = (await screen.findByLabelText("Name for GK1")) as HTMLInputElement;
   fireEvent.change(name, { target: { value: "已有 名称" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
@@ -519,6 +532,14 @@ test("sends only createBucket when the allow-create-bucket switch changes", asyn
     }),
   );
   renderKeys(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const known = (await screen.findByRole("checkbox", {
     name: "Allow create bucket for GK1",
   })) as HTMLInputElement;
@@ -562,6 +583,14 @@ test("shows the API message when the create-bucket switch fails and keeps the pr
     }),
   );
   renderKeys(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const box = (await screen.findByRole("checkbox", {
     name: "Allow create bucket for GK1",
   })) as HTMLInputElement;
@@ -593,6 +622,14 @@ test("shows Saving while allow-create-bucket is pending and keeps the error when
     }),
   );
   renderKeys(true);
+  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
+  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
+    if (!details.open) {
+      const summary = details.querySelector("summary");
+      if (!summary) throw new Error("Editor disclosure has no summary");
+      fireEvent.click(summary);
+    }
+  }
   const box = (await screen.findByRole("checkbox", {
     name: "Allow create bucket for GK1",
   })) as HTMLInputElement;
@@ -657,7 +694,7 @@ test("cancels a key delete without a request, then confirms the encoded delete",
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByText("Key deleted")).toBeTruthy();
   expect(await screen.findByText("There are no keys. Create the first key.")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Create key" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   expect(screen.queryByText("a b&c=d")).toBeNull();
   expect(calls.find((call) => call.method === "DELETE")).toEqual({
     url: "/api/keys/a%20b%26c%3Dd",
@@ -686,7 +723,7 @@ test("shows Working while a key delete is submitting and Cancel still closes", a
   renderKeys(true);
   const opener = (await screen.findByRole("button", { name: "Delete GK1" })) as HTMLButtonElement;
   expect(opener.disabled).toBe(false);
-  expect(opener.textContent).toBe("Delete GK1");
+  expect(opener.textContent).toBe("Delete");
   fireEvent.click(opener);
   const dialog = screen.getByRole("dialog");
   const confirm = within(dialog).getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
@@ -699,7 +736,7 @@ test("shows Working while a key delete is submitting and Cancel still closes", a
   expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
   const during = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
   expect(during.disabled).toBe(false);
-  expect(during.textContent).toBe("Delete GK1");
+  expect(during.textContent).toBe("Delete");
   expect(screen.getByText("photos")).toBeTruthy();
   const cancel = within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
   expect(cancel.disabled).toBe(false);
@@ -710,7 +747,7 @@ test("shows Working while a key delete is submitting and Cancel still closes", a
   expect(screen.queryByText("Key deleted")).toBeNull();
   const after = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
   expect(after.disabled).toBe(false);
-  expect(after.textContent).toBe("Delete GK1");
+  expect(after.textContent).toBe("Delete");
   await act(async () => {
     release(json({ message: "Key is still in use" }, 409));
   });
@@ -807,19 +844,16 @@ test("shows the API message when a secret view fails and does not open the dialo
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-test("wraps a 64-character key id in the key cell and the actions cell", async () => {
-  const keyId = "k".repeat(64);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => json({ items: [{ id: keyId, name: "photos" }], hasMore: false })),
-  );
+test("summarizes a long key identifier while keeping the complete address inspectable", async () => {
+  const resourceId = "b".repeat(64);
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, name: "Long key" }], hasMore: false })));
   renderKeys(true);
-  const cell = await screen.findByRole("cell", { name: keyId });
-  expect(cell.classList.contains("break-all")).toBe(true);
-  expect(cell.closest("div")?.classList.contains("min-w-0")).toBe(true);
-  const actions = screen.getByRole("button", { name: `Delete ${keyId}` }).closest("td");
-  expect(actions?.classList.contains("break-all")).toBe(true);
-  expect(screen.getByRole("cell", { name: "photos" }).classList.contains("break-all")).toBe(false);
+  const link = await screen.findByRole("link", { name: resourceId });
+  expect(link.textContent).toBe(`${resourceId.slice(0, 12)}…${resourceId.slice(-8)}`);
+  expect(link.getAttribute("title")).toBe(resourceId);
+  expect(link.getAttribute("href")).toBe(`#key/${resourceId}/overview`);
+  fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));
+  expect(screen.getByText(resourceId, { selector: "p" })).toBeTruthy();
 });
 
 function keyRowText(): string[] {
@@ -973,8 +1007,8 @@ test("lists the buckets a key can access with read, write, and owner", async () 
     }),
   );
   renderKeys();
-  const photos = await screen.findByRole("listitem", { name: "bkt-photos" });
-  const logs = screen.getByRole("listitem", { name: "bkt-logs" });
+  const photos = await screen.findByRole("row", { name: "bkt-photos" });
+  const logs = screen.getByRole("row", { name: "bkt-logs" });
   expect(within(photos).getByText("bkt-photos")).toBeTruthy();
   expect(within(photos).getByText("photos")).toBeTruthy();
   expect(within(photos).getByText("roll")).toBeTruthy();
@@ -1017,7 +1051,7 @@ test("the key buckets tab shows the grant bits", async () => {
     }),
   );
   renderKeys();
-  const bucket = await screen.findByRole("listitem", { name: "bkt-photos" });
+  const bucket = await screen.findByRole("row", { name: "bkt-photos" });
   expect(within(bucket).getByText("owner yes").textContent).toBe("owner yes");
   expect(within(bucket).getByText("read yes").textContent).toBe("read yes");
   expect(within(bucket).getByText("write no").textContent).toBe("write no");
@@ -1026,3 +1060,28 @@ test("the key buckets tab shows the grant bits", async () => {
   expect(screen.getByRole("tab", { name: "Settings" }).textContent).toBe("Settings");
   expect(calls).toContain("/api/keys/GK1");
 });
+
+ test("creation and row editing open on demand and keep collapsed drafts", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: "compact", name: "Existing", createBucket: false }], hasMore: false })));
+  renderKeys(true);
+  expect(await screen.findByText("compact")).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Key name" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(screen.getByRole("textbox", { name: "Key name" })).toBeTruthy();
+  const disclosure = screen.getByLabelText("Edit compact").closest("details");
+  expect(disclosure?.open).toBe(false);
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  const input = screen.getByLabelText("Name for compact") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "42" } });
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  expect(disclosure?.open).toBe(false);
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  expect((screen.getByLabelText("Name for compact") as HTMLInputElement).value).toBe("42");
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Edit compact"));
+  const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const before = window.location.hash;
+  fireEvent.click(screen.getByRole("link", { name: "compact" }));
+  expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  expect(window.location.hash).toBe(before);
+ });

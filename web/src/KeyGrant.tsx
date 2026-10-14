@@ -28,13 +28,15 @@ export function KeyGrant({
   const [owner, setOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [succeeded, setSucceeded] = useState(false);
+  const [pending, setPending] = useState(false);
   const canSubmit = accessKeyId !== "" && (read || write || owner);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canSubmit) {
+    if (!canSubmit || pending) {
       return;
     }
+    setPending(true);
     setError(null);
     setSucceeded(false);
     void submit({
@@ -42,9 +44,11 @@ export function KeyGrant({
       permissions: { read, write, owner },
     }).then(
       () => {
+        setPending(false);
         setSucceeded(true);
       },
       (caught: unknown) => {
+        setPending(false);
         setSucceeded(false);
         if (caught instanceof Error && caught.message.length > 0) {
           setError(caught.message);
@@ -56,11 +60,11 @@ export function KeyGrant({
   }
 
   return (
-    <form className="grid gap-3" aria-label={copy("ui.grant.key")} onSubmit={onSubmit}>
-      <label className="block">
+    <form className="ui-form" aria-label={copy("ui.grant.key")} onSubmit={onSubmit}>
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.key.2")}</span>
         <select
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={accessKeyId}
           onChange={(event) => setAccessKeyId(event.target.value)}
         >
@@ -72,21 +76,21 @@ export function KeyGrant({
           ))}
         </select>
       </label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
           checked={read}
           onChange={(event) => setRead(event.target.checked)}
         />{" "}
         {copy("ui.read.2")}</label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
           checked={write}
           onChange={(event) => setWrite(event.target.checked)}
         />{" "}
         {copy("ui.write.2")}</label>
-      <label className="block text-sm">
+      <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
           checked={owner}
@@ -96,11 +100,11 @@ export function KeyGrant({
       {error ? <p role="alert">{error}</p> : null}
       {succeeded ? <p>{copy("ui.key.granted")}</p> : null}
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="submit"
-        disabled={!canSubmit}
+        disabled={!canSubmit || pending}
       >
-        {copy("ui.grant")}</button>
+        {copy(pending ? "ui.granting" : "ui.grant")}</button>
     </form>
   );
 }
