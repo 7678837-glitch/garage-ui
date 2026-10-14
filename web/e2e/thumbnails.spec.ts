@@ -267,18 +267,21 @@ async function release(page: Page, alias: string, bucketId: string, keyId: strin
     return;
   }
   await page.goto("/").catch(() => undefined);
-  const logout = page.getByRole("button", { name: "Log out", includeHidden: true });
-  if (await logout.count() > 0) {
-    await openAccount(page);
-    await logout.click();
-  }
+  const account = page.locator(".console-account-trigger");
   const username = page.getByLabel("Username");
+  await expect(account.or(username)).toBeVisible();
+  if (await account.isVisible()) {
+    await openAccount(page);
+    await page.getByRole("button", { name: "Log out", exact: true }).click();
+    await expect(username).toBeVisible();
+  }
   if (await username.isVisible().catch(() => false)) {
     await username.fill(administrator.username);
     await page.getByLabel("Password").fill(administrator.password);
     await page.getByRole("button", { name: "Log in" }).click();
   }
-  await expect(page.getByRole("button", { name: "Log out", includeHidden: true }), "fixture cleanup requires an authenticated administrator").toHaveCount(1);
+  await assertAuthenticated(page);
+  await expect(account, "fixture cleanup requires an authenticated administrator").toHaveAccessibleName(`${administrator.username} · admin`);
   const headers = await csrfHeader(page);
   if (bucketId.length > 0) {
     for (const prefix of ["pix/", "bad/"]) {

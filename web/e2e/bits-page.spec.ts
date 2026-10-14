@@ -64,12 +64,15 @@ test.afterEach(async ({ page }) => {
   if (!created || page.isClosed()) {
     return;
   }
+  const openEditor = page.getByRole("dialog", { name: username, exact: true });
+  if (await openEditor.isVisible()) {
+    await openEditor.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(openEditor).toHaveCount(0);
+  }
   const users = usersRegion(page);
   if (!(await users.isVisible().catch(() => false))) {
     await openUsers(page);
   }
-  const openEditor = page.getByRole("dialog", { name: username, exact: true });
-  if (await openEditor.isVisible()) await openEditor.getByRole("button", { name: "Close", exact: true }).click();
   await users.getByLabel("Filter users").fill(username);
   const remove = page.getByRole("dialog", { name: username, exact: true }).getByRole("button", { name: `Delete ${username}`, exact: true });
   const ownedRow = users.locator("tbody tr").filter({ has: page.getByText(username, { exact: true }) });
@@ -91,8 +94,12 @@ test.afterEach(async ({ page }) => {
   if (!(await remove.isVisible().catch(() => false))) {
     return;
   }
+  const removed = page.waitForResponse((response) => response.request().method() === "DELETE" && /^\/api\/users\/\d+$/.test(new URL(response.url()).pathname));
   await remove.click();
+  expect((await removed).status()).toBe(204);
+  await expect(openEditor).toHaveCount(0);
   await expect(users.getByRole("cell", { name: username, exact: true })).toHaveCount(0);
+  created = false;
 });
 
 test("keeps download unchecked for a viewer after revoke and reload", async ({ page }) => {

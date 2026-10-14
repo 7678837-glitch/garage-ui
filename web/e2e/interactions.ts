@@ -15,10 +15,14 @@ export async function openRowActions(row: Locator): Promise<void> {
 }
 
 export async function selectChoice(control: Locator, label: string): Promise<void> {
-  await expect(control).toHaveAttribute("role", "combobox");
+  await expect(control).toHaveAttribute("role", "combobox", { timeout: 20_000 });
   await control.click();
-  await control.page().getByRole("option", { name: label, exact: true }).click();
-  await expect(control).toHaveAttribute("aria-expanded", "false");
+  const popupId = await control.getAttribute("aria-controls");
+  expect(popupId).toBeTruthy();
+  const popup = control.page().locator(`[role="listbox"][id="${popupId}"]`);
+  await expect(popup).toBeVisible();
+  await popup.getByRole("option", { name: label, exact: true }).click();
+  await expect(popup).toHaveCount(0);
 }
 
 export async function bucketIdFromRow(row: Locator): Promise<string> {
@@ -29,8 +33,13 @@ export async function bucketIdFromRow(row: Locator): Promise<string> {
 }
 
 export async function openNavigation(page: Page): Promise<void> {
-  const menu = page.getByRole("button", { name: /^(Menu|菜单)$/ });
-  if (await menu.isVisible() && await menu.getAttribute("aria-expanded") !== "true") await menu.click();
+  const menu = page.getByRole("button", { name: /^(Menu|菜单)$/, includeHidden: true });
+  if (await menu.isVisible() && await menu.getAttribute("aria-expanded") !== "true") {
+    const exposedMenu = page.getByRole("button", { name: /^(Menu|菜单)$/ });
+    await expect(exposedMenu).toBeVisible();
+    await exposedMenu.click();
+  }
+  await expect(page.getByRole("navigation", { name: /^(Sections|分区)$/ })).toBeVisible();
 }
 
 export async function chooseTheme(page: Page, theme: "Light" | "Dark"): Promise<void> {

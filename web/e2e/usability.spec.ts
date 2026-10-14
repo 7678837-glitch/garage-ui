@@ -2,7 +2,7 @@ import { expect, test, request as requestContextFactory, type Locator, type Page
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
-import { assertWidth, evidenceDir } from "./layout";
+import { assertWidth, assertRenderedLayout, evidenceDir } from "./layout";
 import { garageTarget } from "./garage-target";
 import { chooseTheme, openDisclosure, openNavigation, assertAuthenticated, openAccount, selectChoice } from "./interactions";
 
@@ -123,7 +123,7 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
       const input = editor.getByRole("textbox", { name: /^Name/ });
       const save = editor.getByRole("button", { name: /^Save name/ });
       await expect(edit).toBeVisible();
-      await expect(edit).toHaveText("Edit");
+      await expect(edit).toHaveText("Actions");
       await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(1);
       for (const section of ["General", "Permissions", "Credentials", "Danger zone"]) await expect(panel.getByRole("heading", { name: section, exact: true })).toBeVisible();
       const permission = panel.getByRole("checkbox", { name: /^Allow bucket creation/ });
@@ -149,11 +149,15 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
       await identity.locator("summary").click();
       await edit.click();
       await expect(input).toHaveValue(name);
+      await expect(input.locator("xpath=ancestor::label")).toBeVisible();
       await expect(input.locator("xpath=ancestor::label")).toHaveText("Name");
       await expect(save).toBeVisible();
       await expect(save).toHaveText("Save name");
       for (const [control, caption] of [[input, "Name"], [save, "Save name"]] as const) await expect(control).toHaveAccessibleName(new RegExp(caption));
-      const field = await input.boundingBox();
+      await assertRenderedLayout(page, `key name dialog ${width} ${theme}`);
+      await expect(input.locator("..")).toHaveClass(/rt-TextFieldRoot/);
+      const field = await input.locator("..").boundingBox();
+      if (width === 360) expect(await input.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
       if (!field) throw new Error("Name field has no bounding box");
       expect(field.width, "name field stays readable").toBeGreaterThanOrEqual(width === 360 ? 280 : 300);
       if (width === 360) {

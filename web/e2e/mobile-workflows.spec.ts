@@ -29,6 +29,8 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
     ];
     let bucketId = "";
     let keyId = "";
+    const uploaded: string[] = [];
+    const failures: unknown[] = [];
     mkdirSync(evidence, { recursive: true });
     try {
       const bucket = await page.request.post("/api/buckets", { headers, data: { globalAlias: `sample-assets-${stamp}` } });
@@ -46,7 +48,10 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       await selectChoice(objects.getByLabel("Bucket key"), keyId);
       await objects.getByRole("button", { name: "Use this key", exact: true }).click();
       await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible();
-      for (const file of files) expect((await page.request.put(`/api/buckets/${bucketId}/objects/${file.key}`, { headers: { ...headers, "content-type": file.type, "content-length": String(file.body.length) }, data: file.body })).status()).toBe(201);
+      for (const file of files) {
+        expect((await page.request.put(`/api/buckets/${bucketId}/objects/${file.key.split("/").map(encodeURIComponent).join("/")}`, { headers: { ...headers, "content-type": file.type, "content-length": String(file.body.length) }, data: file.body })).status()).toBe(201);
+        uploaded.push(file.key);
+      }
       await page.reload();
       await expect(objects.getByRole("button", { name: "notes.txt", exact: true })).toBeVisible();
       await expect(objects).toHaveAttribute("aria-busy", "false");
@@ -165,19 +170,31 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
         await page.screenshot({ path: `${evidence}/objects-${width}-dark-zh-viewport.png`, fullPage: false });
         writeFileSync(`${evidence}/geometry-${width}-dark-zh.json`, JSON.stringify(localized, null, 2));
       }
+    } catch (error) {
+      failures.push(error);
     } finally {
       try {
         if (bucketId) {
-          for (const file of files) expect([200,204,404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${file.key}`, { headers })).status());
+          if (uploaded.length > 0) {
+            expect(keyId).not.toBe("");
+            const binding = await cleanup.put(`/api/buckets/${bucketId}/credential`, { headers, data: { access_key_id: keyId } });
+            expect(binding.status()).toBe(200);
+            expect(await binding.json()).toMatchObject({ access_key_id: keyId });
+            for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${key.split("/").map(encodeURIComponent).join("/")}`, { headers })).status());
+          }
           expect((await cleanup.delete(`/api/buckets/${bucketId}`, { headers })).status()).toBe(200);
           console.log(`Mobile fixture bucket cleanup ${bucketId}: 200`);
         }
-      } finally {
-        try {
-          if (keyId) { expect((await cleanup.delete(`/api/keys/${keyId}`, { headers })).status()).toBe(200); console.log(`Mobile fixture key cleanup ${keyId}: 200`); }
-        } finally { await cleanup.dispose(); }
-      }
+        if (keyId) {
+          expect((await cleanup.delete(`/api/keys/${keyId}`, { headers })).status()).toBe(200);
+          console.log(`Mobile fixture key cleanup ${keyId}: 200`);
+        }
+      } catch (cleanupError) {
+        failures.push(cleanupError);
+      } finally { await cleanup.dispose(); }
     }
+    if (failures.length > 1) throw new AggregateError(failures, "Mobile workflow and owned fixture cleanup failed");
+    if (failures.length === 1) throw failures[0];
   });
 }
 

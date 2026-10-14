@@ -24,6 +24,8 @@ test("confirms a hidden existing destination and refreshes an open preview after
   writeFileSync(join(folder, "marker.txt"), "A real visible folder marker.");
   let bucketId = "";
   let keyId = "";
+  const uploaded: string[] = [];
+  const failures: unknown[] = [];
   try {
     const bucket = await page.request.post("/api/buckets", { headers, data: { globalAlias: `e2e-overwrite-${stamp}` } });
     expect(bucket.status()).toBe(200);
@@ -51,8 +53,10 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await openUpload(objects);
     await objects.getByLabel("Choose files").setInputFiles({ name: fileName, mimeType: "text/plain", buffer: Buffer.from(original) });
     await expect(upload.getByRole("listitem").filter({ hasText: fileName }).getByText("Done", { exact: true })).toBeVisible();
+    uploaded.push(fileName);
     await objects.getByLabel("Choose folder").setInputFiles(folder);
     await expect(upload.getByRole("listitem").filter({ hasText: `${prefix}/marker.txt` }).getByText("Done", { exact: true })).toBeVisible();
+    uploaded.push(`${prefix}/marker.txt`);
     await upload.getByRole("button", { name: "Clear finished", exact: true }).click();
     await closeUpload(objects);
     await objects.getByRole("button", { name: `${prefix}/`, exact: true }).click();
@@ -87,22 +91,31 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await expect(preview).toBeInViewport();
     await assertWidth(page, "overwrite-open-preview", 1280);
     writeFileSync(`${evidenceDir}/overwrite-evidence-${stamp}.json`, JSON.stringify({ destinationCheckStatus: 200, writesBeforeConfirmation: [1, 2], totalConfirmedWrites: writes.length, openPreview: await preview.locator("pre").innerText() }, null, 2));
+  } catch (error) {
+    failures.push(error);
   } finally {
     try {
       if (bucketId) {
-        for (const object of [fileName, `${prefix}/marker.txt`]) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${object}`, { headers })).status());
+        if (uploaded.length > 0) {
+          expect(keyId).not.toBe("");
+          const binding = await cleanup.put(`/api/buckets/${bucketId}/credential`, { headers, data: { access_key_id: keyId } });
+          expect(binding.status()).toBe(200);
+          expect(await binding.json()).toMatchObject({ access_key_id: keyId });
+          for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${key.split("/").map(encodeURIComponent).join("/")}`, { headers })).status());
+        }
         const removed = await cleanup.delete(`/api/buckets/${bucketId}`, { headers });
         expect(removed.status()).toBe(200);
         console.log(`Overwrite fixture bucket cleanup ${bucketId}: ${removed.status()}`);
       }
-    } finally {
-      try {
-        if (keyId) {
-          const removed = await cleanup.delete(`/api/keys/${keyId}`, { headers });
-          expect(removed.status()).toBe(200);
-          console.log(`Overwrite fixture key cleanup ${keyId}: ${removed.status()}`);
-        }
-      } finally { await cleanup.dispose(); rmSync(inputDirectory, { recursive: true, force: true }); }
-    }
+      if (keyId) {
+        const removed = await cleanup.delete(`/api/keys/${keyId}`, { headers });
+        expect(removed.status()).toBe(200);
+        console.log(`Overwrite fixture key cleanup ${keyId}: ${removed.status()}`);
+      }
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    } finally { await cleanup.dispose(); rmSync(inputDirectory, { recursive: true, force: true }); }
   }
+  if (failures.length > 1) throw new AggregateError(failures, "Overwrite workflow and owned fixture cleanup failed");
+  if (failures.length === 1) throw failures[0];
 });

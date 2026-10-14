@@ -82,12 +82,17 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   await assertWidth(page, "menu-collapsed", 360);
 
   await page.getByRole("button", { name: "Menu" }).click();
-  await expect(page.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "true");
+  const drawer = page.getByRole("dialog", { name: "Sections", exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(page.getByRole("button", { name: "Menu", includeHidden: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(drawer.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
   await expectSections(page, true);
   await assertWidth(page, "menu-expanded", 360);
 
-  await page.getByRole("button", { name: "Close navigation" }).click();
+  await drawer.getByRole("button", { name: "Close navigation", exact: true }).click();
+  await expect(drawer).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Menu" })).toBeFocused();
   await expectSections(page, false);
 
   let releaseSnapshot!: () => void;
@@ -124,7 +129,10 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   createdBucketId = String((body as { id: unknown }).id);
   expect(createdBucketId).toMatch(/^[0-9a-f]{64}$/);
   releaseSnapshot();
-  await expect(page.getByText("Bucket created")).toBeVisible();
+  const creator = page.getByRole("dialog", { name: "Create bucket", exact: true });
+  await expect(creator.getByText("Bucket created", { exact: true })).toBeVisible();
+  await creator.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(creator).toHaveCount(0);
   await expect(page.getByText(alias, { exact: true })).toBeVisible();
   await recordLayout(page, "buckets");
 
