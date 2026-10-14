@@ -1828,3 +1828,71 @@ test("left and right keys select the previous and next object in the same direct
   await expectSize(3);
   expectDirectory();
 });
+
+function exactName(key: string): RegExp {
+  return new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+}
+
+test("shows a thumbnail for an allowlisted bitmap and does not request one without download permission", async () => {
+  const bitmap = [
+    "shot.png",
+    "shot.jpg",
+    "shot.jpeg",
+    "shot.gif",
+    "shot.webp",
+    "shot.avif",
+    "shot.bmp",
+    "shot.ico",
+    "shot.PNG",
+    "dir/nested.jpeg",
+  ];
+  const plain = ["note.txt", "page.svg", "archive.png.txt", "readme"];
+  const keys = [...bitmap, ...plain];
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return json(page(keys.map((key) => objectRow(key, 4, "2026-10-11T00:00:00Z"))));
+    }),
+  );
+  renderObjects("bkt 1", { canWrite: false, canTransfer: true });
+  expect(await screen.findByRole("button", { name: exactName("shot.png") })).toBeTruthy();
+  for (const key of bitmap) {
+    const row = screen.getByRole("button", { name: exactName(key) }).closest("tr");
+    if (!(row instanceof HTMLTableRowElement)) {
+      throw new Error(`missing row ${key}`);
+    }
+    const img = row.querySelector("img");
+    if (!(img instanceof HTMLImageElement)) {
+      throw new Error(`missing thumbnail ${key}`);
+    }
+    const encoded = key.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+    expect(img.getAttribute("src")).toBe(
+      `/api/buckets/${encodeURIComponent("bkt 1")}/objects/${encoded}/thumbnail`,
+    );
+  }
+  for (const key of plain) {
+    const row = screen.getByRole("button", { name: exactName(key) }).closest("tr");
+    expect(row?.querySelector("img, svg")).toBeNull();
+  }
+  const pngRow = screen.getByRole("button", { name: exactName("shot.png") }).closest("tr");
+  const png = pngRow?.querySelector("img");
+  if (!(png instanceof HTMLImageElement) || !(pngRow instanceof HTMLTableRowElement)) {
+    throw new Error("missing shot.png thumbnail");
+  }
+  fireEvent.error(png);
+  expect(pngRow.querySelector("img")).toBeNull();
+  expect(pngRow.querySelector("svg")).not.toBeNull();
+
+  cleanup();
+  calls.length = 0;
+  renderObjects("bkt 1", { canWrite: false, canTransfer: false });
+  expect(await screen.findByRole("button", { name: exactName("shot.png") })).toBeTruthy();
+  expect(document.querySelector("img, svg")).toBeNull();
+  expect(calls.some((url) => url.includes("/thumbnail"))).toBe(false);
+  for (const key of bitmap) {
+    const row = screen.getByRole("button", { name: exactName(key) }).closest("tr");
+    expect(row?.querySelector("img")).toBeNull();
+  }
+});

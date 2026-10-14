@@ -303,6 +303,44 @@ function metadataPath(bucketId: string, key: string): string {
   return `${bucketUrl(bucketId)}/objects/${encodeObjectKey(key)}`;
 }
 
+const BITMAP_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico"]);
+
+function bitmapKey(key: string): boolean {
+  const slash = key.lastIndexOf("/");
+  const name = slash >= 0 ? key.slice(slash + 1) : key;
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) {
+    return false;
+  }
+  return BITMAP_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
+function thumbnailPath(bucketId: string, key: string): string {
+  return `${metadataPath(bucketId, key)}/thumbnail`;
+}
+
+function ObjectThumb({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-10 w-10 shrink-0 border border-line">
+        <rect x="3" y="4" width="18" height="16" fill="none" stroke="currentColor" />
+        <path d="M3 16l5-4 3 2 4-5 6 7" fill="none" stroke="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <img
+      alt=""
+      className="h-10 w-10 shrink-0 border border-line object-contain"
+      src={src}
+      onError={() => {
+        setFailed(true);
+      }}
+    />
+  );
+}
+
 function inspectPath(bucketId: string, key: string): string {
   return `${bucketUrl(bucketId)}/inspect/${encodeObjectKey(key)}`;
 }
@@ -1301,6 +1339,9 @@ export function Objects({
                     </td>
                     <td className="min-w-0 max-w-full break-all py-2 pr-3">
                       <div className="flex flex-wrap items-center gap-2">
+                        {canTransfer && bitmapKey(entry.key) ? (
+                          <ObjectThumb src={thumbnailPath(bucketId, entry.key)} />
+                        ) : null}
                         <button
                           className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
                           type="button"
