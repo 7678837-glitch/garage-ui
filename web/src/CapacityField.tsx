@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { unitCopyKey, useI18n } from "./i18n";
+import { unitCopyKey, useI18n, copy } from "./i18n";
 
 const MIN_FRACTION_DIGITS = 2;
 
@@ -79,7 +79,7 @@ export function CapacityField({
   const sourceValid = isByteDigits(bytes);
   const shown =
     amount.kind === "typed" ? amount.text : sourceValid ? formatInUnit(bytes, SCALE[unit]) : "";
-  const alertText = sourceValid ? error : "Capacity must be a whole number of bytes";
+  const alertText = sourceValid ? error : copy("ui.capacity.whole.bytes");
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,7 +93,7 @@ export function CapacityField({
     }
     const next = decimalToByteString(amount.text, SCALE[unit]);
     if (next === null) {
-      setError("Enter a whole number of bytes");
+      setError(copy("ui.enter.a.whole.number.of.bytes"));
       return;
     }
     setError(null);
@@ -101,9 +101,9 @@ export function CapacityField({
   }
 
   return (
-    <form className="grid gap-3" aria-label="Node capacity" onSubmit={onSubmit}>
+    <form className="grid gap-3" aria-label={copy("ui.node.capacity")} onSubmit={onSubmit}>
       <label className="block">
-        <span className="text-sm">Capacity</span>
+        <span className="text-sm">{copy("ui.capacity")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           inputMode="decimal"
@@ -116,7 +116,7 @@ export function CapacityField({
         />
       </label>
       <label className="block">
-        <span className="text-sm">Unit</span>
+        <span className="text-sm">{copy("ui.unit")}</span>
         <select
           className="mt-1 w-full border border-line px-2 py-1"
           value={unit}
@@ -138,8 +138,7 @@ export function CapacityField({
       </label>
       {alertText ? <p role="alert">{alertText}</p> : null}
       <button className="border border-ink px-3 py-1 text-left" type="submit">
-        Save
-      </button>
+        {copy("ui.save")}</button>
     </form>
   );
 }

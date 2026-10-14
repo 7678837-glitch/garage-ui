@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
-import { formatCapacity, useI18n, type Language } from "./i18n";
+import { formatCapacity, useI18n, type Language, copy, fill, translate, phrase } from "./i18n";
 
 const COUNTS = [
   ["knownNodes", "Known nodes"],
@@ -82,7 +82,7 @@ type RawStat =
 function countOf(row: Record<string, unknown>, key: CountKey): number {
   const value = row[key];
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new Error("Cluster health is unavailable");
+    throw new Error(copy("ui.cluster.health.is.unavailable"));
   }
   return value;
 }
@@ -90,7 +90,7 @@ function countOf(row: Record<string, unknown>, key: CountKey): number {
 function metricOf(row: Record<string, unknown>, key: MetricKey): number {
   const value = row[key];
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new Error("Cluster metrics are unavailable");
+    throw new Error(copy("ui.cluster.metrics.are.unavailable"));
   }
   return value;
 }
@@ -100,14 +100,14 @@ function noticeText(value: unknown): string | null {
     return null;
   }
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error("Cluster metrics are unavailable");
+    throw new Error(copy("ui.cluster.metrics.are.unavailable"));
   }
   return value;
 }
 
 function parseMetrics(body: unknown): MetricsSummary {
   if (typeof body !== "object" || body === null) {
-    throw new Error("Cluster metrics are unavailable");
+    throw new Error(copy("ui.cluster.metrics.are.unavailable"));
   }
   const row = body as Record<string, unknown>;
   return {
@@ -121,11 +121,11 @@ function parseMetrics(body: unknown): MetricsSummary {
 
 function parseHealth(body: unknown): ClusterHealthReport {
   if (typeof body !== "object" || body === null) {
-    throw new Error("Cluster health is unavailable");
+    throw new Error(copy("ui.cluster.health.is.unavailable"));
   }
   const row = body as Record<string, unknown>;
   if (typeof row.status !== "string" || row.status.length === 0) {
-    throw new Error("Cluster health is unavailable");
+    throw new Error(copy("ui.cluster.health.is.unavailable"));
   }
   return {
     status: row.status,
@@ -175,7 +175,7 @@ function shownStatistic(
   language: Language,
 ): string {
   if (field.kind === "unset") {
-    return unset;
+    return phrase(language, unset);
   }
   if (display === "bytes") {
     return formatCapacity(field.text, language);
@@ -339,19 +339,19 @@ export function ClusterHealth() {
     queryFn: async () => parseMetrics(await api<unknown>("/api/metrics")),
   });
   const healthMessage =
-    health.error instanceof Error ? health.error.message : "Cluster health is unavailable";
+    health.error instanceof Error ? health.error.message : copy("ui.cluster.health.is.unavailable");
   const statisticsMessage =
     statistics.error instanceof Error
       ? statistics.error.message
-      : "Cluster statistics are unavailable";
+      : copy("ui.cluster.statistics.are.unavailable");
   const healthCode = shownCode(health.error);
   const statisticsCode = shownCode(statistics.error);
 
   return (
-    <section className="grid gap-4" aria-label="Cluster health">
-      <h2 className="text-lg font-semibold">Cluster health</h2>
+    <section className="grid gap-4" aria-label={copy("ui.cluster.health")}>
+      <h2 className="text-lg font-semibold">{copy("ui.cluster.health")}</h2>
       {health.isPending ? (
-        <div className="h-16 border border-line" aria-label="Loading cluster health" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.cluster.health")} />
       ) : null}
       {health.isError && !isGarageDown(health.error) ? (
         <>
@@ -364,19 +364,18 @@ export function ClusterHealth() {
               void health.refetch();
             }}
           >
-            Retry health
-          </button>
+            {copy("ui.retry.health")}</button>
         </>
       ) : null}
       {health.isSuccess ? (
         <dl className="grid gap-2 text-sm">
           <div>
-            <dt className="font-medium">Status</dt>
+            <dt className="font-medium">{copy("ui.status")}</dt>
             <dd>{health.data.status}</dd>
           </div>
           {COUNTS.map(([key, label]) => (
             <div key={key}>
-              <dt className="font-medium">{label}</dt>
+              <dt className="font-medium">{translate(label)}</dt>
               <dd>{health.data[key]}</dd>
             </div>
           ))}
@@ -384,7 +383,7 @@ export function ClusterHealth() {
       ) : null}
       {statistics.isError && !isGarageDown(statistics.error) ? (
         <>
-          <p>{`Statistics: ${statisticsMessage}`}</p>
+          <p>{fill(copy("ui.statistics"), { statisticsMessage: statisticsMessage })}</p>
           {statisticsCode ? <p>{statisticsCode}</p> : null}
           <button
             className="border border-ink px-3 py-1 text-left"
@@ -393,8 +392,7 @@ export function ClusterHealth() {
               void statistics.refetch();
             }}
           >
-            Retry statistics
-          </button>
+            {copy("ui.retry.statistics")}</button>
         </>
       ) : null}
       {statistics.isSuccess ? (
@@ -402,13 +400,13 @@ export function ClusterHealth() {
           <dl className="grid gap-2 text-sm">
             {STATISTICS.map(([key, label, display, unset]) => (
               <div key={key}>
-                <dt className="font-medium">{label}</dt>
+                <dt className="font-medium">{translate(label)}</dt>
                 <dd>{shownStatistic(statistics.data[key], display, unset, language)}</dd>
               </div>
             ))}
           </dl>
           {statistics.data.incompleteAvailInfo ? (
-            <p>Available space may be lower because some nodes are disconnected.</p>
+            <p>{copy("ui.available.space.may.be.lower.because.some.nodes")}</p>
           ) : null}
         </>
       ) : null}
@@ -417,7 +415,7 @@ export function ClusterHealth() {
           <dl className="grid gap-2 text-sm">
             {METRICS.map(([key, label]) => (
               <div key={key}>
-                <dt className="font-medium">{label}</dt>
+                <dt className="font-medium">{translate(label)}</dt>
                 <dd>{metrics.data[key]}</dd>
               </div>
             ))}

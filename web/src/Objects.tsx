@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
-import { InstantText } from "./i18n";
+import { InstantText, copy, fill, translate } from "./i18n";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
@@ -92,7 +92,9 @@ type DeleteFailure = {
 };
 
 const PAGE_LIMIT = "100";
-const UNAVAILABLE = "Objects are unavailable";
+function unavailableMessage(): string {
+  return copy("ui.objects.are.unavailable");
+}
 const SHARE_TIERS = [
   { label: "Share for 1 hour", seconds: 3600 },
   { label: "Share for 24 hours", seconds: 86400 },
@@ -117,7 +119,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requiredString(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   if (typeof value !== "string") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value;
 }
@@ -125,14 +127,14 @@ function requiredString(row: Record<string, unknown>, key: string): string {
 function requiredBoolean(row: Record<string, unknown>, key: string): boolean {
   const value = row[key];
   if (typeof value !== "boolean") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value;
 }
 
 function requiredSize(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value;
 }
@@ -149,7 +151,7 @@ function parseObject(row: Record<string, unknown>): ObjectEntry {
 
 function parseEntry(value: unknown): Entry {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   if (value.kind === "prefix") {
     return { kind: "prefix", prefix: requiredString(value, "prefix") };
@@ -157,7 +159,7 @@ function parseEntry(value: unknown): Entry {
   if (value.kind === "object") {
     return parseObject(value);
   }
-  throw new Error(UNAVAILABLE);
+  throw new Error(unavailableMessage());
 }
 
 function parseNext(value: unknown): string | null {
@@ -165,14 +167,14 @@ function parseNext(value: unknown): string | null {
     return null;
   }
   if (typeof value !== "string") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value;
 }
 
 function parsePage(value: unknown): ObjectPage {
   if (!isRecord(value) || !Array.isArray(value.entries)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     prefix: requiredString(value, "prefix"),
@@ -188,17 +190,17 @@ function parseReason(value: unknown): SearchPage["reason"] {
   if (value === "result_limit" || value === "page_limit") {
     return value;
   }
-  throw new Error(UNAVAILABLE);
+  throw new Error(unavailableMessage());
 }
 
 function parseSearch(value: unknown): SearchPage {
   if (!isRecord(value) || !Array.isArray(value.matches) || typeof value.truncated !== "boolean") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     matches: value.matches.map((match) => {
       if (!isRecord(match)) {
-        throw new Error(UNAVAILABLE);
+        throw new Error(unavailableMessage());
       }
       return {
         key: requiredString(match, "key"),
@@ -214,7 +216,7 @@ function parseSearch(value: unknown): SearchPage {
 
 function parseMeta(value: unknown): ObjectMeta {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     key: requiredString(value, "key"),
@@ -227,7 +229,7 @@ function parseMeta(value: unknown): ObjectMeta {
 
 function parseInspectVersion(value: unknown): InspectVersion {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     uuid: requiredString(value, "uuid"),
@@ -241,7 +243,7 @@ function parseInspectVersion(value: unknown): InspectVersion {
 
 function parseInspect(value: unknown): InspectedObject {
   if (!isRecord(value) || !Array.isArray(value.versions)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     bucketId: requiredString(value, "bucketId"),
@@ -250,17 +252,17 @@ function parseInspect(value: unknown): InspectedObject {
   };
 }
 
-function yesNo(value: boolean): "yes" | "no" {
-  return value ? "yes" : "no";
+function yesNo(value: boolean): string {
+  return value ? copy("ui.yes") : copy("ui.no");
 }
 
 function parseBatchDelete(value: unknown): DeleteFailure[] {
   if (!isRecord(value) || !Array.isArray(value.failed)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value.failed.map((item) => {
     if (!isRecord(item)) {
-      throw new Error(UNAVAILABLE);
+      throw new Error(unavailableMessage());
     }
     return {
       key: requiredString(item, "key"),
@@ -276,7 +278,7 @@ async function readJson(path: string): Promise<unknown> {
     if (error instanceof ApiError) {
       throw error;
     }
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
 }
 
@@ -307,7 +309,7 @@ function inspectPath(bucketId: string, key: string): string {
 
 function archiveHref(bucketId: string, value: unknown): string {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const token = requiredString(value, "token");
   return `${bucketUrl(bucketId)}/archive?token=${encodeURIComponent(token)}`;
@@ -374,7 +376,7 @@ async function readPreviewText(path: string, signal: AbortSignal): Promise<TextP
   if (!response.ok) {
     const text = await response.text();
     noteUnauthenticated(response.status, codeOf(text));
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     body: await response.text(),
@@ -400,7 +402,7 @@ function InlineBody({
       return text === undefined ? null : (
         <>
           <pre>{text.body}</pre>
-          {text.partial ? <p>Showing the first 256 KiB.</p> : null}
+          {text.partial ? <p>{copy("ui.showing.the.first.256.kib")}</p> : null}
         </>
       );
     case "pdf":
@@ -423,11 +425,11 @@ function parseCanShare(value: unknown): boolean {
 
 function parseKeyIds(value: unknown): string[] {
   if (!isRecord(value) || !Array.isArray(value.items)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return value.items.map((item) => {
     if (!isRecord(item)) {
-      throw new Error(UNAVAILABLE);
+      throw new Error(unavailableMessage());
     }
     return requiredString(item, "id");
   });
@@ -438,7 +440,7 @@ function parseShare(
   value: unknown,
 ): { key: string; url: string; website: string | null } {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const website = value.website_url;
   return {
@@ -455,7 +457,7 @@ function failureOf(error: unknown): Failure {
   if (error instanceof Error && error.message.length > 0) {
     return { message: error.message, code: null };
   }
-  return { message: UNAVAILABLE, code: null };
+  return { message: unavailableMessage(), code: null };
 }
 
 function isSortChoice(value: string): value is SortChoice {
@@ -829,7 +831,7 @@ export function Objects({
     mutationFn: async (ttl: number) => {
       const key = singleKey;
       if (key === null) {
-        throw new Error("Select one object");
+        throw new Error(copy("ui.select.one.object"));
       }
       const body = await api<unknown>("/api/share", {
         method: "POST",
@@ -976,15 +978,14 @@ export function Objects({
   }
 
   return (
-    <section className="grid gap-4" aria-label="Objects" aria-busy={loading}>
+    <section className="grid gap-4" aria-label={copy("nav.objects")} aria-busy={loading}>
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
         onClick={onBack}
       >
-        Back to buckets
-      </button>
-      <nav aria-label="Prefix" className="flex flex-wrap gap-2">
+        {copy("ui.back.to.buckets")}</button>
+      <nav aria-label={copy("ui.prefix")} className="flex flex-wrap gap-2">
         <button
           className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
           type="button"
@@ -1025,8 +1026,7 @@ export function Objects({
         }}
       >
         <label className="block text-sm">
-          Search
-          <input
+          {copy("ui.search")}<input
             className="mt-1 border border-neutral-300 px-2 py-1"
             value={draft}
             autoComplete="off"
@@ -1036,12 +1036,10 @@ export function Objects({
           />
         </label>
         <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
-          Search
-        </button>
+          {copy("ui.search")}</button>
       </form>
       <label className="block text-sm">
-        Sort
-        <select
+        {copy("ui.sort")}<select
           className="mt-1 border border-neutral-300 px-2 py-1"
           value={browse.sort}
           onChange={(event) => {
@@ -1053,14 +1051,14 @@ export function Objects({
             writeObjectQuery(browse.search ?? "", value);
           }}
         >
-          <option value="key">Key</option>
-          <option value="size">Size</option>
-          <option value="time">Time</option>
+          <option value="key">{copy("ui.key.2")}</option>
+          <option value="size">{copy("ui.size")}</option>
+          <option value="time">{copy("ui.time")}</option>
         </select>
       </label>
-      {browse.sort !== "key" ? <p>Only this page</p> : null}
+      {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
       {loading && !showRows ? (
-        <div className="h-16 border border-line" aria-label="Loading objects" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.objects")} />
       ) : null}
       {showFailure && failure ? <p>{failure.message}</p> : null}
       {showFailure && failure?.code ? <p>{failure.code}</p> : null}
@@ -1076,15 +1074,14 @@ export function Objects({
           }}
         >
           <label className="block text-sm">
-            Bucket key
-            <select
+            {copy("ui.bucket.key")}<select
               className="mt-1 border border-neutral-300 px-2 py-1"
               value={keyChoice}
               onChange={(event) => {
                 setKeyChoice(event.target.value);
               }}
             >
-              <option value="">Select a key</option>
+              <option value="">{copy("ui.select.a.key")}</option>
               {(keyChoices.data ?? []).map((id) => (
                 <option key={id} value={id}>
                   {id}
@@ -1097,8 +1094,7 @@ export function Objects({
             type="submit"
             disabled={keyChoice.length === 0 || chooseKey.isPending}
           >
-            Use this key
-          </button>
+            {copy("ui.use.this.key")}</button>
           {keyChoices.isError ? <p>{failureOf(keyChoices.error).message}</p> : null}
           {chooseKey.error instanceof Error ? <p>{chooseKey.error.message}</p> : null}
         </form>
@@ -1111,14 +1107,13 @@ export function Objects({
           type="button"
           onClick={retry}
         >
-          Retry
-        </button>
+          {copy("ui.retry")}</button>
       ) : null}
       {showEmpty ? (
         <p>
           {!searching && canWrite
-            ? "There are no objects. Upload the first object."
-            : "There are no objects."}
+            ? copy("ui.there.are.no.objects.upload.the.first.object")
+            : copy("ui.there.are.no.objects")}
         </p>
       ) : null}
       {searching && found.data?.truncated && found.data.reason ? <p>{found.data.reason}</p> : null}
@@ -1129,8 +1124,7 @@ export function Objects({
             type="button"
             onClick={copyPaths}
           >
-            Copy path
-          </button>
+            {copy("ui.copy.path")}</button>
           {canWrite ? (
             <button
               className="border border-neutral-900 px-3 py-1 text-left"
@@ -1147,8 +1141,7 @@ export function Objects({
                 setPendingDelete({ kind: "batch", keys: batch.keys, totalSize: batch.totalSize });
               }}
             >
-              Delete
-            </button>
+              {copy("ui.delete.2")}</button>
           ) : null}
           {canTransfer && shownPicked.length > 1 ? (
             <>
@@ -1170,8 +1163,7 @@ export function Objects({
                   });
                 }}
               >
-                Download ZIP
-              </button>
+                {copy("ui.download.zip")}</button>
               <a ref={zipAnchor} href={zipHref ?? undefined} target="_blank" rel="noopener" hidden />
               {archiveZip.error instanceof Error ? <p>{archiveZip.error.message}</p> : null}
             </>
@@ -1183,8 +1175,7 @@ export function Objects({
               target="_blank"
               rel="noopener"
             >
-              Download
-            </a>
+              {copy("ui.download")}</a>
           ) : null}
           {canShare && singleKey !== null
             ? SHARE_TIERS.map((tier) => (
@@ -1197,7 +1188,7 @@ export function Objects({
                     shareObject.mutate(tier.seconds);
                   }}
                 >
-                  {tier.label}
+                  {translate(tier.label)}
                 </button>
               ))
             : null}
@@ -1208,14 +1199,14 @@ export function Objects({
             </>
           ) : null}
           {shareObject.error instanceof Error ? <p>{shareObject.error.message}</p> : null}
-          {copyNote === "copied" ? <p>Copied</p> : null}
+          {copyNote === "copied" ? <p>{copy("ui.copied")}</p> : null}
           {copyNote === "manual" ? (
             <>
-              <p>Select the paths and copy them</p>
+              <p>{copy("ui.select.the.paths.and.copy.them")}</p>
               <textarea
                 className="min-w-0 max-w-full border border-neutral-300 px-2 py-1"
                 readOnly
-                aria-label="Selected paths"
+                aria-label={copy("ui.selected.paths")}
                 value={pathText}
               />
             </>
@@ -1223,12 +1214,12 @@ export function Objects({
         </div>
       ) : null}
       {preview ? (
-        <section aria-label="Object details">
-          <p>Size {preview.size}</p>
-          <p>Content type {preview.contentType}</p>
-          <p>ETag {preview.etag}</p>
+        <section aria-label={copy("ui.object.details")}>
+          <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
+          <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
+          <p>{fill(copy("ui.etag"), { etag: preview.etag })}</p>
           <p>
-            Last modified <InstantText value={preview.lastModified} />
+            {copy("ui.last.modified")}<InstantText value={preview.lastModified} />
           </p>
           {kind !== null ? (
             <InlineBody
@@ -1252,18 +1243,14 @@ export function Objects({
                     type="button"
                     onClick={selectPage}
                   >
-                    Select page
-                  </button>
+                    {copy("ui.select.page")}</button>
                 </th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Key
-                </th>
+                  {copy("ui.key.2")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Size
-                </th>
+                  {copy("ui.size")}</th>
                 <th className="py-2 font-medium" scope="col">
-                  Time
-                </th>
+                  {copy("ui.time")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1291,8 +1278,7 @@ export function Objects({
                               setPendingDelete({ kind: "prefix", name: entry.prefix });
                             }}
                           >
-                            Delete folder
-                          </button>
+                            {copy("ui.delete.folder")}</button>
                         ) : null}
                       </div>
                     </td>
@@ -1303,7 +1289,7 @@ export function Objects({
                   <tr key={`object:${entry.key}`}>
                     <td className="py-2 pr-3">
                       <input
-                        aria-label={`Select ${entry.key}`}
+                        aria-label={fill(copy("ui.select"), { key: entry.key })}
                         type="checkbox"
                         checked={shownPicked.includes(entry.key)}
                         onChange={(event) => {
@@ -1332,8 +1318,7 @@ export function Objects({
                               setInspectKey(entry.key);
                             }}
                           >
-                            Inspect {entry.key}
-                          </button>
+                            {fill(copy("ui.inspect"), { key: entry.key })}</button>
                         ) : null}
                       </div>
                     </td>
@@ -1349,7 +1334,7 @@ export function Objects({
         </div>
       ) : null}
       {inspect.data && inspected !== null && inspect.data.key === inspected ? (
-        <section aria-label={`Inspect ${inspected}`}>
+        <section aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
           {inspect.data.versions.map((version) => (
             <div key={version.uuid}>
               <p className="break-all">{version.uuid}</p>
@@ -1371,15 +1356,14 @@ export function Objects({
             setBrowse((current) => ({ ...current, next: nextPage, selected: null }));
           }}
         >
-          Next page
-        </button>
+          {copy("ui.next.page")}</button>
       ) : null}
       {pendingDelete?.kind === "object" ? (
         <ConfirmDialog
           action="delete-object"
           name={pendingDelete.name}
           pending={removeObject.isPending}
-          consequence={`This permanently deletes ${pendingDelete.name}.${deleteError ? ` ${deleteError}` : ""}`}
+          consequence={fill(copy("ui.this.permanently.deletes"), { name: pendingDelete.name, error: deleteError ? ` ${deleteError}` : "" })}
           onCancel={() => {
             setPendingDelete(null);
             removeObject.reset();
@@ -1397,8 +1381,8 @@ export function Objects({
           action="batch-delete"
           name={String(pendingDelete.keys.length)}
           pending={removeMany.isPending}
-          scope={`Deletes ${pendingDelete.keys.length} objects, ${pendingDelete.totalSize} bytes.`}
-          consequence={`This permanently deletes ${pendingDelete.keys.length} objects.${batchError ? ` ${batchError}` : ""}`}
+          scope={fill(copy("ui.deletes.objects.bytes"), { length: pendingDelete.keys.length, totalSize: pendingDelete.totalSize })}
+          consequence={fill(copy("ui.this.permanently.deletes.objects"), { length: pendingDelete.keys.length, error: batchError ? ` ${batchError}` : "" })}
           onCancel={() => {
             setPendingDelete(null);
             removeMany.reset();
@@ -1416,8 +1400,8 @@ export function Objects({
           action="recursive-delete"
           name={pendingDelete.name}
           pending={removePrefix.isPending}
-          scope="This deletes every object under this prefix."
-          consequence={`This permanently deletes every object whose key starts with ${pendingDelete.name}.${prefixError ? ` ${prefixError}` : ""}`}
+          scope={copy("ui.this.deletes.every.object.under.this.prefix")}
+          consequence={fill(copy("ui.this.permanently.deletes.every.object.whose.key.starts"), { name: pendingDelete.name, error: prefixError ? ` ${prefixError}` : "" })}
           onCancel={() => {
             setPendingDelete(null);
             removePrefix.reset();

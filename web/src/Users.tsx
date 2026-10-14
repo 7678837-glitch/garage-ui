@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
+import { copy, fill } from "./i18n";
 
 type Role = "admin" | "viewer";
 
@@ -156,12 +157,12 @@ function errorText(caught: unknown): string {
   if (caught instanceof Error && caught.message.length > 0) {
     return caught.message;
   }
-  return "Request failed";
+  return copy("ui.request.failed.2");
 }
 
 function parseAccount(value: unknown): Account {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Users are unavailable");
+    throw new Error(copy("ui.users.are.unavailable"));
   }
   const row = value as Record<string, unknown>;
   const role = row.role;
@@ -174,7 +175,7 @@ function parseAccount(value: unknown): Account {
     typeof row.can_share !== "boolean" ||
     typeof row.disabled !== "boolean"
   ) {
-    throw new Error("Users are unavailable");
+    throw new Error(copy("ui.users.are.unavailable"));
   }
   return {
     id: row.id,
@@ -194,11 +195,11 @@ type UserPage = {
 
 function parseUserPage(body: unknown): UserPage {
   if (typeof body !== "object" || body === null) {
-    throw new Error("Users are unavailable");
+    throw new Error(copy("ui.users.are.unavailable"));
   }
   const page = body as Record<string, unknown>;
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
-    throw new Error("Users are unavailable");
+    throw new Error(copy("ui.users.are.unavailable"));
   }
   return {
     items: page.items.map(parseAccount),
@@ -221,7 +222,7 @@ class UserListError extends Error {
   }
 }
 
-// api() 只把 message 放进 Error。用户列表还要显示 body 里的 code，所以这里自己读响应。
+// api() puts only message on Error. The user list also shows the response code, so read the body here.
 function failureFrom(text: string, status: number): UserListFailure {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
@@ -250,7 +251,7 @@ function userListFailure(error: unknown): UserListFailure {
   if (error instanceof Error) {
     return { message: error.message, code: null };
   }
-  return { message: "Users are unavailable", code: null };
+  return { message: copy("ui.users.are.unavailable"), code: null };
 }
 
 async function loadUsers(offset: number): Promise<UserPage> {
@@ -318,7 +319,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         <td className="py-2 pr-3">{account.username}</td>
         <td className="py-2 pr-3">
           <select
-            aria-label={`Role for ${account.username}`}
+            aria-label={fill(copy("ui.role.for"), { username: account.username })}
             className="border border-line px-2 py-1"
             value={account.role}
             disabled={self || busy}
@@ -333,14 +334,14 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               });
             }}
           >
-            <option value="admin">admin</option>
-            <option value="viewer">viewer</option>
+            <option value="admin">{copy("ui.admin")}</option>
+            <option value="viewer">{copy("ui.viewer")}</option>
           </select>
-          {patch.isPending ? <span>Saving</span> : null}
+          {patch.isPending ? <span>{copy("ui.saving")}</span> : null}
         </td>
         <td className="py-2 pr-3">
           <input
-            aria-label={`Download for ${account.username}`}
+            aria-label={fill(copy("ui.download.for"), { username: account.username })}
             type="checkbox"
             checked={shown.can_download}
             disabled={account.role !== "viewer" || busy}
@@ -351,7 +352,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         </td>
         <td className="py-2 pr-3">
           <input
-            aria-label={`Share for ${account.username}`}
+            aria-label={fill(copy("ui.share.for"), { username: account.username })}
             type="checkbox"
             checked={shown.can_share}
             disabled={shareLocked}
@@ -362,7 +363,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
         </td>
         <td className="py-2 pr-3">
           <input
-            aria-label={`Disabled for ${account.username}`}
+            aria-label={fill(copy("ui.disabled.for"), { username: account.username })}
             type="checkbox"
             checked={account.disabled}
             disabled={self || busy}
@@ -387,7 +388,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
             }}
           >
             <input
-              aria-label={`New password for ${account.username}`}
+              aria-label={fill(copy("ui.new.password.for"), { username: account.username })}
               className="border border-line px-2 py-1"
               type="password"
               autoComplete="new-password"
@@ -400,10 +401,10 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               type="submit"
               disabled={self || busy || password.length === 0}
             >
-              {reset.isPending ? "Resetting password" : `Reset password for ${account.username}`}
+              {reset.isPending ? copy("ui.resetting.password") : fill(copy("ui.reset.password.for"), { username: account.username })}
             </button>
           </form>
-          {reset.isSuccess ? <p>Password reset</p> : null}
+          {reset.isSuccess ? <p>{copy("ui.password.reset")}</p> : null}
         </td>
         <td className="py-2">
           <button
@@ -418,7 +419,7 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
               remove.mutate();
             }}
           >
-            {remove.isPending ? `Deleting ${account.username}` : `Delete ${account.username}`}
+            {remove.isPending ? fill(copy("ui.deleting"), { username: account.username }) : fill(copy("ui.delete.3"), { username: account.username })}
           </button>
         </td>
       </tr>
@@ -461,7 +462,7 @@ function CreateAccount() {
 
   return (
     <form
-      aria-label="Create user"
+      aria-label={copy("ui.create.user")}
       className="grid max-w-sm gap-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -476,7 +477,7 @@ function CreateAccount() {
       }}
     >
       <label className="block">
-        <span className="text-sm">Username</span>
+        <span className="text-sm">{copy("ui.username")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           autoComplete="off"
@@ -485,7 +486,7 @@ function CreateAccount() {
         />
       </label>
       <label className="block">
-        <span className="text-sm">Password</span>
+        <span className="text-sm">{copy("ui.password")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           type="password"
@@ -495,7 +496,7 @@ function CreateAccount() {
         />
       </label>
       <label className="block">
-        <span className="text-sm">Role</span>
+        <span className="text-sm">{copy("ui.role")}</span>
         <select
           className="mt-1 w-full border border-line px-2 py-1"
           value={role}
@@ -508,8 +509,8 @@ function CreateAccount() {
             }
           }}
         >
-          <option value="viewer">viewer</option>
-          <option value="admin">admin</option>
+          <option value="viewer">{copy("ui.viewer")}</option>
+          <option value="admin">{copy("ui.admin")}</option>
         </select>
       </label>
       <label className="block text-sm">
@@ -525,8 +526,7 @@ function CreateAccount() {
             }
           }}
         />{" "}
-        Download
-      </label>
+        {copy("ui.download")}</label>
       <label className="block text-sm">
         <input
           type="checkbox"
@@ -534,16 +534,15 @@ function CreateAccount() {
           disabled={role !== "viewer" || !download || create.isPending}
           onChange={(event) => setShare(event.target.checked)}
         />{" "}
-        Share
-      </label>
+        {copy("ui.share")}</label>
       {error ? <p role="alert">{error}</p> : null}
-      {create.isSuccess ? <p>User created</p> : null}
+      {create.isSuccess ? <p>{copy("ui.user.created")}</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={create.isPending || username.length === 0 || password.length === 0}
       >
-        {create.isPending ? "Creating user" : "Create user"}
+        {create.isPending ? copy("ui.creating.user") : copy("ui.create.user")}
       </button>
     </form>
   );
@@ -576,12 +575,11 @@ export function Users({ selfUsername }: { selfUsername: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label="Users" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Users</h2>
+    <section className="grid gap-4" aria-label={copy("nav.users")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.users")}</h2>
       <div className="grid max-w-sm gap-3">
         <label className="block text-sm">
-          Filter users
-          <input
+          {copy("ui.filter.users")}<input
             className="mt-1 w-full border border-line px-2 py-1"
             value={filter}
             onChange={(event) => {
@@ -592,8 +590,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           />
         </label>
         <label className="block text-sm">
-          Sort users
-          <select
+          {copy("ui.sort.users")}<select
             className="mt-1 w-full border border-line px-2 py-1"
             value={sort}
             onChange={(event) => {
@@ -602,11 +599,11 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserSort(next);
             }}
           >
-            <option value="username">Username</option>
-            <option value="created">Created</option>
+            <option value="username">{copy("ui.username")}</option>
+            <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p>Default order is Username.</p>
+        <p>{copy("ui.default.order.is.username")}</p>
         <div className="flex gap-2">
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
@@ -618,8 +615,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserOffset(next);
             }}
           >
-            Previous
-          </button>
+            {copy("ui.previous")}</button>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -630,12 +626,11 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserOffset(next);
             }}
           >
-            Next
-          </button>
+            {copy("ui.next")}</button>
         </div>
       </div>
-      {view.busy ? <div className="h-16 border border-line" aria-label="Loading users" /> : null}
-      {view.refreshing ? <p>Refreshing users</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.users")} /> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.users")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -647,37 +642,29 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               void users.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
-      {view.empty ? <p>There are no users. Create the first user.</p> : null}
+      {view.empty ? <p>{copy("ui.there.are.no.users.create.the.first.user")}</p> : null}
       {users.data && shown.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Username
-                </th>
+                  {copy("ui.username")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Role
-                </th>
+                  {copy("ui.role")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Download
-                </th>
+                  {copy("ui.download")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Share
-                </th>
+                  {copy("ui.share")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Disabled
-                </th>
+                  {copy("ui.disabled")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Reset password
-                </th>
+                  {copy("ui.reset.password")}</th>
                 <th className="py-2 font-medium" scope="col">
-                  Delete
-                </th>
+                  {copy("ui.delete.2")}</th>
               </tr>
             </thead>
             <tbody>

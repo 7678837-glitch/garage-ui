@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
+import { copy, fill } from "./i18n";
 
 const RISK = {
   rename: "low",
@@ -45,7 +46,7 @@ function isWriteAction(action: string): action is WriteAction {
 
 export function riskOf(action: string): RiskLevel {
   if (!isWriteAction(action)) {
-    throw new Error(`Unknown write action: ${action}`);
+    throw new Error(fill(copy("ui.unknown.write.action"), { action: action }));
   }
   return RISK[action];
 }
@@ -109,14 +110,12 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       }}
     >
       <h3 id={titleId} className="font-medium">
-        Confirm {name}
-      </h3>
+        {fill(copy("ui.confirm"), { name: name })}</h3>
       <p>{consequence}</p>
       {scope !== null ? <p>{scope}</p> : null}
       {level === "high" ? (
         <label className="mt-2 block">
-          Type {name} to confirm
-          <input
+          {fill(copy("ui.type.to.confirm"), { name: name })}<input
             className="mt-1 w-full border border-neutral-300 px-2 py-1"
             value={typed}
             autoComplete="off"
@@ -133,8 +132,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         type="button"
         onClick={onCancel}
       >
-        Cancel
-      </button>
+        {copy("ui.cancel")}</button>
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
@@ -145,7 +143,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           }
         }}
       >
-        {pending ? "Working" : "Confirm"}
+        {pending ? copy("ui.working") : copy("ui.confirm.2")}
       </button>
     </dialog>
   );

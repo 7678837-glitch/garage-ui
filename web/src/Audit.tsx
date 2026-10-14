@@ -1,7 +1,9 @@
+import type { CopyKey } from "./copy-en";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { isGarageDown } from "./garageDown";
+import { copy, fill, translate } from "./i18n";
 
 const COLUMNS = [
   "at",
@@ -16,6 +18,18 @@ const COLUMNS = [
 ] as const;
 
 type AuditColumn = (typeof COLUMNS)[number];
+
+const columnLabel = {
+  at: "ui.column.at",
+  username: "ui.column.username",
+  ip: "ui.column.ip",
+  result: "ui.column.result",
+  reason: "ui.column.reason",
+  method: "ui.column.method",
+  path: "ui.column.path",
+  target: "ui.column.target",
+  status: "ui.column.status",
+} as const satisfies Record<AuditColumn, CopyKey>;
 
 type AuditRow = Record<AuditColumn, string | number>;
 
@@ -57,13 +71,13 @@ function failureOf(error: unknown): { message: string; code: string | null } {
   if (error instanceof Error && error.message.length > 0) {
     return { message: error.message, code: null };
   }
-  return { message: "Audit is unavailable", code: null };
+  return { message: copy("ui.audit.is.unavailable"), code: null };
 }
 
 async function loadAudit(filters: AuditFilters): Promise<AuditPage> {
   const page = await api<AuditPage>(`/api/audit${auditSearch(filters)}`);
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
-    throw new Error("Audit is unavailable");
+    throw new Error(copy("ui.audit.is.unavailable"));
   }
   return page;
 }
@@ -73,7 +87,7 @@ async function exportAudit(filters: AuditFilters): Promise<void> {
     credentials: "include",
   });
   if (!response.ok) {
-    throw new Error(`request failed (${response.status})`);
+    throw new Error(fill(copy("ui.request.failed"), { status: response.status }));
   }
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
@@ -105,12 +119,12 @@ export function Audit() {
     failure: listed.isError ? failureOf(listed.error) : null,
   };
   return (
-    <section className="grid min-w-0 gap-4" aria-label="Audit" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Audit</h2>
+    <section className="grid min-w-0 gap-4" aria-label={copy("nav.audit")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.audit")}</h2>
       <div className="flex min-w-0 flex-wrap items-end gap-3">
         {FILTER_FIELDS.map(([key, label]) => (
           <label className="block text-sm" key={key}>
-            {label}
+            {translate(label)}
             <input
               className="mt-1 border border-line px-2 py-1"
               value={filters[key]}
@@ -134,11 +148,10 @@ export function Audit() {
           });
         }}
       >
-        Export audit
-      </button>
-      {exportFailed ? <p>Export failed</p> : null}
-      {view.busy ? <div className="h-16 border border-line" aria-label="Loading audit" /> : null}
-      {view.refreshing ? <p>Refreshing audit</p> : null}
+        {copy("ui.export.audit")}</button>
+      {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.audit")} /> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.audit")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -150,18 +163,17 @@ export function Audit() {
               void listed.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
-      {view.empty ? <p>There are no audit events.</p> : null}
+      {view.empty ? <p>{copy("ui.there.are.no.audit.events")}</p> : null}
       <div className="min-w-0 overflow-x-auto">
         <table className="w-full border-collapse text-left text-sm">
           <thead>
             <tr>
               {COLUMNS.map((column) => (
                 <th className="py-2 pr-3 font-medium" key={column} scope="col">
-                  {column}
+                  {copy(columnLabel[column])}
                 </th>
               ))}
             </tr>

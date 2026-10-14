@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { putObject } from "./api/client";
-import { useI18n } from "./i18n";
+import { useI18n, copy, translate } from "./i18n";
 
 // React 18 input types omit webkitdirectory. Directory selection only checks that the attribute is present.
 declare module "react" {
@@ -396,18 +396,17 @@ export function UploadPanel({
 
   return (
     <section
-      aria-label="Upload"
+      aria-label={copy("ui.upload")}
       className="grid gap-3"
       onDragOver={(event) => {
         event.preventDefault();
       }}
       onDrop={onDrop}
     >
-      <h2 className="text-lg font-semibold">Upload</h2>
-      <p>Drop files here.</p>
+      <h2 className="text-lg font-semibold">{copy("ui.upload")}</h2>
+      <p>{copy("ui.drop.files.here")}</p>
       <label className="grid gap-1">
-        Choose files
-        <input
+        {copy("ui.choose.files")}<input
           className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
           multiple
           type="file"
@@ -418,8 +417,7 @@ export function UploadPanel({
         />
       </label>
       <label className="grid gap-1">
-        Choose folder
-        <input
+        {copy("ui.choose.folder")}<input
           className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
           multiple
           type="file"
@@ -431,15 +429,14 @@ export function UploadPanel({
         />
       </label>
       <button className="border border-ink px-3 py-1 text-left" type="button" onClick={clearFinished}>
-        Clear finished
-      </button>
+        {copy("ui.clear.finished")}</button>
       <ul className="grid gap-2">
         {rows.map((row) => {
           const prompt = row.phase.kind === "queued" && needsPrompt(row, rows, keys);
           return (
             <li key={row.id} className="flex flex-wrap items-center gap-2">
               <span>{row.name}</span>
-              <span>{STATUS_LABEL[row.phase.kind]}</span>
+              <span>{translate(STATUS_LABEL[row.phase.kind])}</span>
               {row.phase.kind === "uploading" && row.phase.percent !== null ? (
                 <span>{row.phase.percent}%</span>
               ) : null}
@@ -457,8 +454,7 @@ export function UploadPanel({
                       overwrite(row.id, false);
                     }}
                   >
-                    Overwrite
-                  </button>
+                    {copy("ui.overwrite")}</button>
                   <button
                     className="border border-ink px-3 py-1 text-left"
                     type="button"
@@ -466,8 +462,7 @@ export function UploadPanel({
                       skip(row.id);
                     }}
                   >
-                    Skip
-                  </button>
+                    {copy("ui.skip")}</button>
                   <button
                     className="border border-ink px-3 py-1 text-left"
                     type="button"
@@ -475,8 +470,7 @@ export function UploadPanel({
                       overwrite(row.id, true);
                     }}
                   >
-                    Overwrite all
-                  </button>
+                    {copy("ui.overwrite.all")}</button>
                 </>
               ) : null}
               {row.phase.kind === "queued" || row.phase.kind === "uploading" ? (
@@ -487,8 +481,7 @@ export function UploadPanel({
                     cancel(row.id);
                   }}
                 >
-                  Cancel
-                </button>
+                  {copy("ui.cancel")}</button>
               ) : null}
               {row.phase.kind === "failed" || row.phase.kind === "cancelled" ? (
                 <button
@@ -498,8 +491,7 @@ export function UploadPanel({
                     retry(row.id);
                   }}
                 >
-                  Retry
-                </button>
+                  {copy("ui.retry")}</button>
               ) : null}
             </li>
           );

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { en, type CopyKey } from "./copy-en";
 import { zh } from "./copy-zh";
 
@@ -7,6 +7,45 @@ const storageKey = "garage-ui-language";
 export type Language = "en" | "zh-CN";
 
 const catalogs = { en, "zh-CN": zh } as const;
+
+let activeLanguage: Language = "en";
+
+export function copy(key: CopyKey): string {
+  return catalogs[activeLanguage][key];
+}
+
+export function fill(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{([A-Za-z0-9_]+)\}/g, (token, name: string) => {
+    const value = values[name];
+    return value === undefined ? token : String(value);
+  });
+}
+
+export function isCopyKey(value: string): value is CopyKey {
+  return Object.prototype.hasOwnProperty.call(en, value);
+}
+
+const englishKey = new Map<string, CopyKey>();
+for (const key of Object.keys(en) as CopyKey[]) {
+  if (!englishKey.has(en[key])) {
+    englishKey.set(en[key], key);
+  }
+}
+
+export function phrase(language: Language, value: string): string {
+  if (isCopyKey(value)) {
+    return catalogs[language][value];
+  }
+  const key = englishKey.get(value);
+  if (!key) {
+    return value;
+  }
+  return catalogs[language][key];
+}
+
+export function translate(value: string): string {
+  return phrase(activeLanguage, value);
+}
 
 export function readLanguage(storage: Pick<Storage, "getItem">): Language {
   return storage.getItem(storageKey) === "zh-CN" ? "zh-CN" : "en";
@@ -25,10 +64,20 @@ type LanguageValue = {
 const LanguageContext = createContext<LanguageValue | null>(null);
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() =>
-    typeof localStorage === "undefined" ? "en" : readLanguage(localStorage),
-  );
+  const [language, setLanguageState] = useState<Language>(() => {
+    const initial = typeof localStorage === "undefined" ? "en" : readLanguage(localStorage);
+    activeLanguage = initial;
+    return initial;
+  });
+  activeLanguage = language;
+  useEffect(() => {
+    activeLanguage = language;
+    return () => {
+      activeLanguage = "en";
+    };
+  }, [language]);
   const setLanguage = (next: Language) => {
+    activeLanguage = next;
     setLanguageState(next);
     if (typeof localStorage !== "undefined") {
       writeLanguage(localStorage, next);

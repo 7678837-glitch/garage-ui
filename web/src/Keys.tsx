@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./confirm";
 import { DetailTabs } from "./DetailTabs";
 import { detailAddressFromHash, hashForDetail, keyTabs, useLocationHash } from "./Nav";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
+import { copy, fill } from "./i18n";
 
 type AccessKey = {
   id: string;
@@ -29,11 +30,11 @@ const PAGE_LIMIT = 100;
 
 function parseKey(value: unknown): AccessKey {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Keys are unavailable");
+    throw new Error(copy("ui.keys.are.unavailable"));
   }
   const row = value as Record<string, unknown>;
   if (typeof row.id !== "string" || row.id.length === 0) {
-    throw new Error("Keys are unavailable");
+    throw new Error(copy("ui.keys.are.unavailable"));
   }
   return {
     id: row.id,
@@ -57,11 +58,11 @@ function parseCreateBucket(row: Record<string, unknown>): boolean | null {
 
 function parsePage(body: unknown): KeyPage {
   if (typeof body !== "object" || body === null) {
-    throw new Error("Keys are unavailable");
+    throw new Error(copy("ui.keys.are.unavailable"));
   }
   const page = body as Record<string, unknown>;
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
-    throw new Error("Keys are unavailable");
+    throw new Error(copy("ui.keys.are.unavailable"));
   }
   return {
     items: page.items.map(parseKey),
@@ -131,11 +132,11 @@ function parseKeyBucket(value: unknown): KeyBucket | null {
 
 function parseKeyBuckets(payload: unknown): KeyBucket[] {
   if (typeof payload !== "object" || payload === null) {
-    throw new Error("Key buckets are unavailable");
+    throw new Error(copy("ui.key.buckets.are.unavailable"));
   }
   const buckets = (payload as Record<string, unknown>).buckets;
   if (!Array.isArray(buckets)) {
-    throw new Error("Key buckets are unavailable");
+    throw new Error(copy("ui.key.buckets.are.unavailable"));
   }
   const rows: KeyBucket[] = [];
   for (const entry of buckets) {
@@ -147,8 +148,8 @@ function parseKeyBuckets(payload: unknown): KeyBucket[] {
   return rows;
 }
 
-function yesNo(flag: boolean): "yes" | "no" {
-  return flag ? "yes" : "no";
+function yesNo(flag: boolean): string {
+  return flag ? copy("ui.yes") : copy("ui.no");
 }
 
 async function loadKeyBuckets(keyId: string): Promise<KeyBucket[]> {
@@ -170,9 +171,9 @@ function KeyBuckets({ keyId }: { keyId: string }) {
   const rows = buckets.data ?? [];
   const failure = buckets.isError ? keyListFailure(buckets.error) : null;
   return (
-    <div aria-label={`Buckets for ${keyId}`}>
+    <div aria-label={fill(copy("ui.buckets.for"), { keyId: keyId })}>
       {buckets.isPending ? (
-        <div className="h-16 border border-line" aria-label={`Loading buckets for ${keyId}`} />
+        <div className="h-16 border border-line" aria-label={fill(copy("ui.loading.buckets.for"), { keyId: keyId })} />
       ) : null}
       {failure && !isGarageDown(failure) ? (
         <>
@@ -185,11 +186,10 @@ function KeyBuckets({ keyId }: { keyId: string }) {
               void buckets.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
-      {buckets.data && rows.length === 0 ? <p>This key cannot access any buckets.</p> : null}
+      {buckets.data && rows.length === 0 ? <p>{copy("ui.this.key.cannot.access.any.buckets")}</p> : null}
       {rows.length > 0 ? (
         <ul className="grid gap-2">
           {rows.map((bucket, index) => (
@@ -201,9 +201,9 @@ function KeyBuckets({ keyId }: { keyId: string }) {
               {bucket.localAliases.map((alias, aliasIndex) => (
                 <p key={`local-${alias}-${aliasIndex}`}>{alias}</p>
               ))}
-              <p>owner {yesNo(bucket.owner)}</p>
-              <p>read {yesNo(bucket.read)}</p>
-              <p>write {yesNo(bucket.write)}</p>
+              <p>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</p>
+              <p>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</p>
+              <p>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</p>
             </li>
           ))}
         </ul>
@@ -278,7 +278,7 @@ function keyListFailure(error: unknown): KeyListFailure {
   if (error instanceof Error) {
     return { message: error.message, code: null };
   }
-  return { message: "Keys are unavailable", code: null };
+  return { message: copy("ui.keys.are.unavailable"), code: null };
 }
 
 async function loadPage(offset: number): Promise<KeyPage> {
@@ -337,7 +337,7 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
     },
     onSuccess: async () => {
       setName("");
-      setNote("Key created");
+      setNote(copy("ui.key.created"));
       await client.invalidateQueries({ queryKey: ["keys"] });
     },
   });
@@ -351,7 +351,7 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
       }}
     >
       <label className="block">
-        <span className="text-sm">Key name</span>
+        <span className="text-sm">{copy("ui.key.name")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           value={name}
@@ -367,7 +367,7 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
         type="submit"
         disabled={create.isPending}
       >
-        {create.isPending ? "Creating key" : "Create key"}
+        {create.isPending ? copy("ui.creating.key") : copy("ui.create.key")}
       </button>
     </form>
   );
@@ -396,7 +396,7 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
   const renameStatus = saveStatus(
     savePhase(rename.isPending, rename.isError, rename.isSuccess),
     nameDirty,
-    "Key renamed",
+    copy("ui.key.renamed"),
   );
   return (
     <form
@@ -407,7 +407,7 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
       }}
     >
       <label className="block">
-        <span className="text-sm">Name for {id}</span>
+        <span className="text-sm">{fill(copy("ui.name.for"), { id: id })}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           value={draft}
@@ -423,7 +423,7 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
         type="submit"
         disabled={rename.isPending}
       >
-        {rename.isPending ? "Renaming key" : `Rename ${id}`}
+        {rename.isPending ? copy("ui.renaming.key") : fill(copy("ui.rename"), { id: id })}
       </button>
     </form>
   );
@@ -465,9 +465,8 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
             change.mutate(event.target.checked);
           }}
         />
-        Allow create bucket for {id}
-      </label>
-      {change.isPending ? <p>Saving</p> : null}
+        {fill(copy("ui.allow.create.bucket.for"), { id: id })}</label>
+      {change.isPending ? <p>{copy("ui.saving")}</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>
   );
@@ -504,11 +503,10 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
       }}
     >
       <h3 id="key-secret-title" className="font-medium">
-        Secret for {reveal.keyId}
-      </h3>
-      <p>This secret is shown once. Closing this dialog removes it from the page.</p>
+        {fill(copy("ui.secret.for"), { keyId: reveal.keyId })}</h3>
+      <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
       <label className="block">
-        <span className="text-sm">Secret access key</span>
+        <span className="text-sm">{copy("ui.secret.access.key")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           readOnly
@@ -524,8 +522,7 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
           setVisible(true);
         }}
       >
-        Show secret
-      </button>
+        {copy("ui.show.secret")}</button>
       <button
         ref={copyRef}
         className="mr-2 border border-ink px-3 py-1 text-left"
@@ -533,24 +530,22 @@ function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () =
         onClick={() => {
           void copySecret(reveal.secret).then((result) => {
             if (result === "copied") {
-              setFeedback("Copied");
+              setFeedback(copy("ui.copied"));
               return;
             }
             setVisible(true);
-            setFeedback("Select the secret and copy it");
+            setFeedback(copy("ui.select.the.secret.and.copy.it"));
           });
         }}
       >
-        Copy secret
-      </button>
+        {copy("ui.copy.secret")}</button>
       {feedback ? <p>{feedback}</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="button"
         onClick={onClose}
       >
-        I have saved it
-      </button>
+        {copy("ui.i.have.saved.it")}</button>
     </dialog>
   );
 }
@@ -666,7 +661,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       });
       const secret = secretFrom(body);
       if (!secret) {
-        throw new Error("Secret is unavailable");
+        throw new Error(copy("ui.secret.is.unavailable"));
       }
       setReveal({ keyId: id, secret });
     },
@@ -680,7 +675,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     },
     onSuccess: async () => {
       setDeleteId(null);
-      setNotice("Key deleted");
+      setNotice(copy("ui.key.deleted"));
       await client.invalidateQueries({ queryKey: ["keys"] });
     },
   });
@@ -710,11 +705,11 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     keyDetail === null ? null : (rows.find((accessKey) => accessKey.id === keyDetail.id) ?? null);
 
   return (
-    <section className="grid min-w-0 gap-4" aria-label="Keys" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Keys</h2>
+    <section className="grid min-w-0 gap-4" aria-label={copy("nav.keys")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.keys")}</h2>
       {keyDetail ? (
         <DetailTabs
-          label={`Key ${keyDetail.id}`}
+          label={fill(copy("ui.key"), { id: keyDetail.id })}
           tabs={keyTabs()}
           selected={keyDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "key", id: keyDetail.id, tab })}
@@ -734,9 +729,9 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && canManage ? <CreateKeyForm onSecret={setReveal} /> : null}
       {keyDetail === null && view.busy ? (
-        <div className="h-16 border border-line" aria-label="Loading keys" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.keys")} />
       ) : null}
-      {view.refreshing ? <p>Refreshing keys</p> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -748,16 +743,14 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
               void list.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {keyDetail === null ? (
       <div className="grid max-w-sm gap-3">
         <label className="block text-sm">
-          Filter keys
-          <input
+          {copy("ui.filter.keys")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={query.filter}
             onChange={(event) => {
@@ -768,8 +761,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           />
         </label>
         <label className="block text-sm">
-          Sort keys
-          <select
+          {copy("ui.sort.keys")}<select
             className="mt-1 w-full border border-ink px-2 py-1"
             value={query.sort}
             onChange={(event) => {
@@ -782,16 +774,16 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             }}
           >
             <option value="id">Id</option>
-            <option value="name">Name</option>
-            <option value="created">Created</option>
+            <option value="name">{copy("ui.name")}</option>
+            <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p>Default order is Id.</p>
-        <p>Only loaded rows</p>
+        <p>{copy("ui.default.order.is.id")}</p>
+        <p>{copy("ui.only.loaded.rows")}</p>
       </div>
       ) : null}
       {keyDetail === null && view.empty ? (
-        <p>{canManage ? "There are no keys. Create the first key." : "There are no keys."}</p>
+        <p>{canManage ? copy("ui.there.are.no.keys.create.the.first.key") : copy("ui.there.are.no.keys")}</p>
       ) : null}
       {keyDetail === null && list.data && shown.length > 0 ? (
         <div className="min-w-0 overflow-x-auto">
@@ -799,15 +791,12 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Key
-                </th>
+                  {copy("ui.key.2")}</th>
                 <th className="py-2 font-medium" scope="col">
-                  Name
-                </th>
+                  {copy("ui.name")}</th>
                 {canManage ? (
                   <th className="py-2 font-medium" scope="col">
-                    Actions
-                  </th>
+                    {copy("ui.actions")}</th>
                 ) : null}
               </tr>
             </thead>
@@ -828,8 +817,8 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                         }}
                       >
                         {viewSecret.isPending && viewSecret.variables === accessKey.id
-                          ? "Reading secret"
-                          : `View secret for ${accessKey.id}`}
+                          ? copy("ui.reading.secret")
+                          : fill(copy("ui.view.secret.for"), { id: accessKey.id })}
                       </button>
                       <button
                         className="border border-ink px-2 py-1 text-left"
@@ -839,8 +828,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                           setDeleteId(accessKey.id);
                         }}
                       >
-                        Delete {accessKey.id}
-                      </button>
+                        {fill(copy("ui.delete"), { id: accessKey.id })}</button>
                       {viewSecret.variables === accessKey.id && viewError ? (
                         <p className="text-sm text-danger">{viewError}</p>
                       ) : null}
@@ -856,7 +844,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && view.partial ? (
         <>
-          <p>More keys are available.</p>
+          <p>{copy("ui.more.keys.are.available")}</p>
           <button
             className="border border-ink px-3 py-1 text-left"
             type="button"
@@ -865,8 +853,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
               void list.fetchNextPage();
             }}
           >
-            Load more
-          </button>
+            {copy("ui.load.more")}</button>
         </>
       ) : null}
       {deleteId !== null ? (
@@ -874,7 +861,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           action="delete-key"
           name={deleteId}
           pending={removeKey.isPending}
-          consequence={`This permanently deletes key ${deleteId}. Clients that use this key lose access.${deleteError ? ` ${deleteError}` : ""}`}
+          consequence={fill(copy("ui.this.permanently.deletes.key.clients.that.use.this"), { deleteId: deleteId, error: deleteError ? ` ${deleteError}` : "" })}
           onCancel={() => {
             setDeleteId(null);
             removeKey.reset();

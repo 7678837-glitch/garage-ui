@@ -4,8 +4,11 @@ import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
+import { copy, fill } from "./i18n";
 
-const UNAVAILABLE = "Block errors are unavailable";
+function unavailableMessage(): string {
+  return copy("ui.block.errors.are.unavailable");
+}
 
 function failureOf(error: unknown): { message: string; code: string | null } {
   if (error instanceof ApiError) {
@@ -14,7 +17,7 @@ function failureOf(error: unknown): { message: string; code: string | null } {
   if (error instanceof Error && error.message.length > 0) {
     return { message: error.message, code: null };
   }
-  return { message: UNAVAILABLE, code: null };
+  return { message: unavailableMessage(), code: null };
 }
 
 type BlockError = {
@@ -53,7 +56,7 @@ function integerAtLeastZero(value: unknown): number | null {
 
 function blockError(value: unknown): BlockError {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const blockHash = value.blockHash;
   const refcount = integerAtLeastZero(value.refcount);
@@ -68,14 +71,14 @@ function blockError(value: unknown): BlockError {
     lastTrySecsAgo === null ||
     nextTryInSecs === null
   ) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return { blockHash, refcount, errorCount, lastTrySecsAgo, nextTryInSecs };
 }
 
 function blockErrorsFrom(body: unknown): BlockError[] {
   if (!Array.isArray(body)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return body.map(blockError);
 }
@@ -88,7 +91,7 @@ async function loadBlockErrors(nodeId: string): Promise<BlockError[]> {
 
 function blockVersion(value: unknown): BlockVersion {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const versionId = value.versionId;
   const refDeleted = value.refDeleted;
@@ -101,19 +104,19 @@ function blockVersion(value: unknown): BlockVersion {
     typeof versionDeleted !== "boolean" ||
     typeof garbageCollected !== "boolean"
   ) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return { versionId, refDeleted, versionDeleted, garbageCollected };
 }
 
 function blockInfoFrom(body: unknown): BlockInfo {
   if (!isRecord(body) || !Array.isArray(body.versions)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const blockHash = body.blockHash;
   const refcount = integerAtLeastZero(body.refcount);
   if (typeof blockHash !== "string" || blockHash.length === 0 || refcount === null) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return { blockHash, refcount, versions: body.versions.map(blockVersion) };
 }
@@ -127,7 +130,7 @@ async function loadBlockInfo(nodeId: string, blockHash: string): Promise<BlockIn
 }
 
 function yesNo(value: boolean): string {
-  return value ? "yes" : "no";
+  return value ? copy("ui.yes") : copy("ui.no");
 }
 
 function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: string }) {
@@ -135,27 +138,23 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
     queryKey: ["nodes", nodeId, "blocks", blockHash],
     queryFn: () => loadBlockInfo(nodeId, blockHash),
   });
-  const message = info.error instanceof Error ? info.error.message : UNAVAILABLE;
+  const message = info.error instanceof Error ? info.error.message : unavailableMessage();
   return (
     <>
       {info.isError && !isGarageDown(info.error) ? <p>{message}</p> : null}
       {info.data ? (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm" aria-label="Block information">
+          <table className="w-full border-collapse text-left text-sm" aria-label={copy("ui.block.information")}>
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Version
-                </th>
+                  {copy("ui.version")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Ref deleted
-                </th>
+                  {copy("ui.ref.deleted")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Version deleted
-                </th>
+                  {copy("ui.version.deleted")}</th>
                 <th className="py-2 font-medium" scope="col">
-                  Garbage collected
-                </th>
+                  {copy("ui.garbage.collected")}</th>
               </tr>
             </thead>
             <tbody>
@@ -206,12 +205,12 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label="Block errors" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Block errors</h2>
+    <section className="grid gap-4" aria-label={copy("nav.blockErrors")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
       {view.busy ? (
-        <div className="h-16 border border-line" aria-label="Loading block errors" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.block.errors")} />
       ) : null}
-      {view.refreshing ? <p>Refreshing block errors</p> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.block.errors")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -223,8 +222,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
               void blockErrors.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {retry.error instanceof Error && !isGarageDown(retry.error) ? (
@@ -233,7 +231,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       {purge.error instanceof Error && !isGarageDown(purge.error) ? (
         <p>{purge.error.message}</p>
       ) : null}
-      {view.empty ? <p>There are no block errors.</p> : null}
+      {view.empty ? <p>{copy("ui.there.are.no.block.errors")}</p> : null}
       {rows.length > 0 ? (
         <>
           <button
@@ -241,36 +239,27 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
             type="button"
             onClick={() => retry.mutate({ all: true })}
           >
-            Retry all
-          </button>
+            {copy("ui.retry.all")}</button>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
                 <tr>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Block hash
-                  </th>
+                    {copy("ui.block.hash")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Refcount
-                  </th>
+                    {copy("ui.refcount")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Error count
-                  </th>
+                    {copy("ui.error.count")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Last try seconds ago
-                  </th>
+                    {copy("ui.last.try.seconds.ago")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Next try in seconds
-                  </th>
+                    {copy("ui.next.try.in.seconds")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
-                    Retry
-                  </th>
+                    {copy("ui.retry")}</th>
                   <th className="py-2 font-medium" scope="col">
-                    Purge
-                  </th>
+                    {copy("ui.purge")}</th>
                   <th className="py-2 pl-3 font-medium" scope="col">
-                    Info
-                  </th>
+                    {copy("ui.info")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -287,8 +276,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                         type="button"
                         onClick={() => retry.mutate({ blockHashes: [row.blockHash] })}
                       >
-                        Retry {row.blockHash}
-                      </button>
+                        {fill(copy("ui.retry.2"), { blockHash: row.blockHash })}</button>
                     </td>
                     <td className="py-2">
                       <button
@@ -298,8 +286,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                           setPurgeHash(row.blockHash);
                         }}
                       >
-                        Purge {row.blockHash}
-                      </button>
+                        {fill(copy("ui.purge.2"), { blockHash: row.blockHash })}</button>
                     </td>
                     <td className="py-2 pl-3">
                       <button
@@ -309,8 +296,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                           setInfoHash(row.blockHash);
                         }}
                       >
-                        Info {row.blockHash}
-                      </button>
+                        {fill(copy("ui.info.2"), { blockHash: row.blockHash })}</button>
                     </td>
                   </tr>
                 ))}
@@ -325,7 +311,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
           action="clear-block"
           name={purgeHash}
           scope={nodeId}
-          consequence="Object data will be lost."
+          consequence={copy("ui.object.data.will.be.lost")}
           onCancel={() => {
             setPurgeHash(null);
           }}
@@ -345,9 +331,9 @@ export function BlockErrors() {
   const nodeId = blockErrorsNodeId(hash);
   if (nodeId === null) {
     return (
-      <section className="grid gap-4" aria-label="Block errors" aria-busy={false}>
-        <h2 className="text-lg font-semibold">Block errors</h2>
-        <p>No node is selected.</p>
+      <section className="grid gap-4" aria-label={copy("nav.blockErrors")} aria-busy={false}>
+        <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
+        <p>{copy("ui.no.node.is.selected")}</p>
       </section>
     );
   }

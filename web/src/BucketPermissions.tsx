@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
+import { copy, fill } from "./i18n";
 
 type BucketKeyGrant = {
   accessKeyId: string;
@@ -58,8 +59,8 @@ function hasPermission(key: BucketKeyGrant): boolean {
   return key.owner || key.read || key.write;
 }
 
-function yesNo(flag: boolean): "yes" | "no" {
-  return flag ? "yes" : "no";
+function yesNo(flag: boolean): string {
+  return flag ? copy("ui.yes") : copy("ui.no");
 }
 
 type PermissionFailure = {
@@ -77,7 +78,7 @@ class PermissionListError extends Error {
   }
 }
 
-// api() 只把 message 放进 Error。桶权限还要显示响应里的 code，所以这里自己读桶详情。
+// api() puts only message on Error. Bucket permissions also show the response code, so read the bucket here.
 function failureFrom(text: string, status: number): PermissionFailure {
   const fallback = `request failed (${status})`;
   if (!text.startsWith("{")) {
@@ -106,7 +107,7 @@ function permissionFailure(error: unknown): PermissionFailure {
   if (error instanceof Error) {
     return { message: error.message, code: null };
   }
-  return { message: "Bucket permissions are unavailable", code: null };
+  return { message: copy("ui.bucket.permissions.are.unavailable"), code: null };
 }
 
 async function loadBucketKeys(bucketId: string): Promise<BucketKeyGrant[]> {
@@ -149,11 +150,11 @@ function parseKey(value: unknown): BucketKeyGrant | null {
 
 function parseKeys(payload: unknown): BucketKeyGrant[] {
   if (typeof payload !== "object" || payload === null) {
-    throw new Error("Bucket permissions are unavailable");
+    throw new Error(copy("ui.bucket.permissions.are.unavailable"));
   }
   const keys = (payload as Record<string, unknown>).keys;
   if (!Array.isArray(keys)) {
-    throw new Error("Bucket permissions are unavailable");
+    throw new Error(copy("ui.bucket.permissions.are.unavailable"));
   }
   const grants: BucketKeyGrant[] = [];
   for (const entry of keys) {
@@ -184,7 +185,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
   return (
     <form
       className="grid gap-2"
-      aria-label={`Grant permissions on ${bucketId}`}
+      aria-label={fill(copy("ui.grant.permissions.on"), { bucketId: bucketId })}
       onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (!grantReady(draft) || grant.isPending) {
@@ -194,8 +195,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
       }}
     >
       <label className="block text-sm">
-        Access key
-        <input
+        {copy("ui.access.key")}<input
           className="mt-1 w-full border border-line px-2 py-1"
           autoComplete="off"
           value={draft.accessKeyId}
@@ -215,8 +215,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
             setDraft((current) => ({ ...current, owner }));
           }}
         />
-        Owner
-      </label>
+        {copy("ui.owner.2")}</label>
       <label className="block text-sm">
         <input
           className="mr-2"
@@ -227,8 +226,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
             setDraft((current) => ({ ...current, read }));
           }}
         />
-        Read
-      </label>
+        {copy("ui.read.2")}</label>
       <label className="block text-sm">
         <input
           className="mr-2"
@@ -239,16 +237,15 @@ function GrantForm({ bucketId }: { bucketId: string }) {
             setDraft((current) => ({ ...current, write }));
           }}
         />
-        Write
-      </label>
+        {copy("ui.write.2")}</label>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-      {grant.isSuccess ? <p>Permissions granted</p> : null}
+      {grant.isSuccess ? <p>{copy("ui.permissions.granted")}</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={!ready || grant.isPending}
       >
-        {grant.isPending ? "Granting" : "Grant"}
+        {grant.isPending ? copy("ui.granting") : copy("ui.grant")}
       </button>
     </form>
   );
@@ -283,11 +280,11 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
   return (
     <section
       className="mt-3 grid max-w-sm gap-2"
-      aria-label={`Permissions for ${bucketId}`}
+      aria-label={fill(copy("ui.permissions.for"), { bucketId: bucketId })}
       aria-busy={view.busy}
     >
-      {view.busy ? <div className="h-16 border border-line" aria-label="Loading keys" /> : null}
-      {view.refreshing ? <p>Refreshing keys</p> : null}
+      {view.busy ? <div className="h-16 border border-line" aria-label={copy("ui.loading.keys")} /> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.keys")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -299,15 +296,14 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
               void keys.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {view.empty ? (
         <p>
           {canManage
-            ? "This bucket has no keys. Grant the first key."
-            : "This bucket has no keys."}
+            ? copy("ui.this.bucket.has.no.keys.grant.the.first")
+            : copy("ui.this.bucket.has.no.keys")}
         </p>
       ) : null}
       {keys.data && keys.data.length > 0 ? (
@@ -316,9 +312,9 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
             <li key={`${key.accessKeyId}-${index}`}>
               <p>{key.accessKeyId}</p>
               {key.name !== null && key.name.length > 0 ? <p>{key.name}</p> : null}
-              <p>owner {yesNo(key.owner)}</p>
-              <p>read {yesNo(key.read)}</p>
-              <p>write {yesNo(key.write)}</p>
+              <p>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</p>
+              <p>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</p>
+              <p>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</p>
               {canManage && hasPermission(key) ? (
                 <button
                   className="border border-ink px-2 py-1 text-left"
@@ -328,8 +324,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
                     setTarget(key);
                   }}
                 >
-                  Revoke {key.accessKeyId}
-                </button>
+                  {fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}</button>
               ) : null}
             </li>
           ))}
@@ -341,7 +336,7 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
           action="revoke-permission"
           name={target.accessKeyId}
           pending={revoke.isPending}
-          consequence={`This revokes the current owner, read, and write permissions for ${target.accessKeyId}.${revokeError ? ` ${revokeError}` : ""}`}
+          consequence={fill(copy("ui.this.revokes.the.current.owner.read.and.write"), { accessKeyId: target.accessKeyId, error: revokeError ? ` ${revokeError}` : "" })}
           onCancel={() => {
             setTarget(null);
             revoke.reset();
@@ -380,8 +375,7 @@ export function BucketPermissions({
           setOpen(true);
         }}
       >
-        Permissions for {bucketId}
-      </button>
+        {fill(copy("ui.permissions.for"), { bucketId: bucketId })}</button>
       {open ? <PermissionPanel bucketId={bucketId} canManage={canManage} /> : null}
     </>
   );

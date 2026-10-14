@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
+import { copy, fill } from "./i18n";
 
 type ProbeWord = "unknown" | "present" | "absent";
 
@@ -58,10 +59,10 @@ function parseCapabilities(text: string): Capabilities {
   try {
     parsed = JSON.parse(text) as unknown;
   } catch {
-    throw new Error("Capabilities are unavailable");
+    throw new Error(copy("ui.capabilities.are.unavailable"));
   }
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Capabilities are unavailable");
+    throw new Error(copy("ui.capabilities.are.unavailable"));
   }
   const body = parsed as Record<string, unknown>;
   const listBucketsInfo = probeWord(body.listBucketsInfo);
@@ -72,7 +73,7 @@ function parseCapabilities(text: string): Capabilities {
     listBucketsInfo === null ||
     listKeysInfo === null
   ) {
-    throw new Error("Capabilities are unavailable");
+    throw new Error(copy("ui.capabilities.are.unavailable"));
   }
   return {
     version: body.version,
@@ -88,7 +89,7 @@ function failureOf(error: Error): CapabilitiesFailure {
   return { message: error.message, code: null };
 }
 
-// api() 只保留 message。关于区块还要显示响应里的 code，所以在这里读正文。
+// api() keeps only message. About also shows the response code, so read the body here.
 async function loadCapabilities(): Promise<Capabilities> {
   const response = await fetch("/api/capabilities", { credentials: "include" });
   const text = await response.text();
@@ -102,9 +103,9 @@ async function loadCapabilities(): Promise<Capabilities> {
 
 export function garageLine(version: string | null | undefined): string {
   if (typeof version !== "string") {
-    return "Garage version is not set";
+    return copy("ui.garage.version.is.not.set");
   }
-  return `Garage ${version}`;
+  return fill(copy("ui.garage"), { version: version });
 }
 
 export function About({ garageVersion }: { garageVersion: string | null | undefined }) {
@@ -114,8 +115,8 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
   });
   const failure = capabilities.error ? failureOf(capabilities.error) : null;
   return (
-    <section className="grid gap-4" aria-label="About">
-      <h2 className="text-lg font-semibold">About</h2>
+    <section className="grid gap-4" aria-label={copy("ui.about")}>
+      <h2 className="text-lg font-semibold">{copy("ui.about")}</h2>
       <p>{garageLine(garageVersion)}</p>
       {failure && !isGarageDown(failure) ? (
         <>
@@ -130,15 +131,14 @@ export function About({ garageVersion }: { garageVersion: string | null | undefi
               void capabilities.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {!failure && capabilities.data ? (
         <>
-          <p>Version {capabilities.data.version}</p>
-          <p>List buckets info {capabilities.data.listBucketsInfo}</p>
-          <p>List keys info {capabilities.data.listKeysInfo}</p>
+          <p>{fill(copy("ui.version.2"), { version: capabilities.data.version })}</p>
+          <p>{fill(copy("ui.list.buckets.info"), { listBucketsInfo: capabilities.data.listBucketsInfo })}</p>
+          <p>{fill(copy("ui.list.keys.info"), { listKeysInfo: capabilities.data.listKeysInfo })}</p>
         </>
       ) : null}
     </section>

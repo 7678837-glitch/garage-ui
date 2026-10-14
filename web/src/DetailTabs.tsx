@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { translate } from "./i18n";
 
 export function DetailTabs<T extends string>({
   label,
@@ -16,9 +17,9 @@ export function DetailTabs<T extends string>({
   children: ReactNode;
 }) {
   return (
-    <section className="grid gap-3" aria-label={label}>
-      <h2 className="text-lg font-semibold">{label}</h2>
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label={label}>
+    <section className="grid gap-3" aria-label={translate(label)}>
+      <h2 className="text-lg font-semibold">{translate(label)}</h2>
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={translate(label)}>
         {tabs.map((tab) => {
           const current = tab.id === selected;
           return (
@@ -37,7 +38,7 @@ export function DetailTabs<T extends string>({
                 onSelect(tab.id);
               }}
             >
-              {tab.label}
+              {translate(tab.label)}
             </a>
           );
         })}

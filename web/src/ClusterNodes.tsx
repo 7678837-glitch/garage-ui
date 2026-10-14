@@ -7,6 +7,7 @@ import { DetailTabs } from "./DetailTabs";
 import { isGarageDown } from "./garageDown";
 import { detailAddressFromHash, hashForDetail, nodeTabs, useLocationHash } from "./Nav";
 import { releaseHash } from "./unsaved";
+import { copy, fill } from "./i18n";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -19,10 +20,18 @@ const HIDDEN = new Set([
   "tags",
 ]);
 
-const UNAVAILABLE = "Nodes are unavailable";
-const CONNECT_FAILED = "Connection failed";
-const PREVIEW_FAILED = "Layout preview failed";
-const HISTORY_FAILED = "Layout history failed";
+function unavailableMessage(): string {
+  return copy("ui.nodes.are.unavailable");
+}
+function connectFailedMessage(): string {
+  return copy("ui.connection.failed");
+}
+function previewFailedMessage(): string {
+  return copy("ui.layout.preview.failed");
+}
+function historyFailedMessage(): string {
+  return copy("ui.layout.history.failed");
+}
 
 type LayoutPreview = { phase: "idle" } | { phase: "ready" } | { phase: "failed"; message: string };
 
@@ -51,14 +60,14 @@ async function previewFailureMessage(response: Response): Promise<string> {
   try {
     parsed = JSON.parse(await response.text()) as unknown;
   } catch {
-    return PREVIEW_FAILED;
+    return previewFailedMessage();
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return PREVIEW_FAILED;
+    return previewFailedMessage();
   }
   const message = (parsed as { message?: unknown }).message;
   if (typeof message !== "string") {
-    return PREVIEW_FAILED;
+    return previewFailedMessage();
   }
   return message;
 }
@@ -77,11 +86,11 @@ async function previewLayout(): Promise<LayoutPreview> {
 
 function historyMessage(parsed: unknown): string {
   if (typeof parsed !== "object" || parsed === null) {
-    return HISTORY_FAILED;
+    return historyFailedMessage();
   }
   const message = (parsed as { message?: unknown }).message;
   if (typeof message !== "string") {
-    return HISTORY_FAILED;
+    return historyFailedMessage();
   }
   return message;
 }
@@ -134,7 +143,7 @@ function trackerRows(value: unknown): LayoutTrackerRow[] {
 
 function layoutHistoryFrom(parsed: unknown): LayoutHistory {
   if (typeof parsed !== "object" || parsed === null) {
-    return { phase: "failed", message: HISTORY_FAILED };
+    return { phase: "failed", message: historyFailedMessage() };
   }
   const versions = versionRows((parsed as { versions?: unknown }).versions);
   if (versions === null) {
@@ -156,7 +165,7 @@ async function loadLayoutHistory(): Promise<LayoutHistory> {
   try {
     parsed = JSON.parse(await response.text()) as unknown;
   } catch {
-    return { phase: "failed", message: HISTORY_FAILED };
+    return { phase: "failed", message: historyFailedMessage() };
   }
   if (!response.ok) {
     return { phase: "failed", message: historyMessage(parsed) };
@@ -298,7 +307,7 @@ function optionalText(value: unknown): string | null {
     return null;
   }
   if (typeof value !== "string") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   if (value.length === 0) {
     return null;
@@ -396,14 +405,14 @@ function roleCapacityById(text: string): Map<string, string> {
 
 function parseNode(value: unknown): Omit<NodeLine, "capacity"> {
   if (typeof value !== "object" || value === null) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const row = value as Record<string, unknown>;
   if (typeof row.id !== "string" || row.id.length === 0) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   if (typeof row.isUp !== "boolean" || typeof row.draining !== "boolean") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     id: row.id,
@@ -463,14 +472,14 @@ function parseNodes(text: string): NodeLine[] {
   try {
     parsed = JSON.parse(omitHiddenNumbers(text)) as unknown;
   } catch {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const nodes = (parsed as Record<string, unknown>).nodes;
   if (!Array.isArray(nodes)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return nodes.map((value) => {
     const node = parseNode(value);
@@ -525,7 +534,7 @@ function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => vo
   return (
     <>
       <label className="block break-all">
-        <span className="text-sm">Block hash for {id}</span>
+        <span className="text-sm">{fill(copy("ui.block.hash.for"), { id: id })}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           value={hash}
@@ -545,8 +554,7 @@ function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => vo
           onAsk(next);
         }}
       >
-        Purge blocks on {id}
-      </button>
+        {fill(copy("ui.purge.blocks.on"), { id: id })}</button>
     </>
   );
 }
@@ -587,16 +595,16 @@ async function loadNodes(): Promise<ClusterStatus> {
 
 function connectLine(value: unknown): string {
   if (typeof value !== "object" || value === null) {
-    return CONNECT_FAILED;
+    return connectFailedMessage();
   }
   const row = value as Record<string, unknown>;
   if (row.success === true) {
-    return "Connected";
+    return copy("ui.connected");
   }
   if (typeof row.error === "string" && row.error.length > 0) {
     return row.error;
   }
-  return CONNECT_FAILED;
+  return connectFailedMessage();
 }
 
 async function connectNode(address: string): Promise<string[]> {
@@ -605,7 +613,7 @@ async function connectNode(address: string): Promise<string[]> {
     body: JSON.stringify([address]),
   });
   if (!Array.isArray(body)) {
-    throw new Error(CONNECT_FAILED);
+    throw new Error(connectFailedMessage());
   }
   return body.map(connectLine);
 }
@@ -749,9 +757,9 @@ export function ClusterNodes() {
     setLines(null);
     connect.mutate(trimmed);
   }
-  const message = nodes.error instanceof Error ? nodes.error.message : UNAVAILABLE;
+  const message = nodes.error instanceof Error ? nodes.error.message : unavailableMessage();
   const code = shownCode(nodes.error);
-  const connectFailure = connect.error instanceof Error ? connect.error.message : CONNECT_FAILED;
+  const connectFailure = connect.error instanceof Error ? connect.error.message : connectFailedMessage();
   const detail = detailAddressFromHash(hash);
   const nodeDetail = detail?.resource === "node" ? detail : null;
   const openedNode =
@@ -759,11 +767,11 @@ export function ClusterNodes() {
       ? null
       : (rows.find((node) => node.id === nodeDetail.id) ?? null);
   return (
-    <section className="grid min-w-0 gap-4" aria-label="Cluster nodes">
-      <h2 className="text-lg font-semibold">Nodes</h2>
+    <section className="grid min-w-0 gap-4" aria-label={copy("ui.cluster.nodes")}>
+      <h2 className="text-lg font-semibold">{copy("ui.nodes")}</h2>
       {nodeDetail ? (
         <DetailTabs
-          label={`Node ${nodeDetail.id}`}
+          label={fill(copy("ui.node"), { id: nodeDetail.id })}
           tabs={nodeTabs()}
           selected={nodeDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "node", id: nodeDetail.id, tab })}
@@ -777,8 +785,8 @@ export function ClusterNodes() {
               {openedNode.hostname !== null ? <p>{openedNode.hostname}</p> : null}
               {openedNode.addr !== null ? <p>{openedNode.addr}</p> : null}
               {openedNode.garageVersion !== null ? <p>{openedNode.garageVersion}</p> : null}
-              <p>{openedNode.isUp ? "Up" : "Down"}</p>
-              {openedNode.draining ? <p>Draining</p> : null}
+              <p>{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</p>
+              {openedNode.draining ? <p>{copy("ui.draining")}</p> : null}
               <button
                 className="border border-ink px-3 py-1 text-left"
                 type="button"
@@ -786,10 +794,9 @@ export function ClusterNodes() {
                   snapshot.mutate(openedNode.id);
                 }}
               >
-                Snapshot metadata
-              </button>
+                {copy("ui.snapshot.metadata")}</button>
               {snapshot.isSuccess && snapshot.variables === openedNode.id ? (
-                <p>Metadata snapshot started</p>
+                <p>{copy("ui.metadata.snapshot.started")}</p>
               ) : null}
             </>
           ) : null}
@@ -816,10 +823,9 @@ export function ClusterNodes() {
             snapshot.mutate("*");
           }}
         >
-          Snapshot every node
-        </button>
+          {copy("ui.snapshot.every.node")}</button>
         {snapshot.isSuccess && snapshot.variables === "*" ? (
-          <p>Metadata snapshot started</p>
+          <p>{copy("ui.metadata.snapshot.started")}</p>
         ) : null}
         <button
           className="border border-ink px-3 py-1 text-left"
@@ -828,8 +834,7 @@ export function ClusterNodes() {
             void previewLayout().then(setLayoutPreview);
           }}
         >
-          Preview layout
-        </button>
+          {copy("ui.preview.layout")}</button>
         <button
           className="border border-ink px-3 py-1 text-left"
           type="button"
@@ -841,8 +846,7 @@ export function ClusterNodes() {
             setApplyOpen(true);
           }}
         >
-          Apply layout
-        </button>
+          {copy("ui.apply.layout")}</button>
         <button
           className="border border-ink px-3 py-1 text-left"
           type="button"
@@ -850,8 +854,7 @@ export function ClusterNodes() {
             revert.mutate();
           }}
         >
-          Revert staged changes
-        </button>
+          {copy("ui.revert.staged.changes")}</button>
         <label className="block text-sm">
           <input
             type="checkbox"
@@ -860,8 +863,7 @@ export function ClusterNodes() {
               setAllowMissingData(event.target.checked);
             }}
           />
-          Allow missing data
-        </label>
+          {copy("ui.allow.missing.data")}</label>
         <button
           className="border border-ink px-3 py-1 text-left"
           type="button"
@@ -873,8 +875,7 @@ export function ClusterNodes() {
             setSkipStep("risk");
           }}
         >
-          Skip dead nodes
-        </button>
+          {copy("ui.skip.dead.nodes")}</button>
         <button
           className="border border-ink px-3 py-1 text-left"
           type="button"
@@ -882,8 +883,7 @@ export function ClusterNodes() {
             void loadLayoutHistory().then(setLayoutHistory);
           }}
         >
-          Layout history
-        </button>
+          {copy("ui.layout.history")}</button>
         {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
         {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
         {layoutHistory.phase === "ready" ? (
@@ -911,7 +911,7 @@ export function ClusterNodes() {
       </div>
       <form className="grid gap-3" onSubmit={submit}>
         <label className="block">
-          <span className="text-sm">Node address</span>
+          <span className="text-sm">{copy("ui.node.address")}</span>
           <input
             className="mt-1 w-full border border-line px-2 py-1"
             value={address}
@@ -923,11 +923,11 @@ export function ClusterNodes() {
           type="submit"
           disabled={trimmed.length === 0 || connect.isPending}
         >
-          {connect.isPending ? "Connecting" : "Connect node"}
+          {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
         </button>
       </form>
-      {connect.isError ? <p>{`Connect: ${connectFailure}`}</p> : null}
-      {connect.isSuccess && lines !== null && lines.length === 0 ? <p>Connected</p> : null}
+      {connect.isError ? <p>{fill(copy("ui.connect"), { connectFailure: connectFailure })}</p> : null}
+      {connect.isSuccess && lines !== null && lines.length === 0 ? <p>{copy("ui.connected")}</p> : null}
       {lines !== null && lines.length > 0 ? (
         <ul className="min-w-0">
           {lines.map((line, index) => (
@@ -939,7 +939,7 @@ export function ClusterNodes() {
       ) : null}
       <div className="grid max-w-sm gap-3">
         <label className="block">
-          <span className="text-sm">Filter nodes</span>
+          <span className="text-sm">{copy("ui.filter.nodes")}</span>
           <input
             className="mt-1 w-full border border-line px-2 py-1"
             value={query.filter}
@@ -951,7 +951,7 @@ export function ClusterNodes() {
           />
         </label>
         <label className="block">
-          <span className="text-sm">Sort nodes</span>
+          <span className="text-sm">{copy("ui.sort.nodes")}</span>
           <select
             className="mt-1 w-full border border-line px-2 py-1"
             value={query.sort}
@@ -965,15 +965,15 @@ export function ClusterNodes() {
             }}
           >
             <option value="id">Id</option>
-            <option value="hostname">Hostname</option>
+            <option value="hostname">{copy("ui.hostname")}</option>
           </select>
         </label>
-        <p>Default order is Id.</p>
+        <p>{copy("ui.default.order.is.id")}</p>
       </div>
         </>
       ) : null}
       {nodes.isPending ? (
-        <div className="h-16 border border-line" aria-label="Loading nodes" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.nodes")} />
       ) : null}
       {nodes.isError && !isGarageDown(nodes.error) ? (
         <>
@@ -986,12 +986,11 @@ export function ClusterNodes() {
               void nodes.refetch();
             }}
           >
-            Retry nodes
-          </button>
+            {copy("ui.retry.nodes")}</button>
         </>
       ) : null}
       {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
-        <p>There are no nodes. Connect the first node.</p>
+        <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p>
       ) : null}
       {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
         <ul className="grid min-w-0 gap-3 text-sm">
@@ -1001,8 +1000,8 @@ export function ClusterNodes() {
               {node.hostname !== null ? <p className="break-all">{node.hostname}</p> : null}
               {node.addr !== null ? <p className="break-all">{node.addr}</p> : null}
               {node.garageVersion !== null ? <p>{node.garageVersion}</p> : null}
-              <p>{node.isUp ? "Up" : "Down"}</p>
-              {node.draining ? <p>Draining</p> : null}
+              <p>{node.isUp ? copy("ui.up") : copy("ui.down")}</p>
+              {node.draining ? <p>{copy("ui.draining")}</p> : null}
               {node.capacity !== null ? (
                 <CapacityField
                   bytes={node.capacity}
@@ -1026,7 +1025,7 @@ export function ClusterNodes() {
           action="clear-block"
           name={purgeTarget.hash}
           scope={purgeTarget.id}
-          consequence="Object data will be lost."
+          consequence={copy("ui.object.data.will.be.lost")}
           onCancel={() => {
             setPurgeTarget(null);
           }}
@@ -1042,7 +1041,7 @@ export function ClusterNodes() {
           action="apply-layout"
           name={nextLayoutVersion}
           scope="cluster"
-          consequence="This applies the staged layout."
+          consequence={copy("ui.this.applies.the.staged.layout")}
           onCancel={() => {
             setApplyOpen(false);
           }}
@@ -1057,7 +1056,7 @@ export function ClusterNodes() {
           action="skip-dead-node"
           name={layoutVersion}
           scope="cluster"
-          consequence="This forces layout progress past dead nodes."
+          consequence={copy("ui.this.forces.layout.progress.past.dead.nodes")}
           onCancel={() => {
             setSkipStep(null);
           }}
@@ -1077,7 +1076,7 @@ export function ClusterNodes() {
           action="skip-dead-node"
           name={layoutVersion}
           scope="cluster"
-          consequence="Data may be lost."
+          consequence={copy("ui.data.may.be.lost")}
           onCancel={() => {
             setSkipStep(null);
           }}

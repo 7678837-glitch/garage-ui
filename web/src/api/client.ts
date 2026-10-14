@@ -1,3 +1,4 @@
+import { copy, fill } from "../i18n";
 export type AuthStatus = {
   initialized: boolean;
   authenticated: boolean;
@@ -96,7 +97,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-// 与 App.encodeObjectKey 同一套非保留字符。encodeURIComponent 会留下 !'()*，对象路径对不上。
+// Same unreserved set as App.encodeObjectKey. encodeURIComponent leaves !'()*, so object paths would not match.
 const UNRESERVED = /[A-Za-z0-9._~-]/;
 
 function encodeKey(key: string): string {
@@ -153,7 +154,7 @@ export function putObject(input: {
       }
       const failure = failureFrom(xhr.responseText, xhr.status);
       noteUnauthenticated(xhr.status, failure.code);
-      reject(new Error(`request failed (${xhr.status})`));
+      reject(new Error(fill(copy("ui.request.failed"), { status: xhr.status })));
     };
     xhr.onerror = () => {
       if (!aborted) {

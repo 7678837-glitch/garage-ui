@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { copy } from "./i18n";
 
 export type KeyGrantInput = {
   accessKeyId: string;
@@ -49,21 +50,21 @@ export function KeyGrant({
           setError(caught.message);
           return;
         }
-        setError("Request failed");
+        setError(copy("ui.request.failed.2"));
       },
     );
   }
 
   return (
-    <form className="grid gap-3" aria-label="Grant key" onSubmit={onSubmit}>
+    <form className="grid gap-3" aria-label={copy("ui.grant.key")} onSubmit={onSubmit}>
       <label className="block">
-        <span className="text-sm">Key</span>
+        <span className="text-sm">{copy("ui.key.2")}</span>
         <select
           className="mt-1 w-full border border-line px-2 py-1"
           value={accessKeyId}
           onChange={(event) => setAccessKeyId(event.target.value)}
         >
-          <option value="">Select a key</option>
+          <option value="">{copy("ui.select.a.key")}</option>
           {keys.map((key) => (
             <option key={key.id} value={key.id}>
               {key.label}
@@ -77,33 +78,29 @@ export function KeyGrant({
           checked={read}
           onChange={(event) => setRead(event.target.checked)}
         />{" "}
-        Read
-      </label>
+        {copy("ui.read.2")}</label>
       <label className="block text-sm">
         <input
           type="checkbox"
           checked={write}
           onChange={(event) => setWrite(event.target.checked)}
         />{" "}
-        Write
-      </label>
+        {copy("ui.write.2")}</label>
       <label className="block text-sm">
         <input
           type="checkbox"
           checked={owner}
           onChange={(event) => setOwner(event.target.checked)}
         />{" "}
-        Owner
-      </label>
+        {copy("ui.owner.2")}</label>
       {error ? <p role="alert">{error}</p> : null}
-      {succeeded ? <p>Key granted</p> : null}
+      {succeeded ? <p>{copy("ui.key.granted")}</p> : null}
       <button
         className="border border-ink px-3 py-1 text-left"
         type="submit"
         disabled={!canSubmit}
       >
-        Grant
-      </button>
+        {copy("ui.grant")}</button>
     </form>
   );
 }

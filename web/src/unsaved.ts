@@ -1,6 +1,9 @@
+import { copy } from "./i18n";
 export type SavePhase = "idle" | "pending" | "success" | "failed";
 
-const leavePrompt = "Leave this page? Unsaved changes will be lost.";
+function leavePrompt(): string {
+  return copy("ui.leave.this.page.unsaved.changes.will.be.lost");
+}
 
 const dirtyIds = new Set<string>();
 let watching = false;
@@ -23,13 +26,13 @@ export function savePhase(pending: boolean, failed: boolean, succeeded: boolean)
 export function saveStatus(phase: SavePhase, dirty: boolean, saved: string): string | null {
   switch (phase) {
     case "pending":
-      return "Saving";
+      return copy("ui.saving");
     case "failed":
-      return "Save failed";
+      return copy("ui.save.failed");
     case "idle":
-      return dirty ? "Unsaved changes" : null;
+      return dirty ? copy("ui.unsaved.changes") : null;
     case "success":
-      return dirty ? "Unsaved changes" : saved;
+      return dirty ? copy("ui.unsaved.changes") : saved;
     default: {
       const neverPhase: never = phase;
       return neverPhase;
@@ -57,7 +60,7 @@ function onHashChange(event: HashChangeEvent) {
   if (ignoredArrival !== null) {
     const arrival = ignoredArrival;
     ignoredArrival = null;
-    // 换地址时 location 会先变。仍停在刚允许的地址上，说明这是晚到的那一次。
+    // The location changes before this handler runs. Staying on the hash we just allowed means this event is the late one.
     if (window.location.hash === arrival) {
       return;
     }
@@ -65,21 +68,21 @@ function onHashChange(event: HashChangeEvent) {
   if (dirtyIds.size === 0) {
     return;
   }
-  if (window.confirm(leavePrompt)) {
+  if (window.confirm(leavePrompt())) {
     return;
   }
   const previous = previousHash(event.oldURL);
   if (previous === window.location.hash) {
     return;
   }
-  // 写回旧地址会再触发一次 hashchange。这次不能再问。
+  // Writing the old hash fires hashchange again. Do not ask on that one.
   reverting = true;
   window.location.hash = previous;
 }
 
 function watchLeave() {
   if (dirtyIds.size > 0 && !watching) {
-    // 上传面板占用 window.onbeforeunload。这里只能另外监听，避免把它盖掉。
+    // The upload panel owns window.onbeforeunload. Listen separately so this does not replace it.
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("hashchange", onHashChange, true);
     watching = true;
@@ -107,10 +110,10 @@ export function releaseHash(next: string): boolean {
   if (window.location.hash === next) {
     return true;
   }
-  if (dirtyIds.size > 0 && !window.confirm(leavePrompt)) {
+  if (dirtyIds.size > 0 && !window.confirm(leavePrompt())) {
     return false;
   }
-  // 浏览器在 effect 之后才投递 hashchange。干净页也要记下目标，否则目标页先标脏再收到这次导航，会再问一次。
+  // The browser delivers hashchange after the effect. Record the target on a clean page too, or the next page can be marked dirty before it sees this navigation and ask again.
   ignoredArrival = next;
   return true;
 }

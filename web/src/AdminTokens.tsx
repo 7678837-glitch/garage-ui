@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
-import { InstantText } from "./i18n";
+import { InstantText, copy } from "./i18n";
 import { isGarageDown } from "./garageDown";
 
 type AdminToken = {
@@ -119,11 +119,11 @@ function tokenId(value: unknown): string | null {
 // The id stays in state only to build PATCH and DELETE paths. It must not appear in text, labels, or the address bar. secretToken stays out of page state.
 function adminTokenFrom(value: unknown): AdminToken {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Admin tokens are unavailable");
+    throw new Error(copy("ui.admin.tokens.are.unavailable"));
   }
   const row = value as Record<string, unknown>;
   if (typeof row.name !== "string") {
-    throw new Error("Admin tokens are unavailable");
+    throw new Error(copy("ui.admin.tokens.are.unavailable"));
   }
   return {
     id: tokenId(row.id),
@@ -144,11 +144,11 @@ type TokenPage = {
 async function loadAdminTokens(offset: number): Promise<TokenPage> {
   const body = await api<unknown>(`/api/admin-tokens?offset=${offset}&limit=100`);
   if (typeof body !== "object" || body === null) {
-    throw new Error("Admin tokens are unavailable");
+    throw new Error(copy("ui.admin.tokens.are.unavailable"));
   }
   const page = body as Record<string, unknown>;
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
-    throw new Error("Admin tokens are unavailable");
+    throw new Error(copy("ui.admin.tokens.are.unavailable"));
   }
   return {
     items: page.items.map(adminTokenFrom),
@@ -166,18 +166,18 @@ function tokenLoadFailure(error: unknown): { message: string; code: string | nul
   }
   if (error instanceof ApiError) {
     return {
-      message: error.message.length > 0 ? error.message : "Admin tokens are unavailable",
+      message: error.message.length > 0 ? error.message : copy("ui.admin.tokens.are.unavailable"),
       code: error.code,
     };
   }
   if (error instanceof Error && error.message.length > 0) {
     return { message: error.message, code: null };
   }
-  return { message: "Admin tokens are unavailable", code: null };
+  return { message: copy("ui.admin.tokens.are.unavailable"), code: null };
 }
 
 function sourceLabel(token: AdminToken): string {
-  return token.fromConfig ? "From configuration file" : "";
+  return token.fromConfig ? copy("ui.from.configuration.file") : "";
 }
 
 function issuedTokenId(token: AdminToken): string | null {
@@ -371,7 +371,7 @@ function ScopePicker({
   const allChecked = SCOPE_ENDPOINTS.every((id) => chosen.has(id));
   return (
     <fieldset className="grid gap-2">
-      <legend className="text-sm">Scope</legend>
+      <legend className="text-sm">{copy("ui.scope")}</legend>
       <label className="text-sm">
         <input
           className="mr-2"
@@ -381,8 +381,7 @@ function ScopePicker({
             onChange(event.target.checked ? [...SCOPE_ENDPOINTS] : []);
           }}
         />
-        All
-      </label>
+        {copy("ui.all")}</label>
       {SCOPE_GROUPS.map((group) => {
         const groupChecked = group.endpoints.every((id) => chosen.has(id));
         return (
@@ -414,7 +413,7 @@ function ScopePicker({
           </div>
         );
       })}
-      {scopeIsFullAdmin(selected) ? <p>This scope is equivalent to full admin access.</p> : null}
+      {scopeIsFullAdmin(selected) ? <p>{copy("ui.this.scope.is.equivalent.to.full.admin.access")}</p> : null}
     </fieldset>
   );
 }
@@ -485,11 +484,10 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
       }}
     >
       <h3 id={titleId} className="font-medium">
-        Admin token secret
-      </h3>
-      <p>This secret is shown once. Closing this dialog removes it from the page.</p>
+        {copy("ui.admin.token.secret")}</h3>
+      <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
       <label className="block">
-        <span className="text-sm">Secret</span>
+        <span className="text-sm">{copy("ui.secret")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           readOnly
@@ -505,8 +503,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
           setVisible(true);
         }}
       >
-        Show secret
-      </button>
+        {copy("ui.show.secret")}</button>
       <button
         ref={copyRef}
         className="mr-2 border border-ink px-3 py-1 text-left"
@@ -514,20 +511,18 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
         onClick={() => {
           void copySecret(secret).then((result) => {
             if (result === "copied") {
-              setFeedback("Copied");
+              setFeedback(copy("ui.copied"));
               return;
             }
             setVisible(true);
-            setFeedback("Select the secret and copy it");
+            setFeedback(copy("ui.select.the.secret.and.copy.it"));
           });
         }}
       >
-        Copy secret
-      </button>
+        {copy("ui.copy.secret")}</button>
       {feedback ? <p>{feedback}</p> : null}
       <button className="border border-ink px-3 py-1 text-left" type="button" onClick={onClose}>
-        I have saved it
-      </button>
+        {copy("ui.i.have.saved.it")}</button>
     </dialog>
   );
 }
@@ -546,7 +541,7 @@ function CreateTokenForm() {
       });
       const secret = createdSecret(body);
       if (!secret) {
-        throw new Error("Admin token secret is unavailable");
+        throw new Error(copy("ui.admin.token.secret.is.unavailable"));
       }
       return secret;
     },
@@ -573,8 +568,7 @@ function CreateTokenForm() {
         }}
       >
         <label className="block text-sm">
-          Name
-          <input
+          {copy("ui.name")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={draft.name}
             required
@@ -584,8 +578,7 @@ function CreateTokenForm() {
           />
         </label>
         <label className="block text-sm">
-          Expiration
-          <input
+          {copy("ui.expiration")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={draft.expiration}
             onChange={(event) => {
@@ -602,8 +595,7 @@ function CreateTokenForm() {
               setDraft({ ...draft, neverExpires: event.target.checked });
             }}
           />
-          Never expires
-        </label>
+          {copy("ui.never.expires")}</label>
         <ScopePicker
           selected={draft.scope}
           onChange={(scope) => {
@@ -616,8 +608,7 @@ function CreateTokenForm() {
           type="submit"
           disabled={create.isPending}
         >
-          Create token
-        </button>
+          {copy("ui.create.token")}</button>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -625,7 +616,7 @@ function CreateTokenForm() {
           name={pending.name}
           scope={scopeShown(pending.scope)}
           pending={create.isPending}
-          consequence="The secret is shown once. It cannot be viewed again."
+          consequence={copy("ui.the.secret.is.shown.once.it.cannot.be")}
           onCancel={() => {
             if (!create.isPending) {
               setPending(null);
@@ -692,8 +683,7 @@ function EditTokenForm({
         }}
       >
         <label className="block text-sm">
-          Name
-          <input
+          {copy("ui.name")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={draft.name}
             required
@@ -703,8 +693,7 @@ function EditTokenForm({
           />
         </label>
         <label className="block text-sm">
-          Expiration
-          <input
+          {copy("ui.expiration")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={draft.expiration}
             onChange={(event) => {
@@ -721,8 +710,7 @@ function EditTokenForm({
               setDraft({ ...draft, neverExpires: event.target.checked });
             }}
           />
-          Never expires
-        </label>
+          {copy("ui.never.expires")}</label>
         <ScopePicker
           selected={draft.scope}
           onChange={(scope) => {
@@ -735,8 +723,7 @@ function EditTokenForm({
           type="submit"
           disabled={update.isPending}
         >
-          Update token
-        </button>
+          {copy("ui.update.token")}</button>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -744,7 +731,7 @@ function EditTokenForm({
           name={token.name}
           scope={scopeShown(pending.scope)}
           pending={update.isPending}
-          consequence="This replaces the token name, expiration, and scope."
+          consequence={copy("ui.this.replaces.the.token.name.expiration.and.scope")}
           onCancel={() => {
             if (!update.isPending) {
               setPending(null);
@@ -786,20 +773,15 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
           <thead>
             <tr>
               <th className="py-2 pr-3 font-medium" scope="col">
-                Name
-              </th>
+                {copy("ui.name")}</th>
               <th className="py-2 pr-3 font-medium" scope="col">
-                Scope
-              </th>
+                {copy("ui.scope")}</th>
               <th className="py-2 pr-3 font-medium" scope="col">
-                Expiration
-              </th>
+                {copy("ui.expiration")}</th>
               <th className="py-2 pr-3 font-medium" scope="col">
-                Expired
-              </th>
+                {copy("ui.expired")}</th>
               <th className="py-2 font-medium" scope="col">
-                Source
-              </th>
+                {copy("ui.source")}</th>
             </tr>
           </thead>
           <tbody>
@@ -810,7 +792,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                 <td className="py-2 pr-3">
                   <InstantText value={token.expiration} />
                 </td>
-                <td className="py-2 pr-3">{token.expired ? "Yes" : "No"}</td>
+                <td className="py-2 pr-3">{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</td>
                 <td className="py-2">
                   {sourceLabel(token)}
                   {issuedTokenId(token) !== null ? (
@@ -822,8 +804,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                           setEditing(token);
                         }}
                       >
-                        Edit
-                      </button>
+                        {copy("ui.edit")}</button>
                       <button
                         className="ml-2 border border-ink px-3 py-1 text-left"
                         type="button"
@@ -831,8 +812,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                           setRemoving(token);
                         }}
                       >
-                        Delete
-                      </button>
+                        {copy("ui.delete.2")}</button>
                     </>
                   ) : null}
                 </td>
@@ -856,7 +836,7 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
           action="delete-admin-token"
           name={removing.name}
           pending={remove.isPending}
-          consequence="This deletes the admin token."
+          consequence={copy("ui.this.deletes.the.admin.token")}
           onCancel={() => {
             if (!remove.isPending) {
               setRemoving(null);
@@ -878,29 +858,28 @@ function CurrentToken({ token }: { token: AdminToken }) {
   return (
     <section aria-labelledby="admin-token-current">
       <h3 id="admin-token-current" className="font-semibold">
-        This server
-      </h3>
+        {copy("ui.this.server")}</h3>
       <dl className="grid gap-1">
         <div>
-          <dt>Name</dt>
+          <dt>{copy("ui.name")}</dt>
           <dd>{token.name}</dd>
         </div>
         <div>
-          <dt>Scope</dt>
+          <dt>{copy("ui.scope")}</dt>
           <dd>{token.scope.join(", ")}</dd>
         </div>
         <div>
-          <dt>Expiration</dt>
+          <dt>{copy("ui.expiration")}</dt>
           <dd>
             <InstantText value={token.expiration} />
           </dd>
         </div>
         <div>
-          <dt>Expired</dt>
-          <dd>{token.expired ? "Yes" : "No"}</dd>
+          <dt>{copy("ui.expired")}</dt>
+          <dd>{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</dd>
         </div>
         <div>
-          <dt>Source</dt>
+          <dt>{copy("ui.source")}</dt>
           <dd>{sourceLabel(token)}</dd>
         </div>
       </dl>
@@ -937,15 +916,14 @@ export function AdminTokens() {
   return (
     <section
       className="grid gap-4"
-      aria-label="Admin tokens"
+      aria-label={copy("nav.tokens")}
       aria-busy={list.isPending || current.isPending}
     >
-      <h2 className="text-lg font-semibold">Admin tokens</h2>
+      <h2 className="text-lg font-semibold">{copy("nav.tokens")}</h2>
       <CreateTokenForm />
       <div className="grid max-w-sm gap-3">
         <label className="block text-sm">
-          Filter admin tokens
-          <input
+          {copy("ui.filter.admin.tokens")}<input
             className="mt-1 w-full border border-ink px-2 py-1"
             value={query.filter}
             onChange={(event) => {
@@ -956,8 +934,7 @@ export function AdminTokens() {
           />
         </label>
         <label className="block text-sm">
-          Sort
-          <select
+          {copy("ui.sort")}<select
             className="mt-1 w-full border border-ink px-2 py-1"
             value={query.sort}
             onChange={(event) => {
@@ -966,11 +943,11 @@ export function AdminTokens() {
               writeTokenQuery(next);
             }}
           >
-            <option value="name">Name</option>
-            <option value="created">Created</option>
+            <option value="name">{copy("ui.name")}</option>
+            <option value="created">{copy("ui.created")}</option>
           </select>
         </label>
-        <p>Default sort is by name.</p>
+        <p>{copy("ui.default.sort.is.by.name")}</p>
         <div className="flex gap-2">
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
@@ -982,8 +959,7 @@ export function AdminTokens() {
               writeTokenOffset(next);
             }}
           >
-            Previous
-          </button>
+            {copy("ui.previous")}</button>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -994,12 +970,11 @@ export function AdminTokens() {
               writeTokenOffset(next);
             }}
           >
-            Next
-          </button>
+            {copy("ui.next")}</button>
         </div>
       </div>
       {list.isPending ? (
-        <div className="h-16 border border-line" aria-label="Loading admin tokens" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.admin.tokens")} />
       ) : null}
       {listFailure ? (
         <>
@@ -1012,8 +987,7 @@ export function AdminTokens() {
               void list.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {currentFailure ? (
@@ -1027,11 +1001,10 @@ export function AdminTokens() {
               void current.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
-      {list.isSuccess && shown.length === 0 ? <p>No admin tokens</p> : null}
+      {list.isSuccess && shown.length === 0 ? <p>{copy("ui.no.admin.tokens")}</p> : null}
       {list.isSuccess && shown.length > 0 ? <TokenTable rows={shown} /> : null}
       {current.data ? <CurrentToken token={current.data} /> : null}
     </section>

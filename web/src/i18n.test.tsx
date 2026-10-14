@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, test } from "vitest";
 import { Breadcrumb } from "./App";
 import { CapacityField } from "./CapacityField";
+import { ConfirmDialog } from "./confirm";
 import { en } from "./copy-en";
 import { zh } from "./copy-zh";
 import { CapacityText, InstantText, LanguageChooser, LanguageProvider } from "./i18n";
@@ -123,7 +124,25 @@ test("capacity units follow the language", () => {
       <CapacityField bytes="1800000000000" submit={() => undefined} />
     </LanguageProvider>,
   );
-  const unit = screen.getByRole("combobox", { name: "Unit" }) as HTMLSelectElement;
+  const unit = screen.getByRole("combobox", { name: "单位" }) as HTMLSelectElement;
   expect(unit.value).toBe("TB");
   expect(unit.selectedOptions[0]?.textContent).toBe("太字节");
+});
+
+test("the confirm dialog follows the language", () => {
+  localStorage.setItem("garage-ui-language", "zh-CN");
+  render(
+    <LanguageProvider>
+      <ConfirmDialog
+        action="delete-key"
+        name="key-1"
+        consequence="gone"
+        onCancel={() => undefined}
+        onConfirm={() => undefined}
+      />
+    </LanguageProvider>,
+  );
+  expect(screen.getByRole("heading", { name: "确认 key-1" }).textContent).toBe("确认 key-1");
+  expect(screen.getByRole("button", { name: "取消" }).textContent).toBe("取消");
+  expect(screen.getByRole("button", { name: "确认" }).textContent).toBe("确认");
 });

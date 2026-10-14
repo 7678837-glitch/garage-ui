@@ -21,7 +21,7 @@ import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
 import type { CopyKey } from "./copy-en";
-import { LanguageChooser, useI18n } from "./i18n";
+import { LanguageChooser, phrase, useI18n, copy } from "./i18n";
 import { Keys } from "./Keys";
 import {
   Nav,
@@ -39,15 +39,15 @@ import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 import { Users } from "./Users";
 import { Workers } from "./Workers";
 
-const passwordBounds = "Password must be 10 to 72 characters";
+const passwordBounds = "ui.password.must.be.10.to.72.characters";
 
 const credentials = z.object({
-  username: z.string().min(1, "Username is required").max(64, "Username is invalid"),
+  username: z.string().min(1, "ui.username.is.required").max(64, "ui.username.is.invalid"),
   password: z.string().min(10, passwordBounds).max(72, passwordBounds),
 });
 
 const passwordChange = z.object({
-  current_password: z.string().min(1, "Current password is required"),
+  current_password: z.string().min(1, "ui.current.password.is.required"),
   new_password: z.string().min(10, passwordBounds).max(72, passwordBounds),
 });
 
@@ -70,7 +70,7 @@ function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean
   return (
     <main className="min-h-screen bg-canvas text-ink">
       <header className="flex flex-wrap items-center justify-between gap-3 p-6">
-        <h1 className="text-xl font-semibold">Garage UI</h1>
+        <h1 className="text-xl font-semibold">{copy("ui.garage.ui")}</h1>
         <ThemeChooser />
       </header>
       <div className={width}>{children}</div>
@@ -103,10 +103,11 @@ function Field({
 }
 
 function ErrorText({ message }: { message: string | undefined }) {
+  const { language } = useI18n();
   if (!message) {
     return null;
   }
-  return <p className="text-sm text-danger">{message}</p>;
+  return <p className="text-sm text-danger">{phrase(language, message)}</p>;
 }
 
 function SetupForm() {
@@ -126,14 +127,14 @@ function SetupForm() {
       onSubmit={form.handleSubmit((input) => setup.mutate(input))}
     >
       <Field
-        label="Username"
+        label={copy("ui.username")}
         type="text"
         autoComplete="username"
         registration={form.register("username")}
       />
       <ErrorText message={errors.username?.message} />
       <Field
-        label="Password"
+        label={copy("ui.password")}
         type="password"
         autoComplete="new-password"
         registration={form.register("password")}
@@ -145,7 +146,7 @@ function SetupForm() {
         type="submit"
         disabled={setup.isPending}
       >
-        {setup.isPending ? "Creating administrator" : "Create administrator"}
+        {setup.isPending ? copy("ui.creating.administrator") : copy("ui.create.administrator")}
       </button>
     </form>
   );
@@ -169,14 +170,14 @@ function LoginForm() {
       onSubmit={form.handleSubmit((input) => login.mutate(input))}
     >
       <Field
-        label="Username"
+        label={copy("ui.username")}
         type="text"
         autoComplete="username"
         registration={form.register("username")}
       />
       <ErrorText message={errors.username?.message} />
       <Field
-        label="Password"
+        label={copy("ui.password")}
         type="password"
         autoComplete="current-password"
         registration={form.register("password")}
@@ -337,7 +338,7 @@ function GarageBanner() {
   }
   return (
     <>
-      <p role="alert">Garage admin API is not reachable</p>
+      <p role="alert">{copy("ui.garage.admin.api.is.not.reachable")}</p>
       <button
         className="border border-ink px-3 py-1 text-left"
         type="button"
@@ -348,8 +349,7 @@ function GarageBanner() {
           });
         }}
       >
-        Retry
-      </button>
+        {copy("ui.retry")}</button>
     </>
   );
 }
@@ -402,7 +402,7 @@ function Home({ status }: { status: SessionStatus }) {
     healthText = "unavailable";
   }
   const passwordPhase = savePhase(change.isPending, change.isError, change.isSuccess);
-  const passwordStatus = saveStatus(passwordPhase, passwordDirty, "Password updated");
+  const passwordStatus = saveStatus(passwordPhase, passwordDirty, copy("ui.password.updated"));
   const admin = status.role === "admin";
   // An admin ignores the download bit. A read-only user sees preview and download only when that bit is set.
   const canTransfer = admin || status.can_download === true;
@@ -420,7 +420,7 @@ function Home({ status }: { status: SessionStatus }) {
         <p
           className="inline-block w-fit border border-ink px-2 py-0.5"
           role="status"
-          aria-label="Health status"
+          aria-label={copy("ui.health.status")}
         >
           {healthText}
         </p>
@@ -433,10 +433,10 @@ function Home({ status }: { status: SessionStatus }) {
           <>
             <div className="grid max-w-sm gap-6">
               {status.garage_write_blocked === true ? (
-                <p role="alert">Garage v2.3.0 or newer is required</p>
+                <p role="alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</p>
               ) : null}
               {status.tls_insecure === true ? (
-                <p role="alert">TLS certificate verification is off.</p>
+                <p role="alert">{copy("ui.tls.certificate.verification.is.off")}</p>
               ) : null}
               <button
                 className="border border-ink px-3 py-1 text-left"
@@ -462,7 +462,7 @@ function Home({ status }: { status: SessionStatus }) {
               onSubmit={form.handleSubmit((input) => change.mutate(input))}
             >
               <label className="block">
-                <span className="text-sm">Current password</span>
+                <span className="text-sm">{copy("ui.current.password")}</span>
                 <input
                   className="mt-1 w-full border border-line px-2 py-1"
                   type="password"
@@ -472,7 +472,7 @@ function Home({ status }: { status: SessionStatus }) {
               </label>
               <ErrorText message={errors.current_password?.message} />
               <label className="block">
-                <span className="text-sm">New password</span>
+                <span className="text-sm">{copy("ui.new.password")}</span>
                 <input
                   className="mt-1 w-full border border-line px-2 py-1"
                   type="password"
@@ -490,8 +490,7 @@ function Home({ status }: { status: SessionStatus }) {
                 type="submit"
                 disabled={change.isPending}
               >
-                Change password
-              </button>
+                {copy("ui.change.password")}</button>
             </form>
             <About garageVersion={status.garage_version} />
           </>
@@ -540,14 +539,14 @@ export function App() {
   if (status.isPending) {
     return (
       <Shell>
-        <p>checking</p>
+        <p>{copy("ui.checking")}</p>
       </Shell>
     );
   }
   if (status.isError || !status.data) {
     return (
       <Shell>
-        <p>unavailable</p>
+        <p>{copy("ui.unavailable")}</p>
       </Shell>
     );
   }

@@ -4,8 +4,11 @@ import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { useLocationHash, workersNodeId } from "./Nav";
+import { copy, fill, translate } from "./i18n";
 
-const UNAVAILABLE = "Workers are unavailable";
+function unavailableMessage(): string {
+  return copy("ui.workers.are.unavailable");
+}
 
 function failureOf(error: unknown): { message: string; code: string | null } {
   if (error instanceof ApiError) {
@@ -14,7 +17,7 @@ function failureOf(error: unknown): { message: string; code: string | null } {
   if (error instanceof Error && error.message.length > 0) {
     return { message: error.message, code: null };
   }
-  return { message: UNAVAILABLE, code: null };
+  return { message: unavailableMessage(), code: null };
 }
 
 type WorkerRow = {
@@ -57,7 +60,7 @@ function stateText(value: unknown): string | null {
 
 function workerRow(value: unknown): WorkerRow {
   if (!isRecord(value)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const id = integerAtLeastZero(value.id);
   const errors = integerAtLeastZero(value.errors);
@@ -71,10 +74,10 @@ function workerRow(value: unknown): WorkerRow {
     typeof name !== "string" ||
     name.length === 0
   ) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   if (progress !== undefined && progress !== null && typeof progress !== "string") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return {
     id,
@@ -87,18 +90,18 @@ function workerRow(value: unknown): WorkerRow {
 
 function workersFrom(body: unknown): WorkerRow[] {
   if (!Array.isArray(body)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return body.map(workerRow);
 }
 
 function lastErrorMessage(body: unknown): string {
   if (!isRecord(body) || !isRecord(body.lastError)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const message = body.lastError.message;
   if (typeof message !== "string" || message.length === 0) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return message;
 }
@@ -136,7 +139,7 @@ function workerGroups(nodeId: string, body: unknown): WorkerGroup[] {
     return [{ nodeId, rows: workersFrom(body) }];
   }
   if (!isRecord(body)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   return Object.entries(body).map(([id, rows]) => ({
     nodeId: id,
@@ -155,13 +158,13 @@ type VariableAssignment = {
 
 function variableSentence(variable: string, body: unknown): string {
   if (!isRecord(body)) {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
   const found = body[variable];
   if (typeof found !== "string") {
-    throw new Error(UNAVAILABLE);
+    throw new Error(unavailableMessage());
   }
-  return `Variable ${variable} is ${found}`;
+  return fill(copy("ui.variable.is"), { variable: variable, found: found });
 }
 
 async function saveWorkerVariable(nodeId: string, assignment: VariableAssignment): Promise<string> {
@@ -188,7 +191,7 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
   return (
     <div className="grid max-w-sm gap-3">
       <label className="block">
-        <span className="text-sm">Variable</span>
+        <span className="text-sm">{copy("ui.variable")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           value={variable}
@@ -200,7 +203,7 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
         />
       </label>
       <label className="block">
-        <span className="text-sm">Value</span>
+        <span className="text-sm">{copy("ui.value")}</span>
         <input
           className="mt-1 w-full border border-line px-2 py-1"
           value={value}
@@ -222,15 +225,14 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
           setOpen(true);
         }}
       >
-        Save variable
-      </button>
+        {copy("ui.save.variable")}</button>
       {save.data !== undefined ? <p>{save.data}</p> : null}
       {open ? (
         <ConfirmDialog
           action="worker-variable"
           name={variable}
           scope={value}
-          consequence="This changes a worker variable on the node."
+          consequence={copy("ui.this.changes.a.worker.variable.on.the.node")}
           onCancel={() => {
             setOpen(false);
           }}
@@ -274,10 +276,17 @@ function kindOption(kind: RepairKind): RepairOption {
   return { value: kind, label: kind, body: { repairType: kind } };
 }
 
+function scrubLabel(command: ScrubCommand): string {
+  if (command === "start") return "scrub start";
+  if (command === "pause") return "scrub pause";
+  if (command === "resume") return "scrub resume";
+  return "scrub cancel";
+}
+
 function scrubOption(command: ScrubCommand): RepairOption {
   return {
     value: `scrub:${command}`,
-    label: `scrub ${command}`,
+    label: scrubLabel(command),
     body: { repairType: { scrub: command } },
   };
 }
@@ -301,12 +310,12 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
   const repair = useMutation({
     mutationFn: (body: RepairBody) => postRepair(nodeId, body),
   });
-  const failure = repair.error instanceof Error ? repair.error.message : "Repair failed";
+  const failure = repair.error instanceof Error ? repair.error.message : copy("ui.repair.failed");
 
   return (
     <div className="grid max-w-sm gap-3">
       <label className="block">
-        <span className="text-sm">Repair type</span>
+        <span className="text-sm">{copy("ui.repair.type")}</span>
         <select
           className="mt-1 w-full border border-line px-2 py-1"
           value={option.value}
@@ -320,7 +329,7 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
         >
           {REPAIR_OPTIONS.map((item) => (
             <option key={item.value} value={item.value}>
-              {item.label}
+              {translate(item.label)}
             </option>
           ))}
         </select>
@@ -332,16 +341,15 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
           setOpen(true);
         }}
       >
-        Start repair
-      </button>
+        {copy("ui.start.repair")}</button>
       {repair.isError ? <p>{failure}</p> : null}
-      {repair.isSuccess ? <p>Repair started.</p> : null}
+      {repair.isSuccess ? <p>{copy("ui.repair.started")}</p> : null}
       {open ? (
         <ConfirmDialog
           action="repair"
           name={nodeId}
-          scope={option.label}
-          consequence="This starts a repair on the node."
+          scope={translate(option.label)}
+          consequence={copy("ui.this.starts.a.repair.on.the.node")}
           onCancel={() => {
             setOpen(false);
           }}
@@ -384,8 +392,8 @@ function WorkersList({ nodeId }: { nodeId: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label="Workers" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Workers</h2>
+    <section className="grid gap-4" aria-label={copy("nav.workers")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
       <NodeRepair nodeId={nodeId} />
       <WorkerVariable nodeId={nodeId} />
       <div className="flex flex-wrap gap-4 text-sm">
@@ -397,8 +405,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
               setFilter((current) => ({ ...current, busyOnly: event.target.checked }));
             }}
           />
-          Busy only
-        </label>
+          {copy("ui.busy.only")}</label>
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -407,13 +414,12 @@ function WorkersList({ nodeId }: { nodeId: string }) {
               setFilter((current) => ({ ...current, errorOnly: event.target.checked }));
             }}
           />
-          Errors only
-        </label>
+          {copy("ui.errors.only")}</label>
       </div>
       {view.busy ? (
-        <div className="h-16 border border-line" aria-label="Loading workers" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.workers")} />
       ) : null}
-      {view.refreshing ? <p>Refreshing workers</p> : null}
+      {view.refreshing ? <p>{copy("ui.refreshing.workers")}</p> : null}
       {view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -425,11 +431,10 @@ function WorkersList({ nodeId }: { nodeId: string }) {
               void workers.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
-      {view.empty ? <p>There are no workers.</p> : null}
+      {view.empty ? <p>{copy("ui.there.are.no.workers")}</p> : null}
       {groups.map((group) =>
         group.rows.length === 0 ? null : (
           <div key={group.nodeId} className="grid gap-2">
@@ -439,19 +444,15 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                 <thead>
                   <tr>
                     <th className="py-2 pr-3 font-medium" scope="col">
-                      Name
-                    </th>
+                      {copy("ui.name")}</th>
                     <th className="py-2 pr-3 font-medium" scope="col">
-                      State
-                    </th>
+                      {copy("ui.state")}</th>
                     <th className="py-2 pr-3 font-medium" scope="col">
-                      Errors
-                    </th>
+                      {copy("ui.errors")}</th>
                     <th className="py-2 pr-3 font-medium" scope="col">
-                      Progress
-                    </th>
+                      {copy("ui.progress")}</th>
                     <th className="py-2 font-medium" scope="col">
-                      <span className="sr-only">Details</span>
+                      <span className="sr-only">{copy("ui.details")}</span>
                     </th>
                   </tr>
                 </thead>
@@ -470,8 +471,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                             setSelected({ nodeId: group.nodeId, workerId: worker.id });
                           }}
                         >
-                          Details {worker.id}
-                        </button>
+                          {fill(copy("ui.details.2"), { id: worker.id })}</button>
                       </td>
                     </tr>
                   ))}
@@ -493,9 +493,9 @@ export function Workers() {
   const nodeId = workersNodeId(hash);
   if (nodeId === null) {
     return (
-      <section className="grid gap-4" aria-label="Workers" aria-busy={false}>
-        <h2 className="text-lg font-semibold">Workers</h2>
-        <p>No node is selected.</p>
+      <section className="grid gap-4" aria-label={copy("nav.workers")} aria-busy={false}>
+        <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
+        <p>{copy("ui.no.node.is.selected")}</p>
       </section>
     );
   }

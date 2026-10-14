@@ -13,7 +13,7 @@ import {
   useLocationHash,
 } from "./Nav";
 import { Objects } from "./Objects";
-import { formatCapacity, useI18n, type Language } from "./i18n";
+import { formatCapacity, useI18n, type Language, copy, fill, translate } from "./i18n";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type Alias =
@@ -103,11 +103,11 @@ const COUNT_KEYS = new Set(["objects", "bytes", "maxSize", "maxObjects"]);
 
 function parseBucket(value: unknown): Bucket {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Buckets are unavailable");
+    throw new Error(copy("ui.buckets.are.unavailable"));
   }
   const row = value as Record<string, unknown>;
   if (typeof row.id !== "string" || row.id.length === 0) {
-    throw new Error("Buckets are unavailable");
+    throw new Error(copy("ui.buckets.are.unavailable"));
   }
   return {
     id: row.id,
@@ -162,14 +162,14 @@ function parsePage(text: string): BucketPage {
   try {
     parsed = JSON.parse(quoteCountLiterals(text)) as unknown;
   } catch {
-    throw new Error("Buckets are unavailable");
+    throw new Error(copy("ui.buckets.are.unavailable"));
   }
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Buckets are unavailable");
+    throw new Error(copy("ui.buckets.are.unavailable"));
   }
   const page = parsed as Record<string, unknown>;
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
-    throw new Error("Buckets are unavailable");
+    throw new Error(copy("ui.buckets.are.unavailable"));
   }
   return {
     items: page.items.map(parseBucket),
@@ -285,12 +285,12 @@ function removeBody(alias: Alias): AliasBody | null {
 
 function removeLabel(alias: Alias): string | null {
   if (alias.scope === "global") {
-    return `Remove global alias ${alias.name}`;
+    return fill(copy("ui.remove.global.alias"), { name: alias.name });
   }
   if (alias.accessKeyId === null) {
     return null;
   }
-  return `Remove local alias ${alias.name} for ${alias.accessKeyId}`;
+  return fill(copy("ui.remove.local.alias.for"), { name: alias.name, accessKeyId: alias.accessKeyId });
 }
 
 type BucketListFailure = {
@@ -337,7 +337,7 @@ function bucketListFailure(error: unknown): BucketListFailure {
   if (error instanceof Error) {
     return { message: error.message, code: null };
   }
-  return { message: "Buckets are unavailable", code: null };
+  return { message: copy("ui.buckets.are.unavailable"), code: null };
 }
 
 async function loadPage(offset: number): Promise<BucketPage> {
@@ -357,19 +357,19 @@ function objectUsage(bucket: Bucket): string | null {
   const used = bucket.objects;
   const quota = bucket.quotas?.maxObjects;
   if (used !== null && quota?.kind === "digits") {
-    return `${used} of ${quota.text} objects`;
+    return fill(copy("ui.of.objects"), { used: used, text: quota.text });
   }
   if (used !== null && quota?.kind === "unset") {
-    return `${used} objects. Object quota is not set`;
+    return fill(copy("ui.objects.object.quota.is.not.set"), { used: used });
   }
   if (used !== null) {
-    return `${used} objects`;
+    return fill(copy("ui.objects"), { used: used });
   }
   if (quota?.kind === "digits") {
-    return `Object quota ${quota.text}`;
+    return fill(copy("ui.object.quota"), { text: quota.text });
   }
   if (quota?.kind === "unset") {
-    return "Object quota is not set";
+    return copy("ui.object.quota.is.not.set");
   }
   return null;
 }
@@ -378,19 +378,19 @@ function byteUsage(bucket: Bucket, language: Language): string | null {
   const used = bucket.bytes;
   const quota = bucket.quotas?.maxSize;
   if (used !== null && quota?.kind === "digits") {
-    return `${used} of ${quota.text} bytes${unitPair(used, quota.text, language)}`;
+    return fill(copy("ui.of.bytes"), { used: used, text: quota.text, quota: unitPair(used, quota.text, language) });
   }
   if (used !== null && quota?.kind === "unset") {
-    return `${used} bytes${unitSingle(used, language)}. Size quota is not set`;
+    return fill(copy("ui.bytes.size.quota.is.not.set"), { used: used, value: unitSingle(used, language) });
   }
   if (used !== null) {
-    return `${used} bytes${unitSingle(used, language)}`;
+    return fill(copy("ui.bytes"), { used: used, value: unitSingle(used, language) });
   }
   if (quota?.kind === "digits") {
-    return `Size quota ${quota.text} bytes${unitSingle(quota.text, language)}`;
+    return fill(copy("ui.size.quota.bytes"), { text: quota.text, quota: unitSingle(quota.text, language) });
   }
   if (quota?.kind === "unset") {
-    return "Size quota is not set";
+    return copy("ui.size.quota.is.not.set");
   }
   return null;
 }
@@ -410,7 +410,7 @@ function unitPair(used: string, quota: string, language: Language): string {
   if (hidesScaledUnit(used) && hidesScaledUnit(quota)) {
     return "";
   }
-  return ` (${formatCapacity(used, language)} of ${formatCapacity(quota, language)})`;
+  return fill(copy("ui.of"), { used: formatCapacity(used, language), quota: formatCapacity(quota, language) });
 }
 
 function fieldText(value: WholeNumber): string {
@@ -475,7 +475,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
   const quotaStatus = saveStatus(
     savePhase(save.isPending, rejected !== null || save.isError, save.isSuccess),
     quotaDirty,
-    "Saved",
+    copy("ui.saved"),
   );
   return (
     <form
@@ -486,15 +486,14 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         const objects = fieldLiteral(maxObjects);
         if (size === null || objects === null) {
           save.reset();
-          setRejected("Enter a whole number or leave the quota empty");
+          setRejected(copy("ui.quota.whole.or.empty"));
           return;
         }
         save.mutate(`{"maxSize":${size},"maxObjects":${objects}}`);
       }}
     >
       <label className={`${wrap} block text-sm`}>
-        Max size for {bucketId}
-        <input
+        {fill(copy("ui.max.size.for"), { bucketId: bucketId })}<input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
           inputMode="numeric"
           autoComplete="off"
@@ -505,8 +504,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         />
       </label>
       <label className={`${wrap} block text-sm`}>
-        Max objects for {bucketId}
-        <input
+        {fill(copy("ui.max.objects.for"), { bucketId: bucketId })}<input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
           inputMode="numeric"
           autoComplete="off"
@@ -523,7 +521,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         type="submit"
         disabled={save.isPending}
       >
-        {save.isPending ? "Saving quotas" : `Save quotas for ${bucketId}`}
+        {save.isPending ? copy("ui.saving.quotas") : fill(copy("ui.save.quotas.for"), { bucketId: bucketId })}
       </button>
     </form>
   );
@@ -711,8 +709,7 @@ function CorsEditor({ bucketId }: { bucketId: string }) {
           setOpen(true);
         }}
       >
-        Edit CORS
-      </button>
+        {copy("ui.edit.cors")}</button>
     );
   }
   return <CorsForm bucketId={bucketId} />;
@@ -736,7 +733,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
     mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/cors`, { method: "PUT", body }),
   });
   if (query.isError) {
-    return <p>{query.error instanceof Error ? query.error.message : "CORS rules are unavailable"}</p>;
+    return <p>{query.error instanceof Error ? query.error.message : copy("ui.cors.rules.are.unavailable")}</p>;
   }
   if (drafts === null) {
     return null;
@@ -754,7 +751,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
           ) : (
             CORS_FIELDS.map(([key, label]) => (
               <label key={label} className="block text-sm">
-                {label}
+                {translate(label)}
                 <input
                   className="mt-1 w-full border border-neutral-300 px-2 py-1"
                   value={rule[key]}
@@ -772,8 +769,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
             }}
           >
-            Remove CORS rule
-          </button>
+            {copy("ui.remove.cors.rule")}</button>
         </div>
       ))}
       <button
@@ -783,8 +779,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
           setDrafts([...drafts, emptyCorsDraft()]);
         }}
       >
-        Add CORS rule
-      </button>
+        {copy("ui.add.cors.rule")}</button>
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
@@ -797,17 +792,16 @@ function CorsForm({ bucketId }: { bucketId: string }) {
             })
             .catch((error: unknown) => {
               setCurrent(null);
-              setReviewError(error instanceof Error ? error.message : "CORS rules are unavailable");
+              setReviewError(error instanceof Error ? error.message : copy("ui.cors.rules.are.unavailable"));
             });
         }}
       >
-        Review CORS
-      </button>
+        {copy("ui.review.cors")}</button>
       {reviewError ? <p>{reviewError}</p> : null}
       {current !== null ? (
         <>
-          <pre aria-label="Current">{current}</pre>
-          <pre aria-label="Next">{nextCorsText(drafts)}</pre>
+          <pre aria-label={copy("ui.current")}>{current}</pre>
+          <pre aria-label={copy("ui.next")}>{nextCorsText(drafts)}</pre>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -815,8 +809,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
               setCurrent(null);
             }}
           >
-            Cancel
-          </button>
+            {copy("ui.cancel")}</button>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -825,8 +818,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
               save.mutate(corsBody(drafts));
             }}
           >
-            Save CORS
-          </button>
+            {copy("ui.save.cors")}</button>
           {save.error instanceof Error ? <p>{save.error.message}</p> : null}
         </>
       ) : null}
@@ -1128,8 +1120,7 @@ function LifecycleEditor({ bucketId }: { bucketId: string }) {
           setOpen(true);
         }}
       >
-        Edit lifecycle
-      </button>
+        {copy("ui.edit.lifecycle")}</button>
     );
   }
   return <LifecycleForm bucketId={bucketId} />;
@@ -1154,7 +1145,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
   });
   if (query.isError) {
     return (
-      <p>{query.error instanceof Error ? query.error.message : "Lifecycle rules are unavailable"}</p>
+      <p>{query.error instanceof Error ? query.error.message : copy("ui.lifecycle.rules.are.unavailable")}</p>
     );
   }
   if (drafts === null) {
@@ -1173,7 +1164,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
           ) : (
             LIFECYCLE_FIELDS.map(([key, label]) => (
               <label key={label} className="block text-sm">
-                {label}
+                {translate(label)}
                 <input
                   className="mt-1 w-full border border-neutral-300 px-2 py-1"
                   value={rule[key]}
@@ -1191,8 +1182,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
             }}
           >
-            Remove lifecycle rule
-          </button>
+            {copy("ui.remove.lifecycle.rule")}</button>
         </div>
       ))}
       <button
@@ -1202,8 +1192,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
           setDrafts([...drafts, emptyLifecycleDraft()]);
         }}
       >
-        Add lifecycle rule
-      </button>
+        {copy("ui.add.lifecycle.rule")}</button>
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
@@ -1217,18 +1206,17 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
             .catch((error: unknown) => {
               setCurrent(null);
               setReviewError(
-                error instanceof Error ? error.message : "Lifecycle rules are unavailable",
+                error instanceof Error ? error.message : copy("ui.lifecycle.rules.are.unavailable"),
               );
             });
         }}
       >
-        Review lifecycle
-      </button>
+        {copy("ui.review.lifecycle")}</button>
       {reviewError ? <p>{reviewError}</p> : null}
       {current !== null ? (
         <>
-          <pre aria-label="Current">{current}</pre>
-          <pre aria-label="Next">{nextLifecycleText(drafts)}</pre>
+          <pre aria-label={copy("ui.current")}>{current}</pre>
+          <pre aria-label={copy("ui.next")}>{nextLifecycleText(drafts)}</pre>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -1236,8 +1224,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
               setCurrent(null);
             }}
           >
-            Cancel
-          </button>
+            {copy("ui.cancel")}</button>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -1246,8 +1233,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
               save.mutate(lifecycleBody(drafts));
             }}
           >
-            Save lifecycle
-          </button>
+            {copy("ui.save.lifecycle")}</button>
           {save.error instanceof Error ? <p>{save.error.message}</p> : null}
         </>
       ) : null}
@@ -1317,8 +1303,7 @@ function IncompleteUploads({ bucketId }: { bucketId: string }) {
           setOpen(true);
         }}
       >
-        Incomplete uploads
-      </button>
+        {copy("ui.incomplete.uploads")}</button>
     );
   }
   return <IncompleteUploadsPanel bucketId={bucketId} />;
@@ -1345,7 +1330,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
   if (query.isError) {
     return (
       <p>
-        {query.error instanceof Error ? query.error.message : "Incomplete uploads are unavailable"}
+        {query.error instanceof Error ? query.error.message : copy("ui.incomplete.uploads.are.unavailable")}
       </p>
     );
   }
@@ -1364,8 +1349,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
         </p>
       ))}
       <label className="block text-sm">
-        Older than hours
-        <input
+        {copy("ui.older.than.hours")}<input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
           inputMode="numeric"
           value={hours}
@@ -1385,10 +1369,9 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
           cleanup.mutate(secs);
         }}
       >
-        Clean up
-      </button>
+        {copy("ui.clean.up")}</button>
       {cleanup.error instanceof Error ? <p>{cleanup.error.message}</p> : null}
-      {deleted !== null ? <p>Cleaned up {deleted}</p> : null}
+      {deleted !== null ? <p>{fill(copy("ui.cleaned.up"), { deleted: deleted })}</p> : null}
     </div>
   );
 }
@@ -1405,7 +1388,7 @@ function CreateBucketForm() {
     },
     onSuccess: async () => {
       setGlobalAlias("");
-      setNote("Bucket created");
+      setNote(copy("ui.bucket.created"));
       await client.invalidateQueries({ queryKey: ["buckets"] });
     },
   });
@@ -1419,7 +1402,7 @@ function CreateBucketForm() {
       }}
     >
       <label className="block">
-        <span className="text-sm">Global alias</span>
+        <span className="text-sm">{copy("ui.global.alias")}</span>
         <input
           className="mt-1 w-full border border-neutral-300 px-2 py-1"
           value={globalAlias}
@@ -1435,7 +1418,7 @@ function CreateBucketForm() {
         type="submit"
         disabled={create.isPending}
       >
-        {create.isPending ? "Creating bucket" : "Create bucket"}
+        {create.isPending ? copy("ui.creating.bucket") : copy("ui.create.bucket")}
       </button>
     </form>
   );
@@ -1453,7 +1436,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
     },
     onSuccess: async () => {
       setDraft({ ...blankAliasDraft });
-      setNote("Alias added");
+      setNote(copy("ui.alias.added"));
       await client.invalidateQueries({ queryKey: ["buckets"] });
     },
   });
@@ -1467,7 +1450,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       }}
     >
       <fieldset className="grid min-w-0 gap-1">
-        <legend className={`${wrap} text-sm`}>Add alias to {bucketId}</legend>
+        <legend className={`${wrap} text-sm`}>{fill(copy("ui.add.alias.to"), { bucketId: bucketId })}</legend>
         <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
@@ -1478,8 +1461,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
               setDraft((current) => ({ ...current, scope: "global" }));
             }}
           />
-          Global for {bucketId}
-        </label>
+          {fill(copy("ui.global.for"), { bucketId: bucketId })}</label>
         <label className={`${wrap} text-sm`}>
           <input
             className="mr-2"
@@ -1490,13 +1472,11 @@ function AliasControls({ bucketId }: { bucketId: string }) {
               setDraft((current) => ({ ...current, scope: "local" }));
             }}
           />
-          Local for {bucketId}
-        </label>
+          {fill(copy("ui.local.for"), { bucketId: bucketId })}</label>
       </fieldset>
       {draft.scope === "global" ? (
         <label className={`${wrap} block text-sm`}>
-          Global alias for {bucketId}
-          <input
+          {fill(copy("ui.global.alias.for"), { bucketId: bucketId })}<input
             className="mt-1 w-full border border-neutral-300 px-2 py-1"
             value={draft.globalAlias}
             onChange={(event) => {
@@ -1507,8 +1487,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
       ) : (
         <>
           <label className={`${wrap} block text-sm`}>
-            Local alias for {bucketId}
-            <input
+            {fill(copy("ui.local.alias.for"), { bucketId: bucketId })}<input
               className="mt-1 w-full border border-neutral-300 px-2 py-1"
               value={draft.localAlias}
               onChange={(event) => {
@@ -1517,8 +1496,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
             />
           </label>
           <label className={`${wrap} block text-sm`}>
-            Access key for {bucketId}
-            <input
+            {fill(copy("ui.access.key.for"), { bucketId: bucketId })}<input
               className="mt-1 w-full border border-neutral-300 px-2 py-1"
               value={draft.accessKeyId}
               onChange={(event) => {
@@ -1535,7 +1513,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         type="submit"
         disabled={add.isPending}
       >
-        {add.isPending ? "Adding alias" : `Add alias to ${bucketId}`}
+        {add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
       </button>
     </form>
   );
@@ -1566,7 +1544,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
           remove.mutate(body);
         }}
       >
-        {remove.isPending ? "Removing alias" : label}
+        {remove.isPending ? copy("ui.removing.alias") : label}
       </button>
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
     </>
@@ -1620,12 +1598,9 @@ function DeleteBucketDialog({
       }}
     >
       <h3 id="delete-bucket-title" className="font-medium">
-        Delete bucket {bucketId}
-      </h3>
+        {fill(copy("ui.delete.bucket"), { bucketId: bucketId })}</h3>
       <p>
-        This permanently deletes bucket {bucketId} and its aliases. Garage rejects the request when
-        the bucket still contains objects.
-      </p>
+        {fill(copy("ui.this.permanently.deletes.bucket.and.its.aliases.garage"), { bucketId: bucketId })}</p>
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       <button
         ref={cancelRef}
@@ -1633,15 +1608,14 @@ function DeleteBucketDialog({
         type="button"
         onClick={onCancel}
       >
-        Cancel
-      </button>
+        {copy("ui.cancel")}</button>
       <button
         className="border border-neutral-900 px-3 py-1 text-left"
         type="button"
         disabled={pending}
         onClick={onConfirm}
       >
-        {pending ? "Deleting bucket" : "Delete bucket"}
+        {pending ? copy("ui.deleting.bucket") : copy("ui.delete.bucket.2")}
       </button>
     </dialog>
   );
@@ -1770,7 +1744,7 @@ export function Buckets({
     },
     onSuccess: async () => {
       setDeleteId(null);
-      setNotice("Bucket deleted");
+      setNotice(copy("ui.bucket.deleted"));
       await client.invalidateQueries({ queryKey: ["buckets"] });
     },
   });
@@ -1800,11 +1774,11 @@ export function Buckets({
     bucketDetail === null ? null : (rows.find((bucket) => bucket.id === bucketDetail.id) ?? null);
 
   return (
-    <section className="grid gap-4" aria-label="Buckets" aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">Buckets</h2>
+    <section className="grid gap-4" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
+      <h2 className="text-lg font-semibold">{copy("nav.buckets")}</h2>
       {bucketDetail ? (
         <DetailTabs
-          label={`Bucket ${bucketDetail.id}`}
+          label={fill(copy("ui.bucket.2"), { id: bucketDetail.id })}
           tabs={bucketTabs()}
           selected={bucketDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "bucket", id: bucketDetail.id, tab })}
@@ -1838,9 +1812,9 @@ export function Buckets({
       ) : null}
       {canManage && listing ? <CreateBucketForm /> : null}
       {bucketDetail === null && view.loading ? (
-        <div className="h-16 border border-line" aria-label="Loading buckets" />
+        <div className="h-16 border border-line" aria-label={copy("ui.loading.buckets")} />
       ) : null}
-      {bucketDetail === null && view.refreshing ? <p>Refreshing buckets</p> : null}
+      {bucketDetail === null && view.refreshing ? <p>{copy("ui.refreshing.buckets")}</p> : null}
       {bucketDetail === null && view.failure && !isGarageDown(view.failure) ? (
         <>
           <p>{view.failure.message}</p>
@@ -1852,16 +1826,14 @@ export function Buckets({
               void list.refetch();
             }}
           >
-            Retry
-          </button>
+            {copy("ui.retry")}</button>
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {listing ? (
         <div className="grid max-w-sm gap-3">
           <label className="block text-sm">
-            Filter buckets
-            <input
+            {copy("ui.filter.buckets")}<input
               className="mt-1 w-full border border-neutral-900 px-2 py-1"
               value={query.filter}
               onChange={(event) => {
@@ -1872,8 +1844,7 @@ export function Buckets({
             />
           </label>
           <label className="block text-sm">
-            Sort buckets
-            <select
+            {copy("ui.sort.buckets")}<select
               className="mt-1 w-full border border-neutral-900 px-2 py-1"
               value={query.sort}
               onChange={(event) => {
@@ -1886,12 +1857,12 @@ export function Buckets({
               }}
             >
               <option value="id">Id</option>
-              <option value="alias">Alias</option>
-              <option value="created">Created</option>
+              <option value="alias">{copy("ui.alias")}</option>
+              <option value="created">{copy("ui.created")}</option>
             </select>
           </label>
-          <p>Default order is Id.</p>
-          <p>Only loaded rows</p>
+          <p>{copy("ui.default.order.is.id")}</p>
+          <p>{copy("ui.only.loaded.rows")}</p>
         </div>
       ) : null}
       {location.kind === "objects" && bucketDetail === null ? (
@@ -1909,8 +1880,8 @@ export function Buckets({
       {bucketDetail === null && view.empty ? (
         <p>
           {canManage && !browsing
-            ? "There are no buckets. Create the first bucket."
-            : "There are no buckets."}
+            ? copy("ui.there.are.no.buckets.create.the.first.bucket")
+            : copy("ui.there.are.no.buckets")}
         </p>
       ) : null}
       {listing && list.data && shown.length > 0 ? (
@@ -1919,14 +1890,11 @@ export function Buckets({
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Bucket
-                </th>
+                  {copy("ui.bucket")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
-                  Usage
-                </th>
+                  {copy("ui.usage")}</th>
                 <th className="py-2 font-medium" scope="col">
-                  Aliases
-                </th>
+                  {copy("ui.aliases")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1941,8 +1909,7 @@ export function Buckets({
                         goHash(hashForObjects(bucket.id, ""));
                       }}
                     >
-                      Objects for {bucket.id}
-                    </button>
+                      {fill(copy("ui.objects.for"), { id: bucket.id })}</button>
                     <BucketPermissions bucketId={bucket.id} canManage={canManage} />
                     {canManage ? (
                       <button
@@ -1953,8 +1920,7 @@ export function Buckets({
                           setDeleteId(bucket.id);
                         }}
                       >
-                        Delete {bucket.id}
-                      </button>
+                        {fill(copy("ui.delete"), { id: bucket.id })}</button>
                     ) : null}
                   </td>
                   <td className={`${wrap} py-2 pr-3 align-top`}>
@@ -1994,7 +1960,7 @@ export function Buckets({
       ) : null}
       {listing && view.partial ? (
         <>
-          <p>More buckets are available.</p>
+          <p>{copy("ui.more.buckets.are.available")}</p>
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
             type="button"
@@ -2003,8 +1969,7 @@ export function Buckets({
               void list.fetchNextPage();
             }}
           >
-            Load more
-          </button>
+            {copy("ui.load.more")}</button>
         </>
       ) : null}
       {deleteId !== null ? (
