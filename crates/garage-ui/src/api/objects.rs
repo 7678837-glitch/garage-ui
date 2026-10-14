@@ -169,10 +169,11 @@ pub(crate) async fn download_archive(
     let bucket = id.clone();
     let app = app.clone();
     // The handler returns this response before the task opens the next object.
-    tokio::spawn(async move {
-        let _ = write_archive(app, bucket, planned, tx).await;
+    let task = tokio::spawn(async move {
+        let result = write_archive(app, bucket, planned, tx.clone()).await;
+        tx.finish(result);
     });
-    let mut response = Response::new(Body::new(ZipChunks { rx }));
+    let mut response = Response::new(Body::new(ZipChunks { rx, task }));
     let headers = response.headers_mut();
     headers.insert("content-type", HeaderValue::from_static("application/zip"));
     headers.insert(
@@ -256,6 +257,7 @@ fn archive_queue() -> (ArchiveTx, ArchiveRx) {
         accepted: 0,
         senders: 1,
         closed: false,
+        error: None,
         recv_waker: None,
         send_waker: None,
     }));
@@ -274,6 +276,7 @@ struct ArchiveQueue {
     accepted: usize,
     senders: usize,
     closed: bool,
+    error: Option<ApiError>,
     recv_waker: Option<Waker>,
     send_waker: Option<Waker>,
 }
@@ -306,6 +309,10 @@ impl Drop for ArchiveTx {
         let mut queue = self.lock();
         queue.senders -= 1;
         if queue.senders == 0 {
+            // Only explicit successful finalization permits a clean HTTP EOF.
+            if !queue.closed {
+                queue.error = Some(ApiError::internal());
+            }
             queue.closed = true;
             let waker = queue.recv_waker.take();
             drop(queue);
@@ -331,6 +338,19 @@ impl Drop for ArchiveRx {
 impl ArchiveTx {
     fn lock(&self) -> std::sync::MutexGuard<'_, ArchiveQueue> {
         self.shared.lock().expect("archive queue")
+    }
+
+    fn finish(&self, result: Result<(), ApiError>) {
+        let mut queue = self.lock();
+        if !queue.closed {
+            queue.error = result.err();
+            queue.closed = true;
+        }
+        let waker = queue.recv_waker.take();
+        drop(queue);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
     }
 
     fn retained(queue: &ArchiveQueue) -> usize {
@@ -400,7 +420,7 @@ impl ArchiveRx {
         self.shared.lock().expect("archive queue")
     }
 
-    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Bytes>> {
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, ApiError>>> {
         let mut queue = self.lock();
         if let Some(bytes) = queue.chunks.pop_front() {
             queue.queued = queue.queued.saturating_sub(bytes.len());
@@ -409,7 +429,10 @@ impl ArchiveRx {
             if let Some(waker) = waker {
                 waker.wake();
             }
-            return Poll::Ready(Some(bytes));
+            return Poll::Ready(Some(Ok(bytes)));
+        }
+        if let Some(error) = queue.error.take() {
+            return Poll::Ready(Some(Err(error)));
         }
         if queue.closed || queue.senders == 0 {
             return Poll::Ready(None);
@@ -419,25 +442,32 @@ impl ArchiveRx {
     }
 
     #[cfg(test)]
-    async fn recv(&mut self) -> Option<Bytes> {
+    async fn recv(&mut self) -> Option<Result<Bytes, ApiError>> {
         std::future::poll_fn(|cx| self.poll_recv(cx)).await
     }
 }
 
 struct ZipChunks {
     rx: ArchiveRx,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ZipChunks {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl HttpBody for ZipChunks {
     type Data = Bytes;
-    type Error = std::convert::Infallible;
+    type Error = ApiError;
 
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         match self.get_mut().rx.poll_recv(cx) {
-            Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(http_body::Frame::data(bytes)))),
+            Poll::Ready(Some(chunk)) => Poll::Ready(Some(chunk.map(http_body::Frame::data))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
@@ -1138,7 +1168,7 @@ mod tests {
             tx.try_push(chunk.clone()).is_err(),
             "extra chunk was accepted"
         );
-        let taken = rx.recv().await.expect("queued chunk");
+        let taken = rx.recv().await.expect("queued chunk").expect("archive bytes");
         assert_eq!(taken.len(), chunk.len());
         assert!(tx.try_push(chunk).is_ok());
     }

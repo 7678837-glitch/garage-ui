@@ -3288,6 +3288,142 @@
         assert!(crate::zip::token_is_fresh(59));
     }
 
+    async fn partial_archive_response() -> (
+        axum::response::Response,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<bool>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (release, released) = tokio::sync::oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0_u8; 4096];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut buf).await.unwrap();
+                assert!(read > 0, "S3 request closed before its headers");
+                request.extend_from_slice(&buf[..read]);
+            }
+            socket
+                .write_all(
+                    concat!(
+                        "HTTP/1.1 200 OK\r\n",
+                        "Content-Type: application/octet-stream\r\n",
+                        "Content-Length: 1048576\r\n",
+                        "Connection: close\r\n\r\n",
+                        "partial-object-bytes"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            tokio::select! {
+                release = released => {
+                    release.unwrap();
+                    socket.shutdown().await.unwrap();
+                    false
+                }
+                read = socket.read(&mut buf) => {
+                    assert_eq!(read.unwrap(), 0, "S3 connection should close on cancellation");
+                    true
+                }
+            }
+        });
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &endpoint, true).await;
+        let (admin, _) = login(&app).await;
+        let issued = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/buckets/bkt-1/archive-token",
+                Some(&json!({ "keys": ["partial.txt"] }).to_string()),
+                Some(&admin),
+            ),
+        )
+        .await;
+        assert_eq!(issued.status, StatusCode::OK, "{}", issued.body);
+        let token = serde_json::from_str::<Value>(&issued.body).unwrap()["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = router(app)
+            .oneshot(request(
+                "GET",
+                &format!("/api/buckets/bkt-1/archive?token={token}"),
+                None,
+                Some(&admin),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        (response, release, upstream)
+    }
+
+    async fn read_partial_archive_bytes(body: &mut Body) {
+        let mut received = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let frame = std::future::poll_fn(|cx| {
+                    HttpBody::poll_frame(std::pin::Pin::new(&mut *body), cx)
+                })
+                .await
+                .expect("archive ended before the object bytes")
+                .expect("archive failed before the upstream failure");
+                if let Ok(bytes) = frame.into_data() {
+                    received.extend_from_slice(&bytes);
+                }
+                if received
+                    .windows(b"partial-object-bytes".len())
+                    .any(|window| window == b"partial-object-bytes")
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("partial object bytes must stream before the S3 failure");
+    }
+
+    #[tokio::test]
+    async fn archive_body_errors_after_partial_s3_object_bytes() {
+        let (response, release, upstream) = partial_archive_response().await;
+        let mut body = response.into_body();
+        read_partial_archive_bytes(&mut body).await;
+        release.send(()).unwrap();
+        assert!(
+            !upstream.await.unwrap(),
+            "S3 body closed before its injected failure"
+        );
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            axum::body::to_bytes(body, 8 * 1024 * 1024),
+        )
+        .await
+        .expect("archive body must terminate after the S3 failure");
+        assert!(
+            result.is_err(),
+            "truncated S3 object produced a clean archive EOF"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_drop_cancels_the_stalled_s3_body_within_one_second() {
+        let (response, _release, mut upstream) = partial_archive_response().await;
+        let mut body = response.into_body();
+        read_partial_archive_bytes(&mut body).await;
+        drop(body);
+        let closed = tokio::time::timeout(Duration::from_secs(1), &mut upstream).await;
+        upstream.abort();
+        assert!(
+            closed
+                .expect("S3 body still open one second after archive cancellation")
+                .unwrap(),
+            "S3 body closed without archive cancellation"
+        );
+    }
+
     #[tokio::test]
     async fn archive_starts_the_zip_before_the_second_object_is_fully_read() {
         let hold = Arc::new(GetHold {
