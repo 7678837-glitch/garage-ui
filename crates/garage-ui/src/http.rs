@@ -958,3 +958,100 @@ mod tests {
             .unwrap_or_else(|| panic!("missing {name}\n{body}"))
     }
 }
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn idle_connection_reads_timeout_and_active_io_preserves_bytes() {
+        let (client, mut peer) = tokio::io::duplex(8);
+        let mut client = IdleIo::new(client, Duration::from_millis(30));
+        peer.write_all(b"hello").await.unwrap();
+        let mut bytes = [0; 5];
+        client.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"hello");
+        client.write_all(b"world").await.unwrap();
+        client.flush().await.unwrap();
+        peer.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"world");
+        let error = client.read_exact(&mut bytes).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "connection idle timeout");
+        client.shutdown().await.unwrap();
+        assert_eq!(peer.read(&mut bytes).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn stalled_connection_writes_timeout_without_discarding_buffered_data() {
+        let (client, mut peer) = tokio::io::duplex(1);
+        let mut client = IdleIo::new(client, Duration::from_millis(30));
+        client.write_all(b"a").await.unwrap();
+        let error = client.write_all(b"b").await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        let mut byte = [0];
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(&byte, b"a");
+    }
+
+    #[tokio::test]
+    async fn network_server_serves_health_and_closes_idle_clients_on_shutdown() {
+        let dir = crate::util::temp_dir();
+        let app = crate::state::test_app(&dir).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(serve_http(listener, app, async { stopped.await.unwrap() }));
+        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        let mut chunk = [0; 4096];
+        loop {
+            let count = tokio::time::timeout(Duration::from_secs(2), client.read(&mut chunk))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(count > 0, "server closed before the health response");
+            response.extend_from_slice(&chunk[..count]);
+            if String::from_utf8_lossy(&response).contains("\"status\":\"ok\"") {
+                break;
+            }
+        }
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(
+            response.contains("x-content-type-options: nosniff"),
+            "{response}"
+        );
+        stop.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(client.read(&mut chunk).await.unwrap(), 0);
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
+    }
+
+    #[test]
+    fn only_connection_failures_are_retryable_accept_errors() {
+        for kind in [
+            io::ErrorKind::ConnectionRefused,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::ConnectionReset,
+        ] {
+            assert!(is_connection_error(&io::Error::from(kind)), "{kind:?}");
+        }
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::OutOfMemory,
+        ] {
+            assert!(!is_connection_error(&io::Error::from(kind)), "{kind:?}");
+        }
+    }
+}
