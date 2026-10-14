@@ -319,10 +319,10 @@ test("a viewer sees the key list and does not call key write routes", async () =
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.queryByText("SECRETVALUE")).toBeNull();
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Rename GK1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save name (GK1)" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete GK1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Show secret (GK1)" })).toBeNull();
-  expect(screen.queryByRole("checkbox", { name: "Allow create bucket for GK1" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Allow bucket creation (GK1)" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(calls.every((call) => call.method === "GET" && call.url.startsWith("/api/keys?"))).toBe(
     true,
@@ -493,7 +493,7 @@ test("renames a key with only the name and does not ask for confirmation", async
   expect(screen.queryByText("Unsaved changes")).toBeNull();
   fireEvent.change(name, { target: { value: "已有 名称" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Rename GK1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save name (GK1)" }));
   expect(await screen.findByText("Key renamed")).toBeTruthy();
   expect(screen.queryByText("Unsaved changes")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -541,10 +541,10 @@ test("sends only createBucket when the allow-create-bucket switch changes", asyn
     }
   }
   const known = (await screen.findByRole("checkbox", {
-    name: "Allow create bucket for GK1",
+    name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
   const unknown = screen.getByRole("checkbox", {
-    name: "Allow create bucket for GK2",
+    name: "Allow bucket creation (GK2)",
   }) as HTMLInputElement;
   expect(known.checked).toBe(false);
   expect(known.indeterminate).toBe(false);
@@ -592,7 +592,7 @@ test("shows the API message when the create-bucket switch fails and keeps the pr
     }
   }
   const box = (await screen.findByRole("checkbox", {
-    name: "Allow create bucket for GK1",
+    name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
   expect(box.checked).toBe(true);
   fireEvent.click(box);
@@ -631,7 +631,7 @@ test("shows Saving while allow-create-bucket is pending and keeps the error when
     }
   }
   const box = (await screen.findByRole("checkbox", {
-    name: "Allow create bucket for GK1",
+    name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
   expect(box.checked).toBe(false);
   expect(box.disabled).toBe(false);
@@ -848,11 +848,11 @@ test("keeps a long key identifier complete for accessible naming and inspection"
   const resourceId = "b".repeat(64);
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, name: "Long key" }], hasMore: false })));
   renderKeys(true);
-  const link = await screen.findByRole("link", { name: resourceId });
-  expect(link.textContent).toBe(resourceId);
+  const link = await screen.findByRole("link", { name: `${resourceId.slice(0, 8)}…${resourceId.slice(-6)} (${resourceId})` });
+  expect(link.textContent).toBe(`${resourceId.slice(0, 8)}…${resourceId.slice(-6)}`);
   expect(link.getAttribute("title")).toBe(resourceId);
   expect(link.getAttribute("href")).toBe(`#key/${resourceId}/overview`);
-  fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));
+  fireEvent.click(screen.getByLabelText(`Actions (${resourceId})`));
   expect(screen.getByText(resourceId, { selector: "p" })).toBeTruthy();
 });
 
@@ -1068,20 +1068,48 @@ test("the key buckets tab shows the grant bits", async () => {
   expect(screen.queryByRole("textbox", { name: "Key name" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("textbox", { name: "Key name" })).toBeTruthy();
-  const disclosure = screen.getByLabelText("Edit compact").closest("details");
+  const disclosure = screen.getByLabelText("Actions (compact)").closest("details");
   expect(disclosure?.open).toBe(false);
-  fireEvent.click(screen.getByLabelText("Edit compact"));
+  fireEvent.click(screen.getByLabelText("Actions (compact)"));
   const input = screen.getByLabelText("Name for compact") as HTMLInputElement;
   fireEvent.change(input, { target: { value: "42" } });
-  fireEvent.click(screen.getByLabelText("Edit compact"));
+  fireEvent.click(screen.getByLabelText("Actions (compact)"));
   expect(disclosure?.open).toBe(false);
-  fireEvent.click(screen.getByLabelText("Edit compact"));
+  fireEvent.click(screen.getByLabelText("Actions (compact)"));
   expect((screen.getByLabelText("Name for compact") as HTMLInputElement).value).toBe("42");
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
-  fireEvent.click(screen.getByLabelText("Edit compact"));
+  fireEvent.click(screen.getByLabelText("Actions (compact)"));
   const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
   const before = window.location.hash;
   fireEvent.click(screen.getByRole("link", { name: "compact" }));
   expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe(before);
  });
+
+
+test("groups key settings under one display-name heading with contextual actions", async () => {
+  const id = "GK" + "a".repeat(48);
+  window.location.hash = `#key/${id}/settings`;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/keys?")) {
+      return json({ items: [], hasMore: false });
+    }
+    return json({ id, name: "Archive credentials", permissions: { createBucket: false } });
+  }));
+  renderKeys(true);
+  expect(await screen.findByRole("heading", { name: "Archive credentials" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Keys" })).toBeNull();
+  for (const name of ["General", "Permissions", "Credentials", "Danger zone"]) {
+    expect(screen.getByRole("heading", { name })).toBeTruthy();
+  }
+  expect(screen.getByRole("textbox", { name: `Name for ${id}` })).toBeTruthy();
+  expect(screen.getByRole("button", { name: `Save name (${id})` }).textContent).toBe("Save name");
+  expect(screen.getByRole("checkbox", { name: `Allow bucket creation (${id})` })).toBeTruthy();
+  expect(screen.getByText("Saved automatically")).toBeTruthy();
+  expect(screen.getByRole("button", { name: `View secret for ${id}` }).textContent).toBe("View secret");
+  const remove = screen.getByRole("button", { name: `Delete key (${id})` });
+  expect(remove.textContent).toBe("Delete key");
+  fireEvent.click(remove);
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: `Confirm ${id}` })).toBeTruthy();
+});

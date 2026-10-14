@@ -6,7 +6,8 @@ import { ConfirmDialog } from "./confirm";
 import { DetailTabs } from "./DetailTabs";
 import { detailAddressFromHash, hashForDetail, keyTabs, useLocationHash } from "./Nav";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
-import { copy, fill } from "./i18n";
+import { copy, fill, translate } from "./i18n";
+import { DataCell, ResourceIdentity, SettingsSection } from "./ui";
 
 type AccessKey = {
   id: string;
@@ -206,14 +207,14 @@ function KeyBuckets({ keyId }: { keyId: string }) {
       {buckets.data && rows.length === 0 ? <p>{copy("ui.this.key.cannot.access.any.buckets")}</p> : null}
       {rows.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.buckets")} tabIndex={0}>
-          <table className="ui-table"><thead><tr>
+          <table className="ui-table ui-table-records" role="table"><thead><tr>
             <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.aliases")}</th>
             <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
           </tr></thead><tbody>{rows.map((bucket, index) => (
-            <tr key={`${bucket.id}-${index}`} aria-label={bucket.id}>
-              <td className="ui-identifier">{bucket.id}</td><td>{[...bucket.globalAliases, ...bucket.localAliases].map((alias, aliasIndex) => <span className="mr-2" key={aliasIndex}>{alias}</span>)}</td>
-              <td>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</td>
-              <td>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</td><td>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</td>
+            <tr key={`${bucket.id}-${index}`} role="row" aria-label={bucket.id}>
+              <DataCell label={copy("ui.bucket")} kind="identity" className="ui-identifier">{bucket.id}</DataCell><DataCell label={copy("ui.aliases")}>{[...bucket.globalAliases, ...bucket.localAliases].map((alias, aliasIndex) => <span className="mr-2" key={aliasIndex}>{alias}</span>)}</DataCell>
+              <DataCell label={copy("ui.owner.2")}>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</DataCell>
+              <DataCell label={copy("ui.read.2")}>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</DataCell><DataCell label={copy("ui.write.2")}>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</DataCell>
             </tr>
           ))}</tbody></table>
         </div>
@@ -417,9 +418,10 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
       }}
     >
       <label className="ui-field">
-        <span className="text-sm">{fill(copy("ui.name.for"), { id: id })}</span>
+        <span className="text-sm">{copy("ui.name")}</span>
         <input
           className="ui-input"
+          aria-label={fill(copy("ui.name.for"), { id })}
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value);
@@ -429,11 +431,12 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
       {error ? <p className="ui-alert">{error}</p> : null}
       {renameStatus ? <p>{renameStatus}</p> : null}
       <button
-        className="ui-button"
+        className="ui-button ui-button-primary"
         type="submit"
+        aria-label={`${translate("Save name")} (${id})`}
         disabled={rename.isPending}
       >
-        {rename.isPending ? copy("ui.renaming.key") : fill(copy("ui.rename"), { id: id })}
+        {translate("Save name")}
       </button>
     </form>
   );
@@ -463,19 +466,21 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
   }, [shown]);
   const error = change.error instanceof Error ? change.error.message : null;
   return (
-    <div className="mt-3">
-      <label className="text-sm">
+    <div>
+      <label className="ui-checkbox-field">
         <input
           ref={inputRef}
           className="mr-2"
           type="checkbox"
+          aria-label={`${translate("Allow bucket creation")} (${id})`}
           checked={shown === true}
           disabled={change.isPending}
           onChange={(event) => {
             change.mutate(event.target.checked);
           }}
         />
-        {fill(copy("ui.allow.create.bucket.for"), { id: id })}</label>
+        {translate("Allow bucket creation")}</label>
+      <p className="ui-muted">{translate("Saved automatically")}</p>
       {change.isPending ? <p>{copy("ui.saving")}</p> : null}
       {error ? <p className="ui-alert">{error}</p> : null}
     </div>
@@ -719,18 +724,20 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     initialData: () => rows.find((accessKey) => accessKey.id === keyDetail?.id),
     staleTime: 30_000,
   });
-  const openedKey = addressedKey.data;
+  const openedKey = addressedKey.data ?? rows.find((accessKey) => accessKey.id === keyDetail?.id);
   const detailFailure = addressedKey.isError ? keyListFailure(addressedKey.error) : null;
 
   return (
     <section className="ui-page" aria-label={copy("nav.keys")} aria-busy={view.busy}>
-      <header className="ui-page-header">
+      {keyDetail === null ? <header className="ui-page-header">
         <h2>{copy("nav.keys")}</h2>
-        {keyDetail === null && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
-      </header>
+        {canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
+      </header> : null}
       {keyDetail ? (
         <DetailTabs
           label={fill(copy("ui.key"), { id: keyDetail.id })}
+          title={openedKey?.name || copy("ui.key.2")}
+          identity={<ResourceIdentity id={keyDetail.id} />}
           tabs={keyTabs()}
           selected={keyDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "key", id: keyDetail.id, tab })}
@@ -738,23 +745,29 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             goHash(hashForDetail({ resource: "key", id: keyDetail.id, tab }));
           }}
         >
-          <p className="ui-identifier">{keyDetail.id}</p>
           {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
           {["settings", "overview"].includes(keyDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
             <button className="ui-button" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</button>
           </div> : null}
-          {keyDetail.tab === "overview" && openedKey ? <div className="ui-panel"><p>{openedKey.name}</p>{openedKey.created ? <p>{openedKey.created}</p> : null}</div> : null}
+          {keyDetail.tab === "overview" && openedKey ? <div className="ui-panel">{openedKey.created ? <p>{openedKey.created}</p> : null}</div> : null}
           {keyDetail.tab === "buckets" ? <KeyBuckets keyId={keyDetail.id} /> : null}
           {keyDetail.tab === "settings" && openedKey && canManage ? (
-            <>
-              <RenameKey key={openedKey.id} id={openedKey.id} name={openedKey.name} />
-              <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
-              <div className="ui-actions">
+            <div className="ui-settings">
+              <SettingsSection title={translate("General")}>
+                <RenameKey key={openedKey.id} id={openedKey.id} name={openedKey.name} />
+              </SettingsSection>
+              <SettingsSection title={copy("tab.permissions")}>
+                <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
+              </SettingsSection>
+              <SettingsSection title={translate("Credentials")}>
                 <button className="ui-button" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={() => { viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{copy("ui.view.secret")}</button>
-                <button className="ui-button ui-button-danger" type="button" onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{fill(copy("ui.delete"), { id: openedKey.id })}</button>
-              </div>{viewError ? <p className="ui-alert">{viewError}</p> : null}
-            </>
+                {viewError ? <p className="ui-alert">{viewError}</p> : null}
+              </SettingsSection>
+              <SettingsSection title={translate("Danger zone")} danger>
+                <button className="ui-button ui-button-danger" type="button" aria-label={`${translate("Delete key")} (${openedKey.id})`} onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{translate("Delete key")}</button>
+              </SettingsSection>
+            </div>
           ) : null}
         </DetailTabs>
       ) : null}
@@ -818,13 +831,11 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.key.2")} tabIndex={0}>
-          <table className="ui-table">
+          <table className="ui-table ui-table-records" role="table">
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
                   {copy("ui.key.2")}</th>
-                <th className="py-2 font-medium" scope="col">
-                  {copy("ui.name")}</th>
                 {canManage ? (
                   <th className="py-2 font-medium" scope="col">
                     {copy("ui.actions")}</th>
@@ -833,15 +844,14 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             </thead>
             <tbody>
               {shown.map((accessKey, index) => (
-                <tr key={`${accessKey.id}-${index}`}>
-                  <td><a className="ui-identifier ui-identifier-truncated" title={accessKey.id} aria-label={accessKey.id}
+                <tr key={`${accessKey.id}-${index}`} role="row">
+                  <DataCell label={copy("ui.key.2")} kind="identity">{accessKey.name ? <strong className="block">{accessKey.name}</strong> : null}<a className="ui-identifier ui-button-quiet" title={accessKey.id} aria-label={accessKey.id.length > 24 ? `${accessKey.id.slice(0, 8)}…${accessKey.id.slice(-6)} (${accessKey.id})` : accessKey.id}
                     href={hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })}
                     onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })); }}>
-                    {accessKey.id}
-                  </a></td>
-                  <td className="py-2 align-top">{accessKey.name}</td>
+                    {accessKey.id.length > 24 ? `${accessKey.id.slice(0, 8)}…${accessKey.id.slice(-6)}` : accessKey.id}
+                  </a></DataCell>
                   {canManage ? (
-                    <td className="break-all py-2 align-top"><div className="ui-actions">
+                    <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide"><div className="ui-actions">
                       <button
                         className="ui-button"
                         type="button"
@@ -870,12 +880,12 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                         <p className="ui-alert">{viewError}</p>
                       ) : null}
                       <details className="ui-disclosure">
-                        <summary aria-label={`${copy("ui.edit")} ${accessKey.id}`}>{copy("ui.edit")}</summary>
+                        <summary aria-label={`${copy("ui.actions")} (${accessKey.id})`}>{copy("ui.actions")}</summary>
                         {accessKey.id.length > 24 ? <p className="ui-identifier">{accessKey.id}</p> : null}
                         <RenameKey id={accessKey.id} name={accessKey.name} />
                         <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />
                       </details>
-                    </div></td>
+                    </div></DataCell>
                   ) : null}
                 </tr>
               ))}
