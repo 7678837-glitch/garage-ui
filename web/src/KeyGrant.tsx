@@ -76,21 +76,21 @@ export function KeyGrant({
           ))}
         </select>
       </label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           type="checkbox"
           checked={read}
           onChange={(event) => setRead(event.target.checked)}
         />{" "}
         {copy("ui.read.2")}</label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           type="checkbox"
           checked={write}
           onChange={(event) => setWrite(event.target.checked)}
         />{" "}
         {copy("ui.write.2")}</label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           type="checkbox"
           checked={owner}
@@ -100,7 +100,7 @@ export function KeyGrant({
       {error ? <p role="alert">{error}</p> : null}
       {succeeded ? <p>{copy("ui.key.granted")}</p> : null}
       <button
-        className="ui-button"
+        className="ui-button ui-button-primary"
         type="submit"
         disabled={!canSubmit || pending}
       >

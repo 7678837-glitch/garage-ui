@@ -204,7 +204,7 @@ test.each(["id", "accessKeyId"])("cold key settings load the addressed %s respon
   vi.stubGlobal("fetch", fetcher);
   renderStorage("key");
   expect((await screen.findByLabelText("Name for GK101") as HTMLInputElement).value).toBe("Addressed key");
-  expect((screen.getByRole("checkbox", { name: "Allow create bucket for GK101" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "Allow bucket creation (GK101)" }) as HTMLInputElement).checked).toBe(true);
   expect(fetcher.mock.calls.filter(([input]) => String(input).includes("offset=")).length).toBe(1);
 });
 

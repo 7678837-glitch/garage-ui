@@ -3,7 +3,8 @@ import { useState, type FormEvent } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
-import { copy, fill } from "./i18n";
+import { copy, fill, translate } from "./i18n";
+import { DataCell, ResourceIdentity } from "./ui";
 
 type BucketKeyGrant = {
   accessKeyId: string;
@@ -184,7 +185,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
   const ready = grantReady(draft);
   return (
     <form
-      className="grid gap-2"
+      className="ui-form"
       aria-label={fill(copy("ui.grant.permissions.on"), { bucketId: bucketId })}
       onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -205,7 +206,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
       </label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           className="mr-2"
           type="checkbox"
@@ -216,7 +217,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
         {copy("ui.owner.2")}</label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           className="mr-2"
           type="checkbox"
@@ -227,7 +228,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
           }}
         />
         {copy("ui.read.2")}</label>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="ui-checkbox-field">
         <input
           className="mr-2"
           type="checkbox"
@@ -241,7 +242,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
       {error ? <p className="ui-alert">{error}</p> : null}
       {grant.isSuccess ? <p>{copy("ui.permissions.granted")}</p> : null}
       <button
-        className="ui-button"
+        className="ui-button ui-button-primary"
         type="submit"
         disabled={!ready || grant.isPending}
       >
@@ -308,17 +309,19 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       ) : null}
       {keys.data && keys.data.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.keys")} tabIndex={0}>
-          <table className="ui-table"><thead><tr>
-            <th scope="col">{copy("ui.key.2")}</th><th scope="col">{copy("ui.name")}</th>
+          <table className="ui-table ui-table-records" role="table"><thead><tr>
+            <th scope="col">{copy("ui.key.2")}</th>
             <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
             {canManage ? <th scope="col">{copy("ui.actions")}</th> : null}
           </tr></thead><tbody>{keys.data.map((key, index) => (
-            <tr key={`${key.accessKeyId}-${index}`}>
-              <td className="ui-identifier">{key.accessKeyId}</td><td>{key.name}</td>
-              <td>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</td>
-              <td>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</td><td>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</td>
-              {canManage ? <td>{hasPermission(key) ? <button className="ui-button ui-button-danger" type="button"
-                onClick={() => { revoke.reset(); setTarget(key); }}>{fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}</button> : null}</td> : null}
+            <tr key={`${key.accessKeyId}-${index}`} role="row">
+              <DataCell kind="identity" label={copy("ui.key.2")}><ResourceIdentity id={key.accessKeyId} name={key.name || undefined} /></DataCell>
+              <DataCell label={copy("ui.owner.2")}>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</DataCell>
+              <DataCell label={copy("ui.read.2")}>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</DataCell>
+              <DataCell label={copy("ui.write.2")}>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</DataCell>
+              {canManage ? <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}>{hasPermission(key) ? <button className="ui-button ui-button-danger" type="button"
+                aria-label={fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}
+                onClick={() => { revoke.reset(); setTarget(key); }}>{translate("Revoke")}</button> : null}</DataCell> : null}
             </tr>
           ))}</tbody></table>
         </div>

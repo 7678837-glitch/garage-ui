@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
@@ -13,7 +13,8 @@ import {
   useLocationHash,
 } from "./Nav";
 import { Objects } from "./Objects";
-import { formatCapacity, useI18n, type Language, copy, fill, translate } from "./i18n";
+import { DataCell, ResourceIdentity, SettingsSection } from "./ui";
+import { CompactCapacityText, copy, fill, translate } from "./i18n";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type Alias =
@@ -387,45 +388,6 @@ function objectUsage(bucket: Bucket): string | null {
   return null;
 }
 
-function byteUsage(bucket: Bucket, language: Language): string | null {
-  const used = bucket.bytes;
-  const quota = bucket.quotas?.maxSize;
-  if (used !== null && quota?.kind === "digits") {
-    return fill(copy("ui.of.bytes"), { used: used, text: quota.text, quota: unitPair(used, quota.text, language) });
-  }
-  if (used !== null && quota?.kind === "unset") {
-    return fill(copy("ui.bytes.size.quota.is.not.set"), { used: used, value: unitSingle(used, language) });
-  }
-  if (used !== null) {
-    return fill(copy("ui.bytes"), { used: used, value: unitSingle(used, language) });
-  }
-  if (quota?.kind === "digits") {
-    return fill(copy("ui.size.quota.bytes"), { text: quota.text, quota: unitSingle(quota.text, language) });
-  }
-  if (quota?.kind === "unset") {
-    return copy("ui.size.quota.is.not.set");
-  }
-  return null;
-}
-
-function hidesScaledUnit(digits: string): boolean {
-  return formatCapacity(digits, "en").endsWith(" B");
-}
-
-function unitSingle(digits: string, language: Language): string {
-  if (hidesScaledUnit(digits)) {
-    return "";
-  }
-  return ` (${formatCapacity(digits, language)})`;
-}
-
-function unitPair(used: string, quota: string, language: Language): string {
-  if (hidesScaledUnit(used) && hidesScaledUnit(quota)) {
-    return "";
-  }
-  return fill(copy("ui.of"), { used: formatCapacity(used, language), quota: formatCapacity(quota, language) });
-}
-
 function fieldText(value: WholeNumber): string {
   return value.kind === "digits" ? value.text : "";
 }
@@ -442,16 +404,25 @@ function fieldLiteral(text: string): string | null {
 }
 
 function UsageText({ bucket }: { bucket: Bucket }) {
-  const { language } = useI18n();
   const objects = objectUsage(bucket);
-  const bytes = byteUsage(bucket, language);
-  if (objects === null && bytes === null) {
+  const quota = bucket.quotas?.maxSize;
+  if (objects === null && bucket.bytes === null && quota === undefined) {
     return null;
   }
   return (
-    <div>
+    <div className="grid gap-2">
       {objects ? <p>{objects}</p> : null}
-      {bytes ? <p>{bytes}</p> : null}
+      <dl className="grid gap-2">
+        {bucket.bytes !== null ? <div>
+          <dt className="ui-muted">{copy("ui.size")}</dt>
+          <dd><CompactCapacityText digits={bucket.bytes} /></dd>
+        </div> : null}
+        {quota?.kind === "digits" ? <div>
+          <dt className="ui-muted">{copy("ui.max.size")}</dt>
+          <dd><CompactCapacityText digits={quota.text} /></dd>
+        </div> : null}
+      </dl>
+      {quota?.kind === "unset" ? <p>{copy("ui.size.quota.is.not.set")}</p> : null}
     </div>
   );
 }
@@ -505,7 +476,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         save.mutate(`{"maxSize":${size},"maxObjects":${objects}}`);
       }}
     >
-      <label className={`${wrap} block text-sm`}>
+      <label className={`${wrap} ui-field`}>
         {copy("ui.max.size")}<input
           aria-label={fill(copy("ui.max.size.for"), { bucketId: bucketId })}
           className="ui-input"
@@ -517,7 +488,7 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
           }}
         />
       </label>
-      <label className={`${wrap} block text-sm`}>
+      <label className={`${wrap} ui-field`}>
         {copy("ui.max.objects")}<input
           aria-label={fill(copy("ui.max.objects.for"), { bucketId: bucketId })}
           className="ui-input"
@@ -1493,7 +1464,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
     >
       <fieldset className="grid min-w-0 gap-1">
         <legend className={`${wrap} text-sm`}>{copy("ui.add.alias")}</legend>
-        <label className={`${wrap} text-sm`}>
+        <label className={`${wrap} ui-checkbox-field`}>
           <input
             className="mr-2"
             type="radio"
@@ -1505,7 +1476,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
             }}
           />
           {copy("ui.global")}</label>
-        <label className={`${wrap} text-sm`}>
+        <label className={`${wrap} ui-checkbox-field`}>
           <input
             className="mr-2"
             type="radio"
@@ -1519,7 +1490,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
           {copy("ui.local")}</label>
       </fieldset>
       {draft.scope === "global" ? (
-        <label className={`${wrap} block text-sm`}>
+        <label className={`${wrap} ui-field`}>
           {copy("ui.global.alias")}<input
             aria-label={fill(copy("ui.global.alias.for"), { bucketId: bucketId })}
             className="ui-input"
@@ -1531,7 +1502,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
         </label>
       ) : (
         <>
-          <label className={`${wrap} block text-sm`}>
+          <label className={`${wrap} ui-field`}>
             {copy("ui.local.alias")}<input
               aria-label={fill(copy("ui.local.alias.for"), { bucketId: bucketId })}
               className="ui-input"
@@ -1541,7 +1512,7 @@ function AliasControls({ bucketId }: { bucketId: string }) {
               }}
             />
           </label>
-          <label className={`${wrap} block text-sm`}>
+          <label className={`${wrap} ui-field`}>
             {copy("ui.access.key")}<input
               aria-label={fill(copy("ui.access.key.for"), { bucketId: bucketId })}
               className="ui-input"
@@ -1760,7 +1731,6 @@ function BucketRowSettings({ bucket, canManage }: { bucket: Bucket; canManage: b
   return <details className="ui-disclosure" onToggle={(event) => { if (event.currentTarget.open) setInspected(true); }}>
     <summary aria-label={`${copy(canManage ? "ui.edit" : "nav.settings")} ${bucket.id}`}>{copy(canManage ? "ui.edit" : "nav.settings")}</summary>
     <div className="ui-form">
-      {bucket.id.length > 24 ? <p className="ui-identifier">{bucket.id}</p> : null}
       {canManage && bucket.quotas ? <QuotaEditor key={`${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`} bucketId={bucket.id} quotas={bucket.quotas} /> : null}
       {canManage ? <><CorsEditor key={`cors:${bucket.id}`} bucketId={bucket.id} /><LifecycleEditor key={`lifecycle:${bucket.id}`} bucketId={bucket.id} /><IncompleteUploads bucketId={bucket.id} />
         {bucket.aliases.map((alias, aliasIndex) => <RemoveAliasButton key={aliasIndex} bucketId={bucket.id} alias={alias} />)}
@@ -1840,17 +1810,20 @@ export function Buckets({
     initialData: () => rows.find((bucket) => bucket.id === bucketDetail?.id),
     staleTime: 30_000,
   });
-  const openedBucket = addressedBucket.data;
+  const openedBucket = addressedBucket.data ?? rows.find((bucket) => bucket.id === bucketDetail?.id);
   const detailFailure = addressedBucket.isError ? bucketListFailure(addressedBucket.error) : null;
 
   return (
     <section className="ui-page" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
-      <header className="ui-page-header">
+      {bucketDetail === null ? <header className="ui-page-header">
         <h2>{copy("nav.buckets")}</h2>
         {listing && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
-      </header>
+      </header> : null}
       {bucketDetail ? (
         <DetailTabs
+          key={bucketDetail.id}
+          title={openedBucket?.aliases[0]?.name || copy("ui.bucket")}
+          identity={<ResourceIdentity id={bucketDetail.id} />}
           label={fill(copy("ui.bucket.2"), { id: bucketDetail.id })}
           tabs={bucketTabs()}
           selected={bucketDetail.tab}
@@ -1859,7 +1832,6 @@ export function Buckets({
             goHash(hashForDetail({ resource: "bucket", id: bucketDetail.id, tab }));
           }}
         >
-          <p className="ui-identifier">{bucketDetail.id}</p>
           {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div> : null}
           {["settings", "overview"].includes(bucketDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
@@ -1868,6 +1840,7 @@ export function Buckets({
           {bucketDetail.tab === "objects" ? (
             <Objects
               key={bucketDetail.id}
+              embedded
               bucketId={bucketDetail.id}
               canWrite={canWrite}
               canTransfer={canTransfer}
@@ -1883,19 +1856,32 @@ export function Buckets({
           {bucketDetail.tab === "overview" && openedBucket ? <div className="ui-panel"><UsageText bucket={openedBucket} />
             {openedBucket.aliases.map((alias, index) => <p key={index}>{alias.name}</p>)}
           </div> : null}
-          {bucketDetail.tab === "settings" && canManage && openedBucket?.quotas ? (
-            <QuotaEditor
-              key={`${openedBucket.id}:${fieldText(openedBucket.quotas.maxSize)}:${fieldText(openedBucket.quotas.maxObjects)}`}
-              bucketId={openedBucket.id}
-              quotas={openedBucket.quotas}
-            />
-          ) : null}
-          {bucketDetail.tab === "settings" && openedBucket ? <div key={openedBucket.id} className="ui-form">
-            {canManage ? <><AliasControls bucketId={openedBucket.id} />
-              {openedBucket.aliases.map((alias, index) => <RemoveAliasButton key={index} bucketId={openedBucket.id} alias={alias} />)}
-              <CorsEditor key={`cors:${openedBucket.id}`} bucketId={openedBucket.id} /><LifecycleEditor key={`lifecycle:${openedBucket.id}`} bucketId={openedBucket.id} /><IncompleteUploads bucketId={openedBucket.id} />
-              <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</button>
-            </> : <><CorsSummary bucketId={openedBucket.id} /><LifecycleSummary bucketId={openedBucket.id} /></>}
+          {bucketDetail.tab === "settings" && openedBucket ? <div className="ui-settings">
+            <SettingsSection title={translate("General")}>
+              <UsageText bucket={openedBucket} />
+            </SettingsSection>
+            <SettingsSection title={copy("ui.aliases")}>
+              {openedBucket.aliases.map((alias, index) => <div className="ui-actions" key={index}>
+                <span>{alias.name}</span>
+                {canManage ? <RemoveAliasButton bucketId={openedBucket.id} alias={alias} /> : null}
+              </div>)}
+              {canManage ? <AliasControls bucketId={openedBucket.id} /> : null}
+            </SettingsSection>
+            {canManage && openedBucket.quotas ? <SettingsSection title={translate("Quotas")}>
+              <QuotaEditor bucketId={openedBucket.id} quotas={openedBucket.quotas} />
+            </SettingsSection> : null}
+            <SettingsSection title={translate("CORS")}>
+              {canManage ? <CorsEditor bucketId={openedBucket.id} /> : <CorsSummary bucketId={openedBucket.id} />}
+            </SettingsSection>
+            <SettingsSection title={translate("Lifecycle")}>
+              {canManage ? <LifecycleEditor bucketId={openedBucket.id} /> : <LifecycleSummary bucketId={openedBucket.id} />}
+            </SettingsSection>
+            {canManage ? <>
+              <SettingsSection title={copy("ui.incomplete.uploads")}><IncompleteUploads bucketId={openedBucket.id} /></SettingsSection>
+              <SettingsSection title={translate("Danger zone")} danger>
+                <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</button>
+              </SettingsSection>
+            </> : null}
           </div> : null}
         </DetailTabs>
       ) : null}
@@ -1975,29 +1961,36 @@ export function Buckets({
       ) : null}
       {listing && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.bucket")} tabIndex={0}>
-          <table className="ui-table">
+          <table className="ui-table ui-table-records" role="table">
             <thead><tr>
-              <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.usage")}</th>
-              <th scope="col">{copy("ui.aliases")}</th><th scope="col">{copy("ui.actions")}</th>
+              <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.usage")}</th><th scope="col">{copy("ui.actions")}</th>
             </tr></thead>
             <tbody>{shown.map((bucket, index) => (
-              <tr key={`${bucket.id}-${index}`}>
-                <td><a className="ui-identifier ui-identifier-truncated" title={bucket.id} aria-label={bucket.id}
-                  href={hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })}
-                  onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })); }}>
-                  {bucket.id}
-                </a></td>
-                <td><UsageText bucket={bucket} /></td>
-                <td>{bucket.aliases.map((alias, aliasIndex) => <Fragment key={aliasIndex}>{aliasIndex > 0 ? ", " : null}<span>{alias.name}</span></Fragment>)}</td>
-                <td><div className="ui-actions">
-                  <button className="ui-button" type="button" aria-label={fill(copy("ui.objects.for"), { id: bucket.id })}
-                    onClick={() => goHash(hashForObjects(bucket.id, ""))}>{copy("nav.objects")}</button>
-                  <button className="ui-button" type="button" aria-label={fill(copy("ui.permissions.for"), { bucketId: bucket.id })}
-                    onClick={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "permissions" }))}>{copy("tab.permissions")}</button>
-                  {canManage ? <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: bucket.id })}
-                    onClick={() => { removeBucket.reset(); setDeleteId(bucket.id); }}>{copy("ui.delete.2")}</button> : null}
-                  <BucketRowSettings bucket={bucket} canManage={canManage} />
-                </div></td>
+              <tr key={`${bucket.id}-${index}`} role="row">
+                <DataCell kind="identity" label={copy("ui.bucket")}>
+                  <a className="ui-resource-name text-[var(--accent)]" title={bucket.id} aria-label={`${bucket.aliases[0]?.name || copy("ui.bucket")} (${bucket.id})`}
+                    href={hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })}
+                    onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })); }}>
+                    {bucket.aliases[0]?.name || copy("ui.bucket")}
+                  </a>
+                  {bucket.aliases.slice(1).map((alias, aliasIndex) => <span key={aliasIndex}> · <span>{alias.name}</span></span>)}
+                  <ResourceIdentity id={bucket.id} />
+                </DataCell>
+                <DataCell label={copy("ui.usage")}><UsageText bucket={bucket} /></DataCell>
+                <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}><div className="ui-actions">
+                  <button className="ui-button" type="button" aria-label={`${translate("Open objects")} (${bucket.id})`}
+                    onClick={() => goHash(hashForObjects(bucket.id, ""))}>{translate("Open objects")}</button>
+                  <details className="ui-disclosure">
+                    <summary aria-label={`${copy("ui.actions")} ${bucket.id}`}>{copy("ui.actions")}</summary>
+                    <div className="ui-actions">
+                      <button className="ui-button ui-button-quiet" type="button" aria-label={fill(copy("ui.permissions.for"), { bucketId: bucket.id })}
+                        onClick={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "permissions" }))}>{copy("tab.permissions")}</button>
+                      <BucketRowSettings bucket={bucket} canManage={canManage} />
+                      {canManage ? <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: bucket.id })}
+                        onClick={() => { removeBucket.reset(); setDeleteId(bucket.id); }}>{copy("ui.delete.2")}</button> : null}
+                    </div>
+                  </details>
+                </div></DataCell>
               </tr>
             ))}</tbody>
           </table>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
 
@@ -75,8 +75,8 @@ test("shows the bucket id and string aliases without letting an alias hide the i
     }),
   );
   renderBuckets();
-  expect(await screen.findByText("bkt-1")).toBeTruthy();
-  expect(screen.getByText("bkt-2")).toBeTruthy();
+  expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("bkt-2", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
   expect(screen.getByText("west")).toBeTruthy();
@@ -117,12 +117,12 @@ test("loads the next page at the offset after the rows already shown", async () 
     }),
   );
   renderBuckets();
-  expect(await screen.findByText("first")).toBeTruthy();
+  expect(await screen.findByText("first", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
   expect(screen.getByText("More buckets are available.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-  expect(await screen.findByText("second")).toBeTruthy();
-  expect(screen.getByText("first")).toBeTruthy();
+  expect(await screen.findByText("second", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("first", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
   expect(screen.queryByText("More buckets are available.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
@@ -198,11 +198,11 @@ test("keeps a visible bucket id while a later fetch refreshes the list", async (
     }),
   );
   const client = renderBuckets();
-  expect(await screen.findByText("bkt-9")).toBeTruthy();
+  expect(await screen.findByText("bkt-9", { selector: "code" })).toBeTruthy();
   expect(screen.queryByText("Refreshing buckets")).toBeNull();
   const refresh = client.refetchQueries({ queryKey: ["buckets"] });
   expect(await screen.findByText("Refreshing buckets")).toBeTruthy();
-  expect(screen.getByText("bkt-9")).toBeTruthy();
+  expect(screen.getByText("bkt-9", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
   expect(screen.queryByLabelText("Loading buckets")).toBeNull();
   expect(screen.queryByText("Loading buckets")).toBeNull();
@@ -212,7 +212,7 @@ test("keeps a visible bucket id while a later fetch refreshes the list", async (
   await waitFor(() => {
     expect(screen.queryByText("Refreshing buckets")).toBeNull();
   });
-  expect(screen.getByText("bkt-9")).toBeTruthy();
+  expect(screen.getByText("bkt-9", { selector: "code" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Buckets" }).getAttribute("aria-busy")).toBe("false");
   expect(calls).toBe(2);
 });
@@ -250,7 +250,7 @@ test("shows the API code and requests the bucket list again from Retry", async (
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no buckets.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.queryByText("upstream_failed")).toBeNull();
   expect(screen.queryByText("Garage returned an error")).toBeNull();
@@ -272,7 +272,7 @@ test("keeps the loaded rows when the next page fails", async () => {
   renderBuckets();
   fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
   expect(await screen.findByText("page failed")).toBeTruthy();
-  expect(screen.getByText("first")).toBeTruthy();
+  expect(screen.getByText("first", { selector: "code" })).toBeTruthy();
 });
 
 test("explains an empty list and lets an admin create a bucket with only a global alias", async () => {
@@ -304,7 +304,7 @@ test("explains an empty list and lets an admin create a bucket with only a globa
   expect(screen.getByRole("button", { name: "Create bucket" })).toBeTruthy();
   fireEvent.change(screen.getByRole("textbox", { name: "Global alias" }), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bucket" }));
-  expect(await screen.findByText("bucket-new")).toBeTruthy();
+  expect(await screen.findByText("bucket-new", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByText("Bucket created")).toBeTruthy();
   expect((screen.getByRole("textbox", { name: "Global alias" }) as HTMLInputElement).value).toBe("");
@@ -361,7 +361,7 @@ test("refreshes after creating a bucket while the initial list response is pendi
   await act(async () => {
     releaseInitial(json({ items: [], hasMore: false }));
   });
-  expect(await screen.findByText("bucket-new")).toBeTruthy();
+  expect(await screen.findByText("bucket-new", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.queryByText("There are no buckets. Create the first bucket.")).toBeNull();
   expect(listCalls).toBe(2);
@@ -413,7 +413,7 @@ test("a viewer sees the empty list and does not call bucket write routes", async
     }),
   );
   renderBuckets(false);
-  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
   expect(screen.getByText("site")).toBeTruthy();
   expect(screen.queryByText("GK")).toBeNull();
@@ -470,7 +470,7 @@ test("cancels a bucket delete without a request, then confirms the delete", asyn
   expect(await screen.findByText("Bucket deleted")).toBeTruthy();
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
-  expect(screen.queryByText("bkt-1")).toBeNull();
+  expect(screen.queryByText("bkt-1", { selector: "code" })).toBeNull();
   expect(calls.find((call) => call.method === "DELETE")).toEqual({
     url: "/api/buckets/bkt-1",
     method: "DELETE",
@@ -496,7 +496,7 @@ test("shows the API message when deleting a bucket fails and keeps the bucket li
   fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
   expect(await screen.findByText("Bucket is not empty")).toBeTruthy();
   expect(screen.getByRole("dialog").textContent).toContain("bkt-1");
-  expect(screen.getByText("bkt-1")).toBeTruthy();
+  expect(screen.getByText("bkt-1", { selector: "code" })).toBeTruthy();
   expect(screen.queryByText("Bucket deleted")).toBeNull();
 });
 
@@ -600,7 +600,7 @@ test("adds and removes a local alias with its access key and keeps the draft whe
       fireEvent.click(summary);
     }
   }
-  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
   fireEvent.click(screen.getByRole("radio", { name: "Local for bkt-1" }));
   fireEvent.change(screen.getByLabelText("Local alias for bkt-1"), { target: { value: "site" } });
   fireEvent.change(screen.getByLabelText("Access key for bkt-1"), { target: { value: "GK1" } });
@@ -651,9 +651,13 @@ test("shows object and byte usage, and says when a quota is not set", async () =
   );
   renderBuckets();
   expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
-  expect(screen.getByText("1000 of 5000 bytes (1.00 KB of 5.00 KB)")).toBeTruthy();
+  expect(screen.getByText("1000 B", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("5000 B", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("1 KB")).toBeTruthy();
+  expect(screen.getByText("5 KB")).toBeTruthy();
   expect(screen.getByText("2 objects. Object quota is not set")).toBeTruthy();
-  expect(screen.getByText("3 bytes. Size quota is not set")).toBeTruthy();
+  expect(screen.getByText("3 B", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("Size quota is not set")).toBeTruthy();
 });
 
 test("sends an unchanged maxSize as the digit text from the list response", async () => {
@@ -685,7 +689,7 @@ test("sends an unchanged maxSize as the digit text from the list response", asyn
   }
   expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
   expect(
-    screen.getByText("1000 of 9007199254740993 bytes (1.00 KB of 9.007199254740993 PB)"),
+    screen.getByText("9007199254740993 B", { selector: "code" }),
   ).toBeTruthy();
   const size = screen.getByLabelText("Max size for bkt-1") as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
@@ -803,7 +807,7 @@ test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps t
   expect(window.onbeforeunload).toBe(uploadGuard);
   window.onbeforeunload = null;
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  fireEvent.click(screen.getByRole("button", { name: "Objects for bkt-1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open objects (bkt-1)" }));
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe("");
   expect(objects.value).toBe("21");
@@ -860,7 +864,7 @@ test("hides the quota editor when the row has no quotas object", async () => {
     }
   }
   expect(await screen.findByText("4 objects")).toBeTruthy();
-  expect(screen.getByText("9 bytes")).toBeTruthy();
+  expect(screen.getByText("9 B", { selector: "code" })).toBeTruthy();
   expect(screen.queryByText("Object quota is not set")).toBeNull();
   expect(screen.queryByText("Size quota is not set")).toBeNull();
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
@@ -891,7 +895,10 @@ test("a viewer sees quota usage and does not call PUT", async () => {
   );
   renderBuckets(false);
   expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
-  expect(screen.getByText("1000 of 5000 bytes (1.00 KB of 5.00 KB)")).toBeTruthy();
+  expect(screen.getByText("1000 B", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("5000 B", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("1 KB")).toBeTruthy();
+  expect(screen.getByText("5 KB")).toBeTruthy();
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
   expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
@@ -933,7 +940,7 @@ test("loads permissions for an encoded bucket id only after the row button is cl
     ),
   ).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
-  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByText("read yes")).toBeTruthy();
   expect(screen.getByText("owner no")).toBeTruthy();
@@ -983,13 +990,13 @@ test("an object address hides create and the table, and back returns to #buckets
   expect(await screen.findByRole("button", { name: "photos/2024/a.txt" })).toBeTruthy();
   expect(prefixes).toContain("photos/2024/");
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open objects (bkt-1)" })).toBeNull();
   expect(screen.queryByText("east")).toBeNull();
   expect(screen.queryByLabelText("Filter buckets")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
   expect(window.location.hash).toBe("#buckets");
   expect(await screen.findByRole("button", { name: "Create" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Open objects (bkt-1)" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
   expect(screen.getByLabelText("Filter buckets")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
@@ -1023,9 +1030,9 @@ test("filters loaded buckets from the query string and keeps that choice in the 
     }),
   );
   renderBuckets();
-  expect(await screen.findByText("amy")).toBeTruthy();
-  expect(screen.queryByText("zed")).toBeNull();
-  expect(screen.queryByText("nope")).toBeNull();
+  expect(await screen.findByText("amy", { selector: "code" })).toBeTruthy();
+  expect(screen.queryByText("zed", { selector: "code" })).toBeNull();
+  expect(screen.queryByText("nope", { selector: "code" })).toBeNull();
   expect((screen.getByLabelText("Filter buckets") as HTMLInputElement).value).toBe("EAST");
   expect(screen.getByText("Default order is Id.").textContent).toBe("Default order is Id.");
   expect(screen.getByText("Only loaded rows").textContent).toBe("Only loaded rows");
@@ -1037,9 +1044,9 @@ test("filters loaded buckets from the query string and keeps that choice in the 
   expect(calls).toBe(1);
 
   fireEvent.change(screen.getByLabelText("Filter buckets"), { target: { value: "" } });
-  expect(screen.getByText("zed")).toBeTruthy();
-  expect(screen.getByText("amy")).toBeTruthy();
-  expect(screen.getByText("nope")).toBeTruthy();
+  expect(screen.getByText("zed", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("amy", { selector: "code" })).toBeTruthy();
+  expect(screen.getByText("nope", { selector: "code" })).toBeTruthy();
   expect(bucketRowText()[0]).toContain("zed");
   expect(window.location.search).toBe("?keep=1");
   expect(window.location.hash).toBe("#kept");
@@ -1060,9 +1067,9 @@ test("filters loaded buckets from the query string and keeps that choice in the 
     window.history.pushState(null, "", "/?buckets=missing&keep=1#kept");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
-  expect(screen.queryByText("amy")).toBeNull();
-  expect(screen.queryByText("zed")).toBeNull();
-  expect(screen.queryByText("nope")).toBeNull();
+  expect(screen.queryByText("amy", { selector: "code" })).toBeNull();
+  expect(screen.queryByText("zed", { selector: "code" })).toBeNull();
+  expect(screen.queryByText("nope", { selector: "code" })).toBeNull();
   expect(screen.queryByText("There are no buckets.")).toBeNull();
   expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   expect((screen.getByLabelText("Filter buckets") as HTMLInputElement).value).toBe("missing");
@@ -1087,7 +1094,7 @@ test("sorts loaded buckets by created time and keeps the choice in the address",
     ),
   );
   renderBuckets();
-  expect(await screen.findByText("later-bucket")).toBeTruthy();
+  expect(await screen.findByText("later-bucket", { selector: "code" })).toBeTruthy();
   expect(bucketRowText()[0]).toContain("later-bucket");
   expect(bucketRowText()[1]).toContain("earlier-bucket");
   expect(bucketRowText()[2]).toContain("undated-bucket");
@@ -1380,7 +1387,7 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
   cleanup();
   calls.length = 0;
   renderBuckets(false);
-  expect(await screen.findByText("bkt-1")).toBeTruthy();
+  expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Incomplete uploads" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Clean up" })).toBeNull();
 });
@@ -1389,18 +1396,18 @@ test("keeps a long bucket identifier complete for accessible naming and inspecti
   const resourceId = "b".repeat(64);
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: resourceId, quotas: { maxSize: 5000, maxObjects: 12 } }], hasMore: false })));
   renderBuckets(true);
-  const link = await screen.findByRole("link", { name: resourceId });
-  expect(link.textContent).toBe(resourceId);
+  const link = await screen.findByRole("link", { name: `Bucket (${resourceId})` });
+  expect(link.textContent).toBe("Bucket");
   expect(link.getAttribute("title")).toBe(resourceId);
   expect(link.getAttribute("href")).toBe(`#bucket/${resourceId}/overview`);
   fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));
-  expect(screen.getByText(resourceId, { selector: "p" })).toBeTruthy();
+  expect(screen.getByText(resourceId, { selector: "code" })).toBeTruthy();
 });
 
  test("creation and row editing open on demand and keep collapsed drafts", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: "compact", quotas: { maxSize: 10, maxObjects: 20 } }], hasMore: false })));
   renderBuckets(true);
-  expect(await screen.findByText("compact")).toBeTruthy();
+  expect(await screen.findByText("compact", { selector: "code" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "Global alias" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("textbox", { name: "Global alias" })).toBeTruthy();
@@ -1417,7 +1424,7 @@ test("keeps a long bucket identifier complete for accessible naming and inspecti
   fireEvent.click(screen.getByLabelText("Edit compact"));
   const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
   const before = window.location.hash;
-  fireEvent.click(screen.getByRole("link", { name: "compact" }));
+  fireEvent.click(screen.getByRole("link", { name: "Bucket (compact)" }));
   expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe(before);
  });
@@ -1525,6 +1532,7 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/objects?")) return json({ prefix: "", entries: [], next: null });
+    if (url.endsWith("/objects/new.txt")) return json({ message: "Object not found", code: "not_found" }, 404);
     return json({ items: [{ id: "A" }, { id: "B" }], hasMore: false });
   }));
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -1541,4 +1549,22 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   expect(requests[0]?.aborted).toBe(true);
   expect(screen.queryByText("new.txt")).toBeNull();
   expect(requests[0]?.url).toBe("/api/buckets/A/objects/new.txt");
+});
+
+
+test("bucket settings show one named title and independent readable sections", async () => {
+  const id = "abcdef0123456789".repeat(4);
+  window.history.replaceState(null, "", `#bucket/${id}/settings`);
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id, globalAliases: ["Project archives"], objects: 2, bytes: 10, quotas: { maxSize: 100, maxObjects: 5 } }], hasMore: false })));
+  renderBuckets(true);
+  expect(await screen.findByRole("heading", { level: 2, name: "Project archives" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { level: 2, name: "Buckets" })).toBeNull();
+  for (const name of ["General", "Aliases", "Quotas", "CORS", "Lifecycle", "Incomplete uploads", "Danger zone"]) {
+    expect(screen.getByRole("region", { name })).toBeTruthy();
+  }
+  const quotas = within(screen.getByRole("region", { name: "Quotas" }));
+  expect(quotas.getByLabelText(`Max size for ${id}`).closest("label")?.textContent).toBe("Max size");
+  expect(quotas.getByRole("button", { name: `Save quotas for ${id}` }).textContent).toBe("Save quotas");
+  expect(screen.getByText(id, { selector: "code" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: `Delete ${id}` })).toBeTruthy();
 });

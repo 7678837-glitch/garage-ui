@@ -102,11 +102,11 @@ test("shows string names and yes or no, and ignores a key with no access key id"
   renderPermissions("bkt-1", true);
   expect(calls).toEqual([]);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
-  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
-  expect(screen.getByText("GK0")).toBeTruthy();
+  expect(screen.getByText("GK0", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("idle")).toBeTruthy();
-  expect(screen.getByText("GK3")).toBeTruthy();
+  expect(screen.getByText("GK3", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("owner yes")).toBeTruthy();
   expect(screen.getAllByText("owner no")).toHaveLength(2);
   expect(screen.getAllByText("read no")).toHaveLength(3);
@@ -220,11 +220,11 @@ test("keeps a visible access key while a later fetch refreshes the panel", async
   );
   const client = renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
-  expect(await screen.findByText("GK9")).toBeTruthy();
+  expect(await screen.findByText("GK9", { selector: "code" })).toBeTruthy();
   expect(screen.queryByText("Refreshing keys")).toBeNull();
   const refresh = client.refetchQueries({ queryKey: ["bucket-permissions", "bkt-1"] });
   expect(await screen.findByText("Refreshing keys")).toBeTruthy();
-  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(screen.getByText("GK9", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("kept")).toBeTruthy();
   expect(screen.queryByLabelText("Loading keys")).toBeNull();
   expect(screen.queryByText("Loading keys")).toBeNull();
@@ -246,7 +246,7 @@ test("keeps a visible access key while a later fetch refreshes the panel", async
   await waitFor(() => {
     expect(screen.queryByText("Refreshing keys")).toBeNull();
   });
-  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(screen.getByText("GK9", { selector: "code" })).toBeTruthy();
   expect(calls).toBe(2);
 });
 
@@ -283,7 +283,7 @@ test("shows the API code and requests that bucket again from Retry", async () =>
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("This bucket has no keys.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.queryByText("upstream_failed")).toBeNull();
   expect(screen.queryByText("Garage returned an error")).toBeNull();
@@ -372,7 +372,7 @@ test("grants the trimmed access key and reloads that bucket", async () => {
   );
   renderPermissions("a&b=c", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
-  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
   if (!screen.getByLabelText("Grant key").closest("details")?.open) {
     fireEvent.click(screen.getByLabelText("Grant key"));
@@ -382,7 +382,7 @@ test("grants the trimmed access key and reloads that bucket", async () => {
   fireEvent.click(screen.getByLabelText("Write"));
   fireEvent.click(screen.getByRole("button", { name: "Grant" }));
   expect(await screen.findByText("extra")).toBeTruthy();
-  expect(screen.getByText("GK9")).toBeTruthy();
+  expect(screen.getByText("GK9", { selector: "code" })).toBeTruthy();
   expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("");
   expect((screen.getByLabelText("Owner") as HTMLInputElement).checked).toBe(false);
   expect((screen.getByLabelText("Write") as HTMLInputElement).checked).toBe(false);
@@ -440,7 +440,7 @@ test("shows the API message when grant fails and keeps the entered values", asyn
   expect(await screen.findByText("bucket key denied")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.queryByText("GK9")).toBeNull();
+  expect(screen.queryByText("GK9", { selector: "code" })).toBeNull();
   expect((screen.getByLabelText("Access key") as HTMLInputElement).value).toBe("GK9");
   expect((screen.getByLabelText("Read") as HTMLInputElement).checked).toBe(true);
   expect((screen.getByLabelText("Owner") as HTMLInputElement).checked).toBe(false);
@@ -599,7 +599,7 @@ test("a viewer sees the keys and does not call POST or DELETE", async () => {
     ),
   ).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
-  expect(await screen.findByText("GK1")).toBeTruthy();
+  expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByText("owner yes")).toBeTruthy();
   expect(screen.getByText("read yes")).toBeTruthy();
@@ -676,7 +676,7 @@ test("shows Working while revoke is submitting and keeps the dialog when it fail
   renderPermissions("bkt-1", true);
   fireEvent.click(screen.getByRole("button", { name: "Permissions for bkt-1" }));
   const opener = (await screen.findByRole("button", { name: "Revoke GK1" })) as HTMLButtonElement;
-  expect(opener.textContent).toBe("Revoke GK1");
+  expect(opener.textContent).toBe("Revoke");
   fireEvent.click(opener);
   const dialog = screen.getByRole("dialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
@@ -686,7 +686,7 @@ test("shows Working while revoke is submitting and keeps the dialog when it fail
   expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
   const stillOpen = screen.getByRole("button", { name: "Revoke GK1" }) as HTMLButtonElement;
   expect(stillOpen.disabled).toBe(false);
-  expect(stillOpen.textContent).toBe("Revoke GK1");
+  expect(stillOpen.textContent).toBe("Revoke");
   expect(screen.getByText("photos")).toBeTruthy();
   release(json({ message: "Cannot revoke" }, 409));
   expect(await screen.findByText(/Cannot revoke/)).toBeTruthy();
