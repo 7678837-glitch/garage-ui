@@ -81,7 +81,6 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
     await openObjects(page, bucketId);
     const objects = page.locator("section[aria-label=\"Objects\"]");
     await bindKey(objects, keyId);
-    await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
 
     await openUpload(objects);
     await objects.getByLabel("Choose files").setInputFiles(clipPath);

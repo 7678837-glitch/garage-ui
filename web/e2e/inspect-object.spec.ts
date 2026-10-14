@@ -28,7 +28,6 @@ test("an administrator inspects one uploaded object", async ({ page }) => {
     bucketId = await filterGrantAndOpen(page, alias, keyId);
     const objects = page.locator("section[aria-label=\"Objects\"]");
     await bindKey(objects, keyId);
-    await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
     await openUpload(objects);
     await objects.getByLabel("Choose files").setInputFiles(join(work, objectKey));
     const upload = page.getByRole("region", { name: "Upload" });

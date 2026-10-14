@@ -37,9 +37,11 @@ export async function chooseTheme(page: Page, theme: "Light" | "Dark"): Promise<
 }
 
 export async function openUpload(scope: Locator): Promise<void> {
-  await scope.getByRole("button", { name: "Upload", exact: true }).click();
+  await scope.getByRole("button", { name: /^Upload(?: · \d+)?$/ }).click();
   await expect(scope.getByLabel("Choose files")).toBeFocused();
-  await expect(scope.locator("details > summary").filter({ hasText: /^Upload/ }).locator("..")).toHaveAttribute("open", "");
+  const controls = await scope.getByRole("button", { name: /^Upload(?: · \d+)?$/ }).getAttribute("aria-controls");
+  expect(controls).toBeTruthy();
+  await expect(scope.locator(`details[id="${controls}"]`)).toHaveAttribute("open", "");
 }
 
 export async function openAccount(page: Page): Promise<void> {
@@ -54,4 +56,11 @@ export async function assertAuthenticated(page: Page): Promise<void> {
   await openAccount(page);
   await expect(page.getByRole("button", { name: /^(Log out|退出)$/ })).toBeEnabled();
   await page.locator("details").filter({ has: page.getByRole("button", { name: /^(Log out|退出)$/, includeHidden: true }) }).locator("summary").click();
+}
+
+export async function closeUpload(scope: Locator): Promise<void> {
+  const summary = scope.locator("details > summary").filter({ hasText: /^Close upload/ });
+  await summary.click();
+  await expect(summary.locator("..")).not.toHaveAttribute("open", "");
+  await expect(scope.getByLabel("Choose files")).not.toBeVisible();
 }

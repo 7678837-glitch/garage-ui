@@ -650,14 +650,14 @@ test("shows object and byte usage, and says when a quota is not set", async () =
     ),
   );
   renderBuckets();
-  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
-  expect(screen.getByText("1000 B", { selector: "code" })).toBeTruthy();
-  expect(screen.getByText("5000 B", { selector: "code" })).toBeTruthy();
-  expect(screen.getByText("1 KB")).toBeTruthy();
-  expect(screen.getByText("5 KB")).toBeTruthy();
-  expect(screen.getByText("2 objects. Object quota is not set")).toBeTruthy();
-  expect(screen.getByText("3 B", { selector: "code" })).toBeTruthy();
-  expect(screen.getByText("Size quota is not set")).toBeTruthy();
+  expect(await screen.findByText("4 of 12 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("1000 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  expect(screen.getByText("5000 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  expect(screen.getByText("1 KB", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("5 KB", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("2 objects. Object quota is not set", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("3 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  expect(screen.getByText("Size quota is not set", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
 });
 
 test("sends an unchanged maxSize as the digit text from the list response", async () => {
@@ -687,9 +687,9 @@ test("sends an unchanged maxSize as the digit text from the list response", asyn
       fireEvent.click(summary);
     }
   }
-  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
+  expect(await screen.findByText("4 of 12 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
   expect(
-    screen.getByText("9007199254740993 B", { selector: "code" }),
+    screen.getByText("9007199254740993 B", { selector: ".ui-bucket-usage-desktop code" }),
   ).toBeTruthy();
   const size = screen.getByLabelText("Max size for bkt-1") as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
@@ -750,7 +750,7 @@ test("clears both quotas with null and keeps the entered values when save fails"
   expect(size.value).toBe("");
   expect(objects.value).toBe("");
   expect(bodies).toEqual(['{"maxSize":null,"maxObjects":null}']);
-  expect(screen.getByText("1 of 20 objects")).toBeTruthy();
+  expect(screen.getByText("1 of 20 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
   expect(screen.getByText("Save failed")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save quotas for bkt-1" })).toBeTruthy();
 });
@@ -863,8 +863,8 @@ test("hides the quota editor when the row has no quotas object", async () => {
       fireEvent.click(summary);
     }
   }
-  expect(await screen.findByText("4 objects")).toBeTruthy();
-  expect(screen.getByText("9 B", { selector: "code" })).toBeTruthy();
+  expect(await screen.findByText("4 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("9 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
   expect(screen.queryByText("Object quota is not set")).toBeNull();
   expect(screen.queryByText("Size quota is not set")).toBeNull();
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
@@ -894,11 +894,11 @@ test("a viewer sees quota usage and does not call PUT", async () => {
     }),
   );
   renderBuckets(false);
-  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
-  expect(screen.getByText("1000 B", { selector: "code" })).toBeTruthy();
-  expect(screen.getByText("5000 B", { selector: "code" })).toBeTruthy();
-  expect(screen.getByText("1 KB")).toBeTruthy();
-  expect(screen.getByText("5 KB")).toBeTruthy();
+  expect(await screen.findByText("4 of 12 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("1000 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  expect(screen.getByText("5000 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  expect(screen.getByText("1 KB", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("5 KB", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
   expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Create bucket" })).toBeNull();
@@ -1537,7 +1537,7 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   }));
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   renderBuckets(true);
-  fireEvent.click(await screen.findByText("Upload", { selector: "summary" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Upload", exact: true }));
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["body"], "new.txt")] } });
   await waitFor(() => expect(requests).toHaveLength(1));
   await changeBucketHash("#bucket/B/objects");

@@ -38,7 +38,6 @@ test("deletes a selection, deletes a folder, and downloads a ZIP", async ({ page
     const objects = page.locator("section[aria-label=\"Objects\"]");
     const upload = page.getByRole("region", { name: "Upload" });
     await bindKey(objects, keyId);
-    await objects.locator("summary").filter({ hasText: /^Upload$/ }).click();
     await openUpload(objects);
     await objects.getByLabel("Choose files").setInputFiles([
       join(work, "batch-a.txt"),

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { administrator } from "./accounts";
 import { evidenceDir, assertWidth } from "./layout";
-import { assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
+import { closeUpload, assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
 
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 const sections = ["Overview", "Buckets", "Keys", "Nodes and layout", "Workers", "Block errors", "Audit", "Admin tokens", "Users", "Settings"] as const;
@@ -202,7 +202,7 @@ for (const width of [1280, 360]) {
       await expect(objects.getByRole("button", { name: "preview.txt", exact: true })).toBeVisible();
       await expect(page.getByRole("region", { name: "Upload", exact: true }).getByText("Done", { exact: true })).toBeVisible();
       previewUploaded = true;
-      await objects.locator("details > summary", { hasText: /^Upload/ }).click();
+      await closeUpload(objects);
       await objects.getByRole("button", { name: "preview.txt", exact: true }).click();
       const preview = objects.getByRole("region", { name: "Object details", exact: true });
       await expect(preview).toContainText("Content type text/plain");
@@ -224,7 +224,7 @@ for (const width of [1280, 360]) {
         await objects.getByLabel("Choose files").setInputFiles(files);
         await expect(page.getByRole("region", { name: "Upload", exact: true }).getByRole("listitem").filter({ hasText: "row-23.txt" }).getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
         await expect(objects.locator("tbody tr")).toHaveCount(25);
-        await objects.locator("details > summary", { hasText: /^Upload/ }).click();
+        await closeUpload(objects);
         await objects.getByRole("checkbox", { name: "Select preview.txt", exact: true }).uncheck();
         await objects.getByRole("button", { name: "preview.txt", exact: true }).click();
         await expect(preview).toContainText("Content type text/plain");
@@ -236,6 +236,9 @@ for (const width of [1280, 360]) {
         await expect(inspection).toBeFocused();
         await expect(inspection).toContainText("preview.txt");
         await expect(inspection.getByText(/^encrypted (yes|no)$/)).toBeVisible();
+        await expect(inspection.getByText(`Size ${Buffer.byteLength("Readable preview below the object list.")}`, { exact: true })).toBeVisible();
+        await openDisclosure(inspection.locator("summary").filter({ hasText: "Exact timestamp" }));
+        await expect(inspection.locator("code")).toContainText("Z");
         await accessibility(page, "long-list-inspection");
         await assertWidth(page, "redesign-long-list-inspection", width);
         await objects.getByRole("checkbox", { name: "Select preview.txt", exact: true }).check();
@@ -258,16 +261,16 @@ for (const width of [1280, 360]) {
         await expect(objects.getByRole("button", { name: "Overwrite", exact: true })).toHaveCount(0);
         await objects.getByLabel("Choose folder").setInputFiles(folderDirectory);
         await expect(page.getByRole("region", { name: "Upload", exact: true }).getByRole("listitem").filter({ hasText: longKey }).getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
-        await objects.locator("details > summary").filter({ hasText: /^Upload/ }).click();
+        await closeUpload(objects);
         await objects.getByRole("button", { name: `${longPrefix}/`, exact: true }).click();
         const row = objects.locator("tbody tr").filter({ has: page.getByRole("button", { name: longKey, exact: true }) });
         await expect(row).toBeVisible();
         const nameControl = row.getByRole("button", { name: longKey, exact: true });
         const detailsControl = row.getByRole("button", { name: `Details (${longKey})`, exact: true });
-        const sizeCell = row.locator("td").filter({ has: page.locator("details > summary").filter({ hasText: "Exact bytes" }) });
-        const timeCell = row.locator("td").filter({ has: page.locator("time") });
+        const sizeCell = width === 1280 ? row.locator(".ui-objects-size") : row.locator("small:visible");
+        const timeCell = width === 1280 ? row.locator(".ui-objects-time") : row.locator(".ui-objects-summary");
         await expect(timeCell.locator("time")).toHaveAttribute("datetime", /Z$/);
-        await expect(timeCell).toContainText("UTC");
+        if (width === 1280) await expect(timeCell).toContainText("UTC");
         const metrics = {
           name: await nameControl.boundingBox(), size: await sizeCell.boundingBox(), time: await timeCell.boundingBox(),
           details: await detailsControl.boundingBox(), checkboxHitArea: await row.getByRole("checkbox").locator("..").boundingBox(),

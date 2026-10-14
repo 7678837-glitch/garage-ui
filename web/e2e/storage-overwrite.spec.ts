@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { administrator } from "./accounts";
-import { assertAuthenticated, openUpload } from "./interactions";
+import { closeUpload, assertAuthenticated, openUpload } from "./interactions";
 import { assertWidth, evidenceDir } from "./layout";
 
 test("confirms a hidden existing destination and refreshes an open preview after overwrite", async ({ page }) => {
@@ -54,7 +54,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await objects.getByLabel("Choose folder").setInputFiles(folder);
     await expect(upload.getByRole("listitem").filter({ hasText: `${prefix}/marker.txt` }).getByText("Done", { exact: true })).toBeVisible();
     await upload.getByRole("button", { name: "Clear finished", exact: true }).click();
-    await objects.locator("details > summary").filter({ hasText: /^Upload/ }).click();
+    await closeUpload(objects);
     await objects.getByRole("button", { name: `${prefix}/`, exact: true }).click();
     await expect(objects.getByRole("button", { name: fileName, exact: true })).toHaveCount(0);
     await openUpload(objects);
@@ -81,7 +81,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await expect(upload.getByRole("listitem").filter({ hasText: fileName }).getByText("Done", { exact: true })).toBeVisible();
     await expect(preview.locator("pre")).toHaveText(previewReplacement, { timeout: 20_000 });
     expect(writes).toHaveLength(3);
-    await objects.locator("details > summary").filter({ hasText: /^Upload/ }).click();
+    await closeUpload(objects);
     await objects.getByRole("button", { name: fileName, exact: true }).click();
     await expect(preview).toBeFocused();
     await expect(preview).toBeInViewport();
