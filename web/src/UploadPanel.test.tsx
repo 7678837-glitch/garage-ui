@@ -63,6 +63,7 @@ beforeEach(() => {
   FakeRequest.sent = [];
   document.cookie = "garage_csrf=csrf-token";
   vi.stubGlobal("XMLHttpRequest", FakeRequest);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "Object not found" }), { status: 404 })));
 });
 
 afterEach(() => {
@@ -102,6 +103,7 @@ function render(ui: ReactElement) {
 test("keeps a fourth file queued until an upload slot frees", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
   expect(FakeRequest.sent.map((request) => request.url)).toEqual([
     "/api/buckets/bkt-1/objects/a.txt",
     "/api/buckets/bkt-1/objects/b.txt",
@@ -132,6 +134,7 @@ test("keeps a fourth file queued until an upload slot frees", async () => {
 test("cancel stops an upload and retry sends it again", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
   fireEvent.click(within(row("d.txt")).getByRole("button", { name: "Cancel" }));
   expect(row("d.txt").textContent).toContain("Cancelled");
   expect(FakeRequest.sent).toHaveLength(3);
@@ -144,6 +147,7 @@ test("cancel stops an upload and retry sends it again", async () => {
   expect(row("a.txt").textContent).toContain("Cancelled");
   expect(row("a.txt").textContent).not.toContain("Done");
   fireEvent.click(within(row("a.txt")).getByRole("button", { name: "Retry" }));
+  await act(async () => {});
   expect(FakeRequest.sent[3]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
   expect(row("a.txt").textContent).toContain("Uploading");
   await act(async () => {
@@ -151,13 +155,15 @@ test("cancel stops an upload and retry sends it again", async () => {
   });
   expect(row("b.txt").textContent).toContain("Failed");
   fireEvent.click(within(row("b.txt")).getByRole("button", { name: "Retry" }));
+  await act(async () => {});
   expect(FakeRequest.sent[4]?.url).toBe("/api/buckets/bkt-1/objects/b.txt");
   expect(row("b.txt").textContent).toContain("Uploading");
 });
 
-test("skip does not PUT", () => {
+test("skip does not PUT", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={["keep.txt"]} />);
   choose(["keep.txt"]);
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(0);
   expect(row("keep.txt").textContent).toContain("Queued");
   expect(window.onbeforeunload).not.toBeNull();
@@ -167,22 +173,25 @@ test("skip does not PUT", () => {
   expect(window.onbeforeunload).toBeNull();
 });
 
-test("skip lets the other file with that name upload", () => {
+test("skip lets the other file with that name upload", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["same.txt", "same.txt"]);
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(0);
   fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0]);
   expect(screen.getAllByText("same.txt")).toHaveLength(1);
+  await act(async () => {});
   expect(FakeRequest.sent.map((request) => request.url)).toEqual([
     "/api/buckets/bkt-1/objects/same.txt",
   ]);
 });
 
-test("overwrite sends the file bytes for that key", () => {
+test("overwrite sends the file bytes for that key", async () => {
   render(<UploadPanel bucketId="bkt 1" existingKeys={["pre/a b!.txt"]} />);
   const input = screen.getByLabelText("Choose files");
   const file = new File(["abc"], "pre/a b!.txt", { type: "text/plain" });
   fireEvent.change(input, { target: { files: [file] } });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
   const sent = FakeRequest.sent[0];
@@ -194,19 +203,21 @@ test("overwrite sends the file bytes for that key", () => {
   expect(sent?.body).toBe(file);
 });
 
-test("uses application/octet-stream when the file has no type", () => {
+test("uses application/octet-stream when the file has no type", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={["raw.bin"]} />);
   const input = screen.getByLabelText("Choose files");
   const file = new File(["xyz"], "raw.bin", { type: "" });
   fireEvent.change(input, { target: { files: [file] } });
+  await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
   expect(FakeRequest.sent[0]?.headers.get("content-type")).toBe("application/octet-stream");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
-test("overwrite sends one copy and overwrite all sends the rest", () => {
+test("overwrite sends one copy and overwrite all sends the rest", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["same.txt", "same.txt"]);
+  await act(async () => {});
   fireEvent.click(screen.getAllByRole("button", { name: "Overwrite" })[0]);
   expect(FakeRequest.sent).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Skip" })).toHaveLength(1);
@@ -216,12 +227,13 @@ test("overwrite sends one copy and overwrite all sends the rest", () => {
   expect(screen.queryByRole("button", { name: "Overwrite" })).toBeNull();
 });
 
-test("hides the percentage when the length is unknown", () => {
+test("hides the percentage when the length is unknown", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(1_000));
   try {
     render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
     choose(["a.txt"]);
+  await act(async () => {});
     act(() => {
       vi.setSystemTime(new Date(2_000));
       FakeRequest.sent[0]?.emitProgress(1, 0, false);
@@ -234,12 +246,13 @@ test("hides the percentage when the length is unknown", () => {
   }
 });
 
-test("shows the percent and the byte rate after loaded progress", () => {
+test("shows the percent and the byte rate after loaded progress", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(1_000));
   try {
     render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
     choose(["a.txt"]);
+  await act(async () => {});
     act(() => {
       FakeRequest.sent[0]?.emitProgress(12, 100);
     });
@@ -259,20 +272,24 @@ test("shows the percent and the byte rate after loaded progress", () => {
 test("clear finished removes done, failed, and cancelled rows", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["done.txt"]);
+  await act(async () => {});
   await act(async () => {
     FakeRequest.sent[0]?.succeed();
   });
   expect(row("done.txt").textContent).toContain("Done");
   expect(window.onbeforeunload).toBeNull();
   choose(["bad.txt"]);
+  await act(async () => {});
   await act(async () => {
     FakeRequest.sent[1]?.fail();
   });
   expect(row("bad.txt").textContent).toContain("Failed");
   choose(["stop.txt"]);
+  await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(row("stop.txt").textContent).toContain("Cancelled");
   choose(["wait.txt"]);
+  await act(async () => {});
   expect(row("wait.txt").textContent).toContain("Uploading");
   fireEvent.click(screen.getByRole("button", { name: "Clear finished" }));
   expect(screen.queryByText("done.txt")).toBeNull();
@@ -286,11 +303,12 @@ test("refetches bucket objects after a successful upload", async () => {
   const client = render(<UploadPanel bucketId="bkt-9" existingKeys={[]} />);
   const invalidate = vi.spyOn(client, "invalidateQueries");
   choose(["done.txt"]);
+  await act(async () => {});
   await act(async () => {
     FakeRequest.sent[0]?.succeed();
   });
   expect(row("done.txt").textContent).toContain("Done");
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(invalidate).toHaveBeenCalledTimes(5);
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["bucket-objects", "bkt-9"] });
 });
 
@@ -298,6 +316,7 @@ test("does not refetch bucket objects after a failed upload", async () => {
   const client = render(<UploadPanel bucketId="bkt-9" existingKeys={[]} />);
   const invalidate = vi.spyOn(client, "invalidateQueries");
   choose(["bad.txt"]);
+  await act(async () => {});
   await act(async () => {
     FakeRequest.sent[0]?.fail();
   });
@@ -311,20 +330,22 @@ function withRelativePath(name: string, relativePath: string) {
   return file;
 }
 
-test("uploads a chosen folder file at its relative path", () => {
+test("uploads a chosen folder file at its relative path", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = withRelativePath("a.txt", "docs/a.txt");
   fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("docs/a.txt").textContent).toContain("Uploading");
 });
 
-test("asks before uploading a folder path that already exists", () => {
+test("asks before uploading a folder path that already exists", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={["docs/a.txt"]} />);
   const file = withRelativePath("a.txt", "docs/a.txt");
   fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(0);
   expect(row("docs/a.txt").textContent).toContain("Queued");
   fireEvent.click(within(row("docs/a.txt")).getByRole("button", { name: "Overwrite" }));
@@ -332,26 +353,28 @@ test("asks before uploading a folder path that already exists", () => {
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
-test("uploads a folder file at its name when the relative path is empty", () => {
+test("uploads a folder file at its name when the relative path is empty", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = withRelativePath("a.txt", "");
   fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
-test("uploads a chosen file at its name when the relative path is empty", () => {
+test("uploads a chosen file at its name when the relative path is empty", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = withRelativePath("a.txt", "");
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("a.txt").textContent).toContain("Uploading");
 });
 
-test("keeps directory selection on the folder input only", () => {
+test("keeps directory selection on the folder input only", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const files = screen.getByLabelText("Choose files");
   const folder = screen.getByLabelText("Choose folder");
@@ -367,23 +390,25 @@ test("keeps directory selection on the folder input only", () => {
   expect(folder.classList.contains("max-w-full")).toBe(true);
 });
 
-test("a dropped file keeps its file name when a relative path is set", () => {
+test("a dropped file keeps its file name when a relative path is set", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = withRelativePath("a.txt", "docs/a.txt");
   fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
     dataTransfer: { files: [file] },
   });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
-test("accepts a dropped file", () => {
+test("accepts a dropped file", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = new File(["z"], "drop.txt", { type: "text/plain" });
   fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
     dataTransfer: { files: [file] },
   });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
@@ -421,7 +446,7 @@ function dropEntries(entries: DropEntry[], files: File[] = []) {
   });
 }
 
-test("a dropped file item keeps its file name", () => {
+test("a dropped file item keeps its file name", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = new File(["z"], "plain.txt", { type: "text/plain" });
   dropEntries(
@@ -437,12 +462,13 @@ test("a dropped file item keeps its file name", () => {
     ],
     [file],
   );
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/plain.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
-test("a drop without webkitGetAsEntry keeps the file name", () => {
+test("a drop without webkitGetAsEntry keeps the file name", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   const file = new File(["z"], "drop.txt", { type: "text/plain" });
   fireEvent.drop(screen.getByRole("region", { name: "Upload" }), {
@@ -451,6 +477,7 @@ test("a drop without webkitGetAsEntry keeps the file name", () => {
       items: [{ kind: "file" }],
     },
   });
+  await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
@@ -528,6 +555,7 @@ test("uploads a nested dropped directory under its relative path", async () => {
 test("preserves active uploads on stay and cancels queued work on accepted navigation", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   expect(releaseHash("#departed")).toBe(false);
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unfinished uploads will be cancelled and unsaved changes will be lost.");
@@ -540,10 +568,11 @@ test("preserves active uploads on stay and cancels queued work on accepted navig
   expect(FakeRequest.sent).toHaveLength(3);
   expect(row("d.txt").textContent).toContain("Cancelled");
 });
-test("rejects browser hash departure before page listeners", () => {
+test("rejects browser hash departure before page listeners", async () => {
   window.history.replaceState(null, "", "/#objects");
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt"]);
+  await act(async () => {});
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const arrival = vi.fn();
   window.addEventListener("hashchange", arrival);
@@ -561,6 +590,7 @@ test("rejects browser hash departure before page listeners", () => {
 test("unmount aborts requests without starting queued files", async () => {
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
   cleanup();
   expect(FakeRequest.sent.every((request) => request.aborted)).toBe(true);
   await act(async () => { FakeRequest.sent[0]?.succeed(); });
@@ -570,6 +600,7 @@ test("unmount aborts requests without starting queued files", async () => {
 test("successful upload refreshes rendered search results while collapsed jobs remain mounted", async () => {
   let searches = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("/objects/")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
     if (String(input).includes("/search?")) {
       searches += 1;
       return new Response(JSON.stringify({ matches: searches > 1 ? [{ key: "new.txt", size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" }] : [], truncated: false }), { status: 200 });
@@ -586,6 +617,7 @@ test("successful upload refreshes rendered search results while collapsed jobs r
   expect(disclosure.open).toBe(false);
   fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
   choose(["new.txt"]);
+  await act(async () => {});
   const summary = disclosure.querySelector("summary");
   if (!summary) throw new Error("missing upload summary");
   fireEvent.click(summary);
@@ -601,6 +633,7 @@ test("accepted browser departure aborts uploads and cannot start queued work", a
   window.history.replaceState(null, "", "/#objects");
   render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
   vi.spyOn(window, "confirm").mockReturnValue(true);
   act(() => {
     window.history.replaceState(null, "", "/#accepted-departure");
@@ -611,7 +644,7 @@ test("accepted browser departure aborts uploads and cannot start queued work", a
   expect(FakeRequest.sent).toHaveLength(3);
   window.history.replaceState(null, "", "/");
 });
-test("form-only navigation keeps the original unsaved-changes prompt", () => {
+test("form-only navigation keeps the original unsaved-changes prompt", async () => {
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   setFormDirty("test-form", true);
   try {
@@ -642,6 +675,7 @@ test("staying during prefix navigation retains page, selection and active upload
   const entry = (key: string) => ({ kind: "object", key, size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), "http://ui.local");
+    if (url.pathname.includes("/objects/")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
     const prefix = url.searchParams.get("prefix") ?? "";
     const entries = prefix === "folder/" ? [entry("folder/destination.txt")] : url.searchParams.has("next") ? [entry("second.txt"), { kind: "prefix", prefix: "folder/" }] : [entry("first.txt")];
     return new Response(JSON.stringify({ prefix, entries, next: prefix === "" && !url.searchParams.has("next") ? "page-2" : null }), { status: 200 });
@@ -653,6 +687,7 @@ test("staying during prefix navigation retains page, selection and active upload
   fireEvent.click(screen.getByRole("checkbox", { name: "Select second.txt" }));
   fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
   choose(["active.txt"]);
+  await act(async () => {});
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: "folder/" }));
   expect(confirm).toHaveBeenCalledOnce();
@@ -690,4 +725,91 @@ test("staying during breadcrumb navigation retains search and selection during a
   expect(window.location.search).toContain("objects=search");
   expect(screen.getByText("Queued · 1")).toBeTruthy();
   await act(async () => { deliver?.([]); });
+});
+
+
+test("checks an unlisted destination and requires overwrite before sending bytes", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ key: "z?.txt" }), { status: 200 }));
+  vi.stubGlobal("fetch", fetch);
+  render(<UploadPanel bucketId="bkt 1" existingKeys={[]} />);
+  choose(["z?.txt"]);
+  await act(async () => {});
+  await waitFor(() => expect(within(row("z?.txt")).getByRole("button", { name: "Overwrite" })).toBeTruthy());
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(fetch).toHaveBeenCalledWith("/api/buckets/bkt%201/objects/z%3F.txt", expect.objectContaining({ method: "GET", credentials: "include", signal: expect.any(AbortSignal) }));
+  fireEvent.click(within(row("z?.txt")).getByRole("button", { name: "Overwrite" }));
+  expect(FakeRequest.sent).toHaveLength(1);
+});
+
+test.each([401, 403, 500])("blocks upload after metadata status %s and retries the check", async (status) => {
+  let retry = false;
+  const fetch = vi.fn(async () => new Response(JSON.stringify(retry ? { code: "not_found", message: "Object missing" } : { code: "unavailable", message: "Cannot check destination" }), { status: retry ? 404 : status }));
+  vi.stubGlobal("fetch", fetch);
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt"]);
+  await act(async () => {});
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Cannot check destination"));
+  expect(FakeRequest.sent).toHaveLength(0);
+  retry = true;
+  fireEvent.click(within(row("a.txt")).getByRole("button", { name: "Retry" }));
+  await act(async () => {});
+  await waitFor(() => expect(FakeRequest.sent).toHaveLength(1));
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+test("bounds pending destination checks and ignores a cancelled check result", async () => {
+  const pending: ((response: Response) => void)[] = [];
+  const fetch = vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve)));
+  vi.stubGlobal("fetch", fetch);
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(FakeRequest.sent).toHaveLength(0);
+  fireEvent.click(within(row("a.txt")).getByRole("button", { name: "Cancel" }));
+  expect(fetch).toHaveBeenCalledTimes(4);
+  await act(async () => pending[0]?.(new Response(JSON.stringify({ code: "not_found" }), { status: 404 })));
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(row("a.txt").textContent).toContain("Cancelled");
+});
+
+test("successful overwrite invalidates only that object's metadata, text and inspection", async () => {
+  const client = render(<UploadPanel bucketId="bkt-1" existingKeys={["a.txt"]} />);
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  choose(["a.txt"]);
+  await act(async () => {});
+  fireEvent.click(within(row("a.txt")).getByRole("button", { name: "Overwrite" }));
+  await act(async () => FakeRequest.sent[0]?.succeed());
+  for (const family of ["bucket-object", "bucket-object-text", "bucket-object-inspect"]) {
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [family, "bkt-1", "a.txt"], exact: true });
+  }
+});
+
+
+test("network failure blocks upload instead of authorizing absence", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Network unavailable"); }));
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt"]);
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Network unavailable");
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(within(row("a.txt")).getByRole("button", { name: "Retry" })).toBeTruthy();
+});
+
+test.each(["unmount", "bucket change"])("%s aborts pending checks and ignores their late result", async (departure) => {
+  let deliver: (response: Response) => void = () => {};
+  let signal: AbortSignal | undefined;
+  vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal ?? undefined;
+    return new Promise<Response>((resolve) => { deliver = resolve; });
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = (bucketId: string) => <QueryClientProvider client={client}><UploadPanel bucketId={bucketId} existingKeys={[]} /></QueryClientProvider>;
+  const mounted = renderTree(tree("a"));
+  choose(["a.txt"]);
+  if (departure === "unmount") mounted.unmount();
+  else mounted.rerender(tree("b"));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => deliver(new Response(JSON.stringify({ code: "not_found" }), { status: 404 })));
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(screen.queryByText("a.txt")).toBeNull();
 });

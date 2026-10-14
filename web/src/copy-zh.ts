@@ -518,6 +518,7 @@ export const zh = {
   "ui.queued": "排队中",
   "ui.uploading": "正在上传",
   "ui.done": "完成",
+  "ui.checking.destination": "正在检查目标对象",
   "ui.failed": "失败",
   "ui.cancelled": "已取消",
 } as const satisfies Record<CopyKey, string>;

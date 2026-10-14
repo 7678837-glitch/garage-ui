@@ -273,6 +273,16 @@ function parseBatchDelete(value: unknown): DeleteFailure[] {
   });
 }
 
+function parsePrefixDelete(value: unknown): DeleteFailure[] {
+  if (!isRecord(value) || typeof value.deleted !== "number" || !Number.isSafeInteger(value.deleted) || value.deleted < 0 || !Array.isArray(value.errors)) {
+    throw new Error(unavailableMessage());
+  }
+  return value.errors.map((item) => {
+    if (!isRecord(item)) throw new Error(unavailableMessage());
+    return { key: requiredString(item, "key"), message: requiredString(item, "message") };
+  });
+}
+
 async function readJson(path: string): Promise<unknown> {
   try {
     return await api<unknown>(path);
@@ -803,6 +813,26 @@ export function Objects({
     queryFn: () => readJson(inspectPath(bucketId, inspected ?? "")).then(parseInspect),
     enabled: inspected !== null && !listBusy,
   });
+  function clearDeleted(matches: (key: string) => boolean) {
+    setBrowse((current) => ({ ...current, selected: current.selected !== null && matches(current.selected) ? null : current.selected,
+      picked: current.picked.filter((key) => !matches(key)), anchor: current.anchor !== null && matches(current.anchor) ? null : current.anchor }));
+    setInspectKey((current) => current !== null && matches(current) ? null : current);
+    setFeedback((current) => current !== null && matches(current.key) ? null : current);
+    setShareLink((current) => current !== null && matches(current.key) ? null : current);
+    setZipLink((current) => current !== null && current.keys.some(matches) ? null : current);
+    setCopyNote(null);
+  }
+
+  async function refreshWritten(matches: (key: string) => boolean) {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
+      client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
+      client.invalidateQueries({ predicate: ({ queryKey }) =>
+        ["bucket-object", "bucket-object-text", "bucket-object-inspect"].includes(String(queryKey[0])) && queryKey[1] === bucketId && typeof queryKey[2] === "string" && matches(queryKey[2]),
+      }),
+    ]);
+  }
+
   const removeObject = useMutation({
     mutationFn: async (key: string) => {
       await api(
@@ -810,30 +840,27 @@ export function Objects({
         { method: "DELETE" },
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, key) => {
       setPendingDelete(null);
-      setCopyNote(null);
-      setBrowse((current) => ({ ...current, picked: [], anchor: null }));
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
-        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
-      ]);
+      clearDeleted((item) => item === key);
+      await refreshWritten((item) => item === key);
     },
   });
   const removePrefix = useMutation({
     mutationFn: async (prefix: string) => {
-      await api(
+      const body = await api<unknown>(
         `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeObjectKey(prefix)}?recursive=true`,
         { method: "DELETE" },
       );
+      let failed: DeleteFailure[];
+      try { failed = parsePrefixDelete(body); }
+      catch (error) { await refreshWritten((key) => key.startsWith(prefix)); throw error; }
+      const remaining = new Set(failed.map((item) => item.key));
+      clearDeleted((key) => key.startsWith(prefix) && !remaining.has(key));
+      await refreshWritten((key) => key.startsWith(prefix));
+      if (failed.length > 0) throw new Error(failed.map((item) => `${item.key}: ${item.message}`).join(" "));
     },
-    onSuccess: async () => {
-      setPendingDelete(null);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
-        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
-      ]);
-    },
+    onSuccess: () => { setPendingDelete(null); },
   });
   const removeMany = useMutation({
     mutationFn: async (keys: readonly string[]) => {
@@ -842,20 +869,13 @@ export function Objects({
         { method: "POST", body: JSON.stringify({ keys }) },
       );
       const failed = parseBatchDelete(body);
-      // A batch may delete some keys even when another key fails.
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
-        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
-      ]);
-      if (failed.length > 0) {
-        throw new Error(failed.map((item) => `${item.key}: ${item.message}`).join(" "));
-      }
+      const remaining = new Set(failed.map((item) => item.key));
+      const deleted = new Set(keys.filter((key) => !remaining.has(key)));
+      clearDeleted((key) => deleted.has(key));
+      await refreshWritten((key) => keys.includes(key));
+      if (failed.length > 0) throw new Error(failed.map((item) => `${item.key}: ${item.message}`).join(" "));
     },
-    onSuccess: async () => {
-      setPendingDelete(null);
-      setCopyNote(null);
-      setBrowse((current) => ({ ...current, picked: [], anchor: null }));
-    },
+    onSuccess: () => { setPendingDelete(null); },
   });
   const archiveZip = useMutation({
     mutationFn: async (keys: readonly string[]) => {
@@ -1008,6 +1028,7 @@ export function Objects({
       picked: [],
       anchor: null,
     }));
+    writeObjectQuery("", browse.sort);
     assignHash(destination);
   }
 
@@ -1092,17 +1113,21 @@ export function Objects({
         onSubmit={(event) => {
           event.preventDefault();
           const q = draft.trim();
-          if (q.length < 2) {
+          if (q.length === 1) {
             return;
           }
           setCursors([null]);
           setPageIndex(0);
           setBrowse((current) => ({
             ...current,
-            search: q,
+            search: q === "" ? null : q,
             next: null,
             selected: null,
+            picked: [],
+            anchor: null,
           }));
+          setInspectKey(null);
+          setFeedback(null);
           writeObjectQuery(q, browse.sort);
         }}
       >

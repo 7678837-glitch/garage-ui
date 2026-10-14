@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { setFormDirty } from "./unsaved";
-import { putObject } from "./api/client";
+import { ApiError, api, putObject } from "./api/client";
+import { encodeObjectKey } from "./App";
 import { useI18n, copy, translate } from "./i18n";
 
 // React 18 input types omit webkitdirectory. Directory selection only checks that the attribute is present.
@@ -13,7 +14,7 @@ declare module "react" {
 
 const IN_FLIGHT_LIMIT = 3;
 
-type Verdict = "pending" | "overwrite";
+type Verdict = "pending" | "absent" | "exists" | "overwrite";
 
 type Row = {
   id: number;
@@ -22,15 +23,17 @@ type Row = {
   verdict: Verdict;
   phase:
     | { kind: "queued" }
+    | { kind: "checking" }
     | { kind: "uploading"; percent: number | null; rate: number | null; startedAt: number }
     | { kind: "done" }
-    | { kind: "failed" }
+    | { kind: "failed"; message?: string }
     | { kind: "cancelled" };
 };
 
 const STATUS_LABEL = {
   queued: "Queued",
   uploading: "Uploading",
+  checking: "Checking destination",
   done: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -157,7 +160,7 @@ function needsPrompt(row: Row, rows: readonly Row[], keys: ReadonlySet<string>):
   if (row.verdict === "overwrite") {
     return false;
   }
-  return keys.has(row.name) || sharesName(rows, row.name);
+  return row.verdict === "exists" || keys.has(row.name) || sharesName(rows, row.name);
 }
 
 function canStart(row: Row, rows: readonly Row[], keys: ReadonlySet<string>): boolean {
@@ -200,6 +203,7 @@ export function UploadPanel({
   const abortRef = useRef(new Map<number, () => void>());
   const nextIdRef = useRef(1);
   const bucketRef = useRef(bucketId);
+  const mountedBucket = useRef(bucketId);
   const existingRef = useRef(existingKeys);
   bucketRef.current = bucketId;
   existingRef.current = existingKeys;
@@ -214,7 +218,7 @@ export function UploadPanel({
   function cancelAll() {
     dropGeneration.current += 1;
     const next = rowsRef.current.map((row): Row =>
-      row.phase.kind === "uploading" || row.phase.kind === "queued"
+      row.phase.kind === "uploading" || row.phase.kind === "checking" || row.phase.kind === "queued"
         ? { ...row, phase: { kind: "cancelled" } }
         : row,
     );
@@ -230,10 +234,10 @@ export function UploadPanel({
   }
 
   function pump() {
-    if (!mounted.current) return;
+    if (!mounted.current || mountedBucket.current !== bucketRef.current) return;
     const current = rowsRef.current;
     const keys = new Set(existingRef.current);
-    let slots = IN_FLIGHT_LIMIT - current.filter((row) => row.phase.kind === "uploading").length;
+    let slots = IN_FLIGHT_LIMIT - current.filter((row) => row.phase.kind === "uploading" || row.phase.kind === "checking").length;
     const starting: Row[] = [];
     for (const row of current) {
       if (slots <= 0) {
@@ -251,13 +255,35 @@ export function UploadPanel({
     commit(
       current.map((row) =>
         ids.has(row.id)
-          ? { ...row, phase: { kind: "uploading", percent: 0, rate: null, startedAt: Date.now() } }
+          ? { ...row, phase: row.verdict === "pending" ? { kind: "checking" } : { kind: "uploading", percent: 0, rate: null, startedAt: Date.now() } }
           : row,
       ),
     );
     for (const row of starting) {
+      const targetBucket = bucketRef.current;
+      if (row.verdict === "pending") {
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        abortRef.current.set(row.id, abort);
+        void api<unknown>(`/api/buckets/${encodeURIComponent(targetBucket)}/objects/${encodeObjectKey(row.name)}`, { signal: controller.signal }).then(
+          () => completeCheck("exists"),
+          (error: unknown) => {
+            if (error instanceof ApiError && error.code === "not_found") completeCheck("absent");
+            else if (!isAbort(error)) completeCheck(null, error instanceof Error ? error.message : copy("ui.failed"));
+          },
+        );
+        function completeCheck(verdict: "exists" | "absent" | null, message?: string) {
+          if (!mounted.current || bucketRef.current !== targetBucket || abortRef.current.get(row.id) !== abort) return;
+          abortRef.current.delete(row.id);
+          commit(rowsRef.current.map((item) => item.id !== row.id || item.phase.kind !== "checking" ? item : {
+            ...item, verdict: verdict ?? "pending", phase: verdict === null ? { kind: "failed", message } : { kind: "queued" },
+          }));
+          pump();
+        }
+        continue;
+      }
       const handle = putObject({
-        bucketId: bucketRef.current,
+        bucketId: targetBucket,
         key: row.name,
         body: row.file,
         contentType: row.file.type === "" ? "application/octet-stream" : row.file.type,
@@ -282,17 +308,18 @@ export function UploadPanel({
       });
       abortRef.current.set(row.id, handle.abort);
       void handle.promise.then(
-        () => finish(row.id, "done"),
+        () => finish(row.id, "done", targetBucket),
         (error: unknown) => {
           if (!isAbort(error)) {
-            finish(row.id, "failed");
+            finish(row.id, "failed", targetBucket);
           }
         },
       );
     }
   }
 
-  function finish(id: number, kind: "done" | "failed") {
+  function finish(id: number, kind: "done" | "failed", targetBucket: string) {
+    if (!mounted.current || bucketRef.current !== targetBucket) return;
     abortRef.current.delete(id);
     const row = rowsRef.current.find((item) => item.id === id);
     if (!row || row.phase.kind !== "uploading") {
@@ -304,8 +331,11 @@ export function UploadPanel({
       ),
     );
     if (kind === "done") {
-      void queryClient.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
-      void queryClient.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] });
+      void queryClient.invalidateQueries({ queryKey: ["bucket-objects", targetBucket] });
+      void queryClient.invalidateQueries({ queryKey: ["bucket-object-search", targetBucket] });
+      for (const family of ["bucket-object", "bucket-object-text", "bucket-object-inspect"]) {
+        void queryClient.invalidateQueries({ queryKey: [family, targetBucket, row.name], exact: true });
+      }
     }
     pump();
   }
@@ -332,7 +362,7 @@ export function UploadPanel({
 
   function cancel(id: number) {
     const row = rowsRef.current.find((item) => item.id === id);
-    if (!row || (row.phase.kind !== "queued" && row.phase.kind !== "uploading")) {
+    if (!row || (row.phase.kind !== "queued" && row.phase.kind !== "uploading" && row.phase.kind !== "checking")) {
       return;
     }
     abortRef.current.get(id)?.();
@@ -353,7 +383,7 @@ export function UploadPanel({
     abortRef.current.delete(id);
     commit(
       rowsRef.current.map((item) =>
-        item.id === id ? { ...item, phase: { kind: "queued" } } : item,
+        item.id === id ? { ...item, verdict: item.verdict === "overwrite" ? "overwrite" : "pending", phase: { kind: "queued" } } : item,
       ),
     );
     pump();
@@ -381,7 +411,7 @@ export function UploadPanel({
   function clearFinished() {
     commit(
       rowsRef.current.filter(
-        (item) => item.phase.kind === "queued" || item.phase.kind === "uploading",
+        (item) => item.phase.kind === "queued" || item.phase.kind === "uploading" || item.phase.kind === "checking",
       ),
     );
   }
@@ -390,6 +420,11 @@ export function UploadPanel({
   pumpRef.current = pump;
 
   useEffect(() => {
+    if (mountedBucket.current !== bucketId) {
+      cancelAllRef.current();
+      mountedBucket.current = bucketId;
+      commit([]);
+    }
     pumpRef.current();
   }, [bucketId, existingKeys]);
 
@@ -404,7 +439,7 @@ export function UploadPanel({
   }, []);
 
   useEffect(() => {
-    const busy = pendingDrops > 0 || rows.some((row) => row.phase.kind === "queued" || row.phase.kind === "uploading");
+    const busy = pendingDrops > 0 || rows.some((row) => row.phase.kind === "queued" || row.phase.kind === "uploading" || row.phase.kind === "checking");
     setFormDirty(guardId, busy, () => cancelAllRef.current());
     window.onbeforeunload = busy ? () => "" : null;
     return () => {
@@ -413,7 +448,7 @@ export function UploadPanel({
     };
   }, [guardId, pendingDrops, rows]);
 
-  const activeCount = pendingDrops + rows.filter((row) => row.phase.kind === "queued" || row.phase.kind === "uploading").length;
+  const activeCount = pendingDrops + rows.filter((row) => row.phase.kind === "queued" || row.phase.kind === "uploading" || row.phase.kind === "checking").length;
   useEffect(() => {
     onActiveChange?.(activeCount);
   }, [activeCount, onActiveChange]);
@@ -500,7 +535,8 @@ export function UploadPanel({
           return (
             <li key={row.id} className="ui-actions border-b border-line py-2">
               <span className="ui-identifier flex-1" title={row.name}>{row.name}</span>
-              <span className="ui-status">{translate(STATUS_LABEL[row.phase.kind])}</span>
+              <span className="ui-status">{row.phase.kind === "checking" ? copy("ui.checking.destination") : translate(STATUS_LABEL[row.phase.kind])}</span>
+              {row.phase.kind === "failed" && row.phase.message ? <span role="alert" className="ui-alert">{row.phase.message}</span> : null}
               {row.phase.kind === "uploading" && row.phase.percent !== null ? (
                 <span>{row.phase.percent}%</span>
               ) : null}
@@ -537,7 +573,7 @@ export function UploadPanel({
                     {copy("ui.overwrite.all")}</button>
                 </>
               ) : null}
-              {row.phase.kind === "queued" || row.phase.kind === "uploading" ? (
+              {row.phase.kind === "queued" || row.phase.kind === "uploading" || row.phase.kind === "checking" ? (
                 <button
                   className="ui-button"
                   type="button"

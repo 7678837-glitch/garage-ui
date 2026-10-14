@@ -172,6 +172,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
       if (url.pathname === "/api/buckets/bkt-1/objects") {
         return json(page([{ kind: "prefix", prefix: "photos/" }, photo]));
       }
+      if (url.pathname === "/api/buckets/bkt-1/objects/photos/") return json({ code: "not_found" }, 404);
       return json({ message: "unexpected" }, 500);
     }),
   );
@@ -212,7 +213,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
   if (!(prefixFile instanceof HTMLElement)) {
     throw new Error("missing upload row photos/");
   }
-  expect(prefixFile.textContent).toContain("Uploading");
+  await waitFor(() => expect(prefixFile.textContent).toContain("Uploading"));
   expect(within(prefixFile).queryByRole("button", { name: "Overwrite" })).toBeNull();
   fireEvent.click(summary);
   expect(disclosure?.open).toBe(false);
@@ -1004,7 +1005,7 @@ test("keeps the batch dialog open when a key fails", async () => {
   expect(open.textContent).toContain("b.txt: denied by policy");
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  expect(box("Select a.txt").checked).toBe(true);
+  expect(box("Select a.txt").checked).toBe(false);
   expect(box("Select b.txt").checked).toBe(true);
 });
 
@@ -2062,4 +2063,77 @@ test.each(["ArrowLeft", "ArrowRight"])("focused text preview keeps %s for scroll
   expect((screen.getByRole("checkbox", { name: "Select b.txt" }) as HTMLInputElement).checked).toBe(true);
   expect((screen.getByRole("checkbox", { name: "Select a.txt" }) as HTMLInputElement).checked).toBe(false);
   expect((screen.getByRole("checkbox", { name: "Select c.txt" }) as HTMLInputElement).checked).toBe(false);
+});
+
+
+test("empty search submission restores browsing and clears URL, cursors and selection", async () => {
+  window.history.replaceState(null, "", "/?objects=txt&sort=size");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).includes("/search?")
+    ? json({ matches: [objectRow("search.txt", 1, "2026-10-11T00:00:00Z")], truncated: false })
+    : json(listed("browse.txt"))));
+  renderObjects("bkt-1", { canWrite: true, canTransfer: false });
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select search.txt" }));
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "   " } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByRole("button", { name: "browse.txt" })).toBeTruthy();
+  expect(window.location.search).not.toContain("objects=");
+  expect(screen.queryByText("1 selected")).toBeNull();
+  expect(screen.getByText("Page 1")).toBeTruthy();
+});
+
+test("recursive HTTP success with failed keys refreshes data and keeps retry context open", async () => {
+  let lists = 0;
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") return json({ deleted: 1, errors: [{ key: "folder/denied.txt", message: "AccessDenied" }] });
+    lists += 1;
+    return json(page([{ kind: "prefix", prefix: "folder/" }]));
+  }));
+  renderObjects();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("folder/denied.txt: AccessDenied"));
+  expect(lists).toBeGreaterThan(2);
+  expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" })).not.toHaveProperty("disabled", true);
+});
+
+test("deleting an object clears its explicit preview while retaining another inspection", async () => {
+  let deleted = false;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === "DELETE") { deleted = true; return new Response(null, { status: 204 }); }
+    if (url.includes("/inspect/")) return json({ bucketId: "bkt-1", key: "b.txt", versions: [] });
+    if (url.endsWith("/objects/a.txt")) return json({ key: "a.txt", size: 4, etag: "e", lastModified: "2026-10-11T00:00:00Z", contentType: "text/plain" });
+    if (url.includes("preview=1")) return new Response("deleted body", { status: 200 });
+    return json(page([...(deleted ? [] : [objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]), objectRow("b.txt", 4, "2026-10-11T00:00:00Z")]));
+  }));
+  renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+  await screen.findByText("deleted body");
+  fireEvent.click(screen.getByRole("button", { name: "Object details (b.txt)" }));
+  await screen.findByRole("region", { name: "Inspect b.txt" });
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.queryByText("deleted body")).toBeNull();
+  expect(screen.getByRole("region", { name: "Inspect b.txt" })).toBeTruthy();
+});
+
+
+test.each([{ deleted: -1, errors: [] }, { deleted: 1, errors: [{ key: "folder/a.txt" }] }])("keeps an invalid recursive response visible and refreshes affected data: %j", async (body) => {
+  let lists = 0;
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") return json(body);
+    lists += 1;
+    return json(page([{ kind: "prefix", prefix: "folder/" }]));
+  }));
+  renderObjects();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("Objects are unavailable"));
+  expect(lists).toBeGreaterThan(2);
 });

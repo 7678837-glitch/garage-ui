@@ -516,6 +516,7 @@ export const en = {
   "ui.queued": "Queued",
   "ui.uploading": "Uploading",
   "ui.done": "Done",
+  "ui.checking.destination": "Checking destination",
   "ui.failed": "Failed",
   "ui.cancelled": "Cancelled",
 } as const;
