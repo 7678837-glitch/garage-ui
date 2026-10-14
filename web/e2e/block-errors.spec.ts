@@ -41,7 +41,8 @@ test("opens Block errors for one live node without purging or retrying", async (
     })
     .first();
   await expect(nodeCard).toBeVisible();
-  const nodeId = ((await nodeCard.locator("[title]").first().getAttribute("title")) ?? "").trim();
+  const nodeHref = await nodeCard.locator('a[href^="#node/"]').first().getAttribute("href");
+  const nodeId = decodeURIComponent(nodeHref?.split("/")[1] ?? "");
   expect(nodeId.length).toBeGreaterThan(0);
 
   await page.goto(`/#block-errors/${encodeURIComponent(nodeId)}`);

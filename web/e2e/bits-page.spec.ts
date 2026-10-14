@@ -70,9 +70,11 @@ test.afterEach(async ({ page }) => {
   }
   await users.getByLabel("Filter users").fill(username);
   const remove = users.getByRole("button", { name: `Delete ${username}`, exact: true });
+  const ownedRow = users.locator("tbody tr").filter({ has: page.getByText(username, { exact: true }) });
   const next = users.getByRole("button", { name: "Next", exact: true });
   for (let step = 0; step < 20; step += 1) {
     await expect(users.getByLabel("Loading users")).toHaveCount(0);
+    if (await ownedRow.count() === 1) await openDisclosure(ownedRow.locator("summary").filter({ hasText: /^Actions$/ }));
     if (await remove.isVisible().catch(() => false)) {
       break;
     }

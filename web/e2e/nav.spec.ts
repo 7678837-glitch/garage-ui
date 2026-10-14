@@ -130,9 +130,9 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
 
   await page
     .locator("tr", { hasText: alias })
-    .getByRole("button", { name: /^Objects for / })
+    .getByRole("button", { name: /^Open objects \(/ })
     .click();
-  await expect(page.getByRole("button", { name: "Back to buckets" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Breadcrumb", exact: true }).getByRole("link", { name: "Buckets", exact: true })).toBeVisible();
   await expect.soft(page.getByText("Global alias")).toHaveCount(0);
   await expect.soft(page.getByText("Create bucket")).toHaveCount(0);
   await recordLayout(page, "objects");

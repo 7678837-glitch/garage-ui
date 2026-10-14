@@ -36,7 +36,8 @@ test("opens the Buckets tab of one live key", async ({ page }) => {
   if ((await firstCell.count()) === 0) {
     throw new Error("The key list is empty");
   }
-  const keyId = ((await firstCell.getByRole("link").getAttribute("aria-label")) ?? "").trim();
+  const href = (await firstCell.getByRole("link").getAttribute("href")) ?? "";
+  const keyId = decodeURIComponent(href.split("/")[1] ?? "");
   if (keyId.length === 0) {
     throw new Error("The first key id is empty");
   }

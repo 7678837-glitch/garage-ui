@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure, openNavigation, openUpload } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openDisclosure, openNavigation, openRowActions, openUpload } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -459,7 +459,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
-  return buttonId(row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? ""), "Objects for ");
+  return bucketIdFromRow(row);
 }
 
 async function createKey(page: Page, name: string): Promise<string> {
@@ -482,6 +482,7 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await expect(buckets.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
+  await openRowActions(row);
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
   await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
@@ -497,7 +498,7 @@ async function openObjects(page: Page, bucketId: string): Promise<void> {
   await openNavigation(page);
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
-  await buckets.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
+  await buckets.getByRole("button", { name: `Open objects (${bucketId})`, exact: true }).click();
   await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
 }
 
@@ -527,9 +528,6 @@ async function revealRow(scope: Locator, text: string): Promise<Locator> {
   return row.first();
 }
 
-async function buttonId(label: Promise<string>, prefix: string): Promise<string> {
-  return (await label).replace(prefix, "");
-}
 
 async function release(page: Page, alias: string, bucketId: string, keyId: string): Promise<void> {
   if (page.isClosed()) {

@@ -1,4 +1,4 @@
-import { assertAuthenticated } from "./interactions";
+import { assertAuthenticated, openDisclosure } from "./interactions";
 import { expect, type Locator, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -33,5 +33,11 @@ async function expectDecimal(region: Locator, label: string): Promise<void> {
   await expect(term).toBeVisible();
   const value = term.locator("xpath=following-sibling::dd[1]");
   await expect(value).toBeVisible();
-  await expect(value, label).toHaveText(/^[0-9]+$/);
+  if (label.endsWith("bytes")) {
+    await openDisclosure(value.locator("summary").filter({ hasText: "Exact bytes" }));
+    await expect(value.locator("code"), label).toBeVisible();
+    await expect(value.locator("code"), label).toHaveText(/^[0-9]+ B$/);
+  } else {
+    await expect(value, label).toHaveText(/^[0-9]+$/);
+  }
 }

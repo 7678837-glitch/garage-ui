@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { administrator } from "./accounts";
 import { evidenceDir, assertWidth } from "./layout";
 import { assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
@@ -63,6 +65,10 @@ for (const width of [1280, 360]) {
         const shot = `redesign-${name.toLowerCase().replaceAll(" ", "-")}-${theme.toLowerCase()}`;
         await assertWidth(page, shot, width);
         await accessibility(page, shot);
+        if (width === 360 && theme === "Light") {
+          for (const extraWidth of [768, 1440]) await assertWidth(page, `${shot}-intermediate`, extraWidth);
+          await page.setViewportSize({ width, height: 800 });
+        }
         if (width === 360 && ["Buckets", "Nodes and layout", "Users", "Settings"].includes(name)) {
           const stableHash = new URL(page.url()).hash;
           for (const switchedWidth of [768, 1280, 1440, 360]) {
@@ -77,18 +83,23 @@ for (const width of [1280, 360]) {
           await expect(page.getByRole("button", { name: name === "Buckets" ? "Create bucket" : "Create key", exact: true })).not.toBeVisible();
         }
         if (name === "Buckets") {
-          const row = page.getByRole("region", { name: "Bucket", exact: true }).locator("tbody tr").filter({ has: page.getByRole("link", { name: bucket.id, exact: true }) });
+          const row = page.getByRole("region", { name: "Bucket", exact: true }).locator("tbody tr").filter({ has: page.getByRole("link", { name: `e2e-redesign-${stamp} (${bucket.id})`, exact: true }) });
           await expect(row).toBeVisible();
           console.log(`Bucket row height ${width} ${theme}`, await row.evaluate((element) => element.getBoundingClientRect().height));
-          await expect(row.getByRole("button", { name: `Objects for ${bucket.id}`, exact: true })).toBeVisible();
+          await expect(row.getByRole("button", { name: `Open objects (${bucket.id})`, exact: true })).toBeVisible();
         }
         if (name === "Nodes and layout") {
           const nodes = page.getByRole("region", { name: "Node list", exact: true });
-          const identifier = nodes.locator("tbody [title]").first();
+          const identity = nodes.locator("tbody details").filter({ has: page.locator("code") }).first();
+          const identifier = identity.locator("summary");
           await expect(identifier).toBeVisible();
-          const metrics = await identifier.evaluate((element) => ({ height: element.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(element).lineHeight), fullId: element.getAttribute("title"), text: element.textContent }));
-          expect(metrics.height, "node identifier must fit within two readable text lines").toBeLessThanOrEqual(metrics.lineHeight * 2);
-          expect(metrics.text).toBe(metrics.fullId);
+          await expect(identity).not.toHaveAttribute("open", "");
+          const metrics = await identifier.evaluate((element) => ({ height: element.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(element).lineHeight), text: element.textContent }));
+          expect(metrics.height, "compact node identity must fit within two readable text lines").toBeLessThanOrEqual(metrics.lineHeight * 2);
+          expect(metrics.text).toContain("…");
+          await openDisclosure(identifier);
+          await expect(identity.locator("code")).toBeVisible();
+          await identifier.click();
           const href = await nodes.locator('a[href^="#node/"]').first().getAttribute("href");
           expect(href).toBeTruthy();
           for (const tab of ["information", "maintenance"]) {
@@ -219,7 +230,7 @@ for (const width of [1280, 360]) {
         await expect(preview).toContainText("Content type text/plain");
         await expect(preview, "long-list filename click must give visible metadata feedback").toBeInViewport();
         await expect(preview).toBeFocused();
-        await objects.getByRole("button", { name: "Object details (preview.txt)", exact: true }).click();
+        await objects.getByRole("button", { name: "Details (preview.txt)", exact: true }).click();
         const inspection = objects.getByRole("region", { name: "Inspect preview.txt", exact: true });
         await expect(inspection).toBeInViewport();
         await expect(inspection).toBeFocused();
@@ -233,6 +244,93 @@ for (const width of [1280, 360]) {
         await assertWidth(page, "redesign-long-list-preview", width);
         await expect(objects.getByRole("checkbox", { name: "Select preview.txt", exact: true })).toBeChecked();
       }
+      const longPrefix = `long-prefix-${stamp}-${"p".repeat(96)}`;
+      const longName = `long readable object name ${"with spaces ".repeat(8)}${stamp}.txt`;
+      const longKey = `${longPrefix}/${longName}`;
+      const longBody = "Real long-path preview for browser acceptance.";
+      const inputDirectory = mkdtempSync(join(tmpdir(), "garage-ui-ux-files-"));
+      const folderDirectory = join(inputDirectory, longPrefix);
+      mkdirSync(folderDirectory);
+      writeFileSync(join(folderDirectory, longName), longBody);
+      extraKeys.push(longKey);
+      try {
+        await openUpload(objects);
+        await expect(objects.getByRole("button", { name: "Overwrite", exact: true })).toHaveCount(0);
+        await objects.getByLabel("Choose folder").setInputFiles(folderDirectory);
+        await expect(page.getByRole("region", { name: "Upload", exact: true }).getByRole("listitem").filter({ hasText: longKey }).getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
+        await objects.locator("details > summary").filter({ hasText: /^Upload/ }).click();
+        await objects.getByRole("button", { name: `${longPrefix}/`, exact: true }).click();
+        const row = objects.locator("tbody tr").filter({ has: page.getByRole("button", { name: longKey, exact: true }) });
+        await expect(row).toBeVisible();
+        const nameControl = row.getByRole("button", { name: longKey, exact: true });
+        const detailsControl = row.getByRole("button", { name: `Details (${longKey})`, exact: true });
+        const sizeCell = row.locator("td").filter({ has: page.locator("details > summary").filter({ hasText: "Exact bytes" }) });
+        const timeCell = row.locator("td").filter({ has: page.locator("time") });
+        await expect(timeCell.locator("time")).toHaveAttribute("datetime", /Z$/);
+        await expect(timeCell).toContainText("UTC");
+        const metrics = {
+          name: await nameControl.boundingBox(), size: await sizeCell.boundingBox(), time: await timeCell.boundingBox(),
+          details: await detailsControl.boundingBox(), checkboxHitArea: await row.getByRole("checkbox").locator("..").boundingBox(),
+          horizontalScroll: await row.evaluate((element) => ({ scrollLeft: element.scrollLeft, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })),
+        };
+        writeFileSync(`${evidenceDir}/storage-long-record-${theme.toLowerCase()}-${width}.json`, JSON.stringify(metrics, null, 2));
+        expect(metrics.horizontalScroll.scrollLeft).toBe(0);
+        if (!metrics.size || !metrics.time || !metrics.details || !metrics.checkboxHitArea) throw new Error("Loaded object record has missing control or value bounds");
+        await assertWidth(page, `storage-long-record-${theme.toLowerCase()}`, width);
+        if (width === 1280) {
+          expect(metrics.size.width, "size must remain readable beside a long object name").toBeGreaterThanOrEqual(48);
+          expect(metrics.time.width, "UTC time must remain readable beside a long object name").toBeGreaterThanOrEqual(100);
+        } else {
+          expect(metrics.details.height).toBeGreaterThanOrEqual(44);
+          expect(metrics.checkboxHitArea.width).toBeGreaterThanOrEqual(44);
+          expect(metrics.checkboxHitArea.height).toBeGreaterThanOrEqual(44);
+        }
+        for (const control of [nameControl, detailsControl, row.getByRole("checkbox")]) {
+          const box = await control.boundingBox();
+          if (!box) throw new Error("Object row action has no bounding box");
+          expect(box.x).toBeGreaterThanOrEqual(0);
+          expect(box.x + box.width).toBeLessThanOrEqual(width);
+        }
+        await assertWidth(page, `storage-long-record-${theme.toLowerCase()}`, width);
+        await nameControl.click();
+        await expect(preview).toBeFocused();
+        await expect(preview).toBeInViewport();
+        await expect(preview.locator("pre")).toHaveText(longBody);
+        await detailsControl.click();
+        const inspection = objects.getByRole("region", { name: `Inspect ${longKey}`, exact: true });
+        await expect(inspection).toBeFocused();
+        await expect(inspection).toBeInViewport();
+        await expect(inspection.getByText(/^encrypted (yes|no)$/)).toBeVisible();
+        await objects.getByLabel("Search", { exact: true }).fill("readable");
+        const searched = page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return response.request().method() === "GET" && url.pathname === `/api/buckets/${bucket.id}/search` && url.searchParams.get("q") === "readable";
+        });
+        await objects.getByRole("button", { name: "Search", exact: true }).click();
+        expect((await searched).ok()).toBe(true);
+        await expect(nameControl).toBeVisible();
+        await expect(objects.locator('thead th').getByText("Time (UTC)", { exact: true })).toBeVisible();
+        await objects.getByLabel("Search", { exact: true }).fill("");
+        await objects.getByRole("button", { name: "Search", exact: true }).click();
+        await expect(nameControl).toBeVisible();
+        await assertWidth(page, `storage-long-inspection-${theme.toLowerCase()}`, width);
+        await accessibility(page, `storage-long-${theme.toLowerCase()}-${width}`);
+        if ((width === 360 && theme === "Light") || (width === 1280 && theme === "Dark")) {
+          const objectUrl = page.url();
+          await openNavigation(page);
+          await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
+          await page.getByLabel("Language").selectOption("zh-CN");
+          await page.goto(objectUrl);
+          await expect(page.getByRole("button", { name: longKey, exact: true })).toBeVisible();
+          await assertWidth(page, `storage-long-zh-${theme.toLowerCase()}`, width);
+          await accessibility(page, `storage-long-zh-${theme.toLowerCase()}-${width}`);
+          await openNavigation(page);
+          await page.getByRole("navigation", { name: "分区" }).getByRole("link", { name: "设置", exact: true }).click();
+          await page.getByLabel("语言").selectOption("en");
+          await page.goto(objectUrl);
+          await expect(nameControl).toBeVisible();
+        }
+      } finally { rmSync(inputDirectory, { recursive: true, force: true }); }
       if (width === 360) {
         const menu = page.getByRole("button", { name: "Menu", exact: true });
         await menu.focus();
@@ -254,6 +352,7 @@ for (const width of [1280, 360]) {
         await page.setViewportSize({ width: 360, height: 800 });
         await expect(menu).toHaveAttribute("aria-expanded", "false");
         await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toHaveCount(0);
+        await expect(page.locator("aside#console-navigation")).toHaveCount(0);
         await menu.focus();
         await page.keyboard.press("Enter");
         await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
@@ -321,7 +420,7 @@ test("creation stays collapsed and long object prefix remains usable", async ({ 
     const prefix = "long-prefix-" + "a".repeat(160);
     await page.evaluate(({ id, prefix }) => { location.hash = `#buckets/${id}/${prefix}/`; }, { id: bucket.id, prefix });
     await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
-    const breadcrumb = page.getByRole("navigation", { name: "Prefix", exact: true }).getByRole("button", { name: prefix, exact: true });
+    const breadcrumb = page.getByRole("navigation", { name: "Prefix", exact: true }).getByRole("button", { name: `${prefix} (${prefix}/)`, exact: true });
     await expect(breadcrumb).toBeVisible();
     console.log("prefix metrics", await breadcrumb.evaluate((element) => ({ width: element.getBoundingClientRect().width, whiteSpace: getComputedStyle(element).whiteSpace, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth })));
     await expect(page.locator("main [aria-busy=true]")).toHaveCount(0, { timeout: 20_000 });

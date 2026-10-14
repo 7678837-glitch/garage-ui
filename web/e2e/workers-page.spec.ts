@@ -41,7 +41,8 @@ test("opens workers for one live node without starting repair", async ({ page })
     })
     .first();
   await expect(nodeCard).toBeVisible();
-  const nodeId = ((await nodeCard.locator("[title]").first().getAttribute("title")) ?? "").trim();
+  const nodeHref = await nodeCard.locator('a[href^="#node/"]').first().getAttribute("href");
+  const nodeId = decodeURIComponent(nodeHref?.split("/")[1] ?? "");
   expect(nodeId.length).toBeGreaterThan(0);
 
   await page.goto(`/#workers/${encodeURIComponent(nodeId)}`);
@@ -50,11 +51,11 @@ test("opens workers for one live node without starting repair", async ({ page })
   await expect(workers.getByText("No node is selected")).toHaveCount(0);
   const row = workers
     .locator("tbody tr")
-    .filter({ has: page.getByRole("button", { name: /^Details \d+$/ }) })
+    .filter({ has: page.getByRole("button", { name: /^Details \d+: / }) })
     .first();
   await expect(row).toBeVisible({ timeout: 20_000 });
   await expect(row.locator("td").first()).not.toHaveText(/^\s*$/);
-  await expect(row.getByRole("button", { name: /^Details \d+$/ })).toBeVisible();
+  await expect(row.getByRole("button", { name: /^Details \d+: / })).toBeVisible();
   expect(repair, `repair requests: ${repair.join(" ")}`).toEqual([]);
 
   await assertWidth(page, "workers-page", 1280);

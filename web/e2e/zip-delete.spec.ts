@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure, openNavigation, openUpload } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openDisclosure, openNavigation, openRowActions, openUpload } from "./interactions";
 import { execFileSync } from "node:child_process";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -95,7 +95,9 @@ test("deletes a selection, deletes a folder, and downloads a ZIP", async ({ page
     await assertWidth(page, "zip-delete-folder", 1280);
     await assertWidth(page, "zip-delete-folder", 360);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await objects.getByRole("button", { name: "Delete folder", exact: true }).click();
+    const folderRow = objects.locator("tbody tr").filter({ has: page.getByRole("button", { name: "gone/", exact: true }) });
+    await openRowActions(folderRow);
+    await folderRow.getByRole("button", { name: "Delete folder (gone/)", exact: true }).click();
     const folderDialog = page.getByRole("dialog");
     await expect(folderDialog.getByRole("heading", { name: "Confirm gone/" })).toBeVisible();
     await expect(folderDialog).toContainText("This deletes every object under this prefix.");
@@ -221,10 +223,8 @@ async function filterGrantAndOpen(page: Page, alias: string, keyId: string): Pro
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = buckets.locator("tbody tr").filter({ has: page.getByText(alias, { exact: true }) }).first();
   await expect(row).toBeVisible();
-  const bucketId = (await row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? "")).replace(
-    /^Objects for /,
-    "",
-  );
+  const bucketId = await bucketIdFromRow(row);
+  await openRowActions(row);
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
   await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
@@ -236,7 +236,7 @@ async function filterGrantAndOpen(page: Page, alias: string, keyId: string): Pro
   await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
   await openNavigation(page);
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
-  await row.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
+  await row.getByRole("button", { name: `Open objects (${bucketId})`, exact: true }).click();
   await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
   return bucketId;
 }

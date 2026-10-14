@@ -1,4 +1,4 @@
-import { assertAuthenticated, openNavigation } from "./interactions";
+import { assertAuthenticated, openAccount, openNavigation } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { recordLayout } from "./layout";
@@ -44,6 +44,7 @@ test("chinese pages stay inside the viewport", async ({ page }) => {
   await openNavigation(page);
   await overview.click();
   await expect(overview).toHaveAttribute("aria-current", "page");
+  await openAccount(page);
   await page.getByRole("button", { name: "退出" }).click();
   await expect(page.getByRole("button", { name: "登录" })).toBeVisible();
   await recordLayout(page, "zh-login");

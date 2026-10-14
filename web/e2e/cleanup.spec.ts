@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure, openNavigation } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openDisclosure, openNavigation, openRowActions } from "./interactions";
 import { createHash, createHmac, type BinaryLike } from "node:crypto";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -138,7 +138,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
-  return buttonId(row.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? ""), "Objects for ");
+  return bucketIdFromRow(row);
 }
 
 async function createKey(page: Page, name: string): Promise<{ keyId: string; secret: string }> {
@@ -163,6 +163,7 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await expect(buckets.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
+  await openRowActions(row);
   await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
   await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
@@ -178,7 +179,7 @@ async function openObjects(page: Page, bucketId: string): Promise<void> {
   await openNavigation(page);
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
-  await buckets.getByRole("button", { name: `Objects for ${bucketId}`, exact: true }).click();
+  await buckets.getByRole("button", { name: `Open objects (${bucketId})`, exact: true }).click();
   await expect(page.locator("section[aria-label=\"Objects\"]")).toBeVisible();
 }
 
@@ -194,7 +195,7 @@ async function bindKey(objects: Locator, keyId: string): Promise<void> {
 }
 
 async function backToBuckets(page: Page): Promise<void> {
-  await page.locator("section[aria-label=\"Objects\"]").getByRole("button", { name: "Back to buckets", exact: true }).click();
+  await page.getByRole("navigation", { name: "Breadcrumb", exact: true }).getByRole("link", { name: "Buckets", exact: true }).click();
   await expect(page.getByRole("region", { name: "Buckets" }).getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
 }
 
@@ -213,9 +214,6 @@ async function revealRow(scope: Locator, text: string): Promise<Locator> {
   return row.first();
 }
 
-async function buttonId(label: Promise<string>, prefix: string): Promise<string> {
-  return (await label).replace(prefix, "");
-}
 
 async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: string): Promise<void> {
   if (!alias.startsWith("e2e-277-") || bucketId.length === 0) {
@@ -224,6 +222,7 @@ async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: s
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
+  await openRowActions(row);
   await row.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: `Delete bucket ${bucketId}` })).toBeVisible();

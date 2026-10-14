@@ -28,6 +28,7 @@ export async function assertWidth(page: Page, name: string, width: number): Prom
     path: `${evidenceDir}/${name}-${width}.png`,
     fullPage: true,
   });
+  await page.screenshot({ path: `${evidenceDir}/${name}-${width}-viewport.png`, fullPage: false });
   expect
     .soft(
       measured.scrollWidth,

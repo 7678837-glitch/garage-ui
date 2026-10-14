@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openDisclosure, openRowActions } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -25,6 +25,7 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
     await buckets.getByLabel("Filter buckets").fill(alias);
     const row = await revealRow(buckets, alias);
     await expect(row.getByText(alias, { exact: true })).toBeVisible();
+    const bucketId = await bucketIdFromRow(row);
 
     await openDisclosure(row.locator("summary[aria-label^=\"Edit \"]"));
     await row.getByRole("button", { name: "Edit CORS", exact: true }).click();
@@ -38,7 +39,11 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
     });
     await saveRule(page, row, "Save CORS", "/cors");
     await expect(row.getByLabel("AllowedOrigin")).toHaveValue("https://photos.example");
-    await expect(page.getByText("https://photos.example")).toBeVisible();
+    const cors = await page.request.get(`/api/buckets/${bucketId}/cors`);
+    expect(cors.ok(), "Saved CORS must be readable").toBe(true);
+    expect(await cors.json()).toMatchObject({
+      corsRules: [{ ID: "photos", AllowedOrigin: ["https://photos.example"], AllowedMethod: ["GET"] }],
+    });
 
     await row.getByRole("button", { name: "Edit lifecycle", exact: true }).click();
     await row.getByRole("button", { name: "Add lifecycle rule", exact: true }).click();
@@ -49,9 +54,14 @@ test("saves one CORS rule and one lifecycle rule on a new bucket", async ({ page
     await expect(row.getByRole("button", { name: "Save lifecycle", exact: true })).toBeVisible({
       timeout: 20_000,
     });
+    await expect(row.getByLabel("Next")).toContainText('"Days":7');
     await saveRule(page, row, "Save lifecycle", "/lifecycle");
     await expect(row.getByLabel("Expiration.Days")).toHaveValue("7");
-    await expect(page.getByLabel("Next").last()).toContainText('"Days":7');
+    const lifecycle = await page.request.get(`/api/buckets/${bucketId}/lifecycle`);
+    expect(lifecycle.ok(), "Saved lifecycle must be readable").toBe(true);
+    expect(await lifecycle.json()).toMatchObject({
+      lifecycleRules: [{ ID: "expire", Status: "Enabled", Expiration: { Days: 7 } }],
+    });
 
     await assertWidth(page, "bucket-editor", 1280);
     await assertWidth(page, "bucket-editor", 360);
@@ -137,11 +147,9 @@ async function cleanup(page: Page, alias: string): Promise<void> {
     }
     const target = row.first();
     await expect(target.getByText(alias, { exact: true })).toBeVisible();
-    const bucketId = (await target.getByRole("button", { name: /^Objects for / }).getAttribute("aria-label").then((label) => label ?? "")).replace(
-      "Objects for ",
-      "",
-    );
+    const bucketId = await bucketIdFromRow(target);
     console.log("bucket-editor cleanup", JSON.stringify({ alias, bucketId }));
+    await openRowActions(target);
     await target.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Delete bucket", exact: true }).click();
     await expect(buckets.getByText(alias, { exact: true })).toHaveCount(0, { timeout: 20_000 });
