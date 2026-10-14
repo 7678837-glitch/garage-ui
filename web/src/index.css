@@ -55,6 +55,8 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 .ui-page-header, .ui-toolbar { justify-content: space-between; }
 .ui-page-header h2, .ui-page > h2 { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
 .ui-panel { display: grid; gap: var(--space-large); padding: 20px; min-width: 0; background: var(--surface); border: 1px solid var(--separator); border-radius: var(--control-radius); }
+.ui-panel.ui-actions { display: flex; }
+.ui-object-preview > pre { min-width: 0; max-width: 100%; overflow-x: auto; }
 .ui-panel h3 { font-size: 15px; font-weight: 600; }
 .ui-field { display: grid; gap: var(--space-small); min-width: 0; font-weight: 500; }
 .ui-input { width: 100%; min-width: 0; min-height: var(--control-height); padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--control-radius); font-weight: 400; }

@@ -1,10 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
 import { Objects } from "./Objects";
 
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+});
+
 afterEach(() => {
+  if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   cleanup();
   window.history.replaceState(null, "", "/");
   window.location.hash = "";
@@ -254,11 +261,11 @@ test("opens a bucket, shows the chosen object's type, and returns to the table",
   expect(screen.queryByText("east")).toBeNull();
   expect(screen.queryByRole("button", { name: "Objects for bkt-1" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "photos/a.txt" }));
-  expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to buckets" }));
   expect(await screen.findByText("east")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Objects for bkt-1" })).toBeTruthy();
-  expect(screen.queryByText("text/plain")).toBeNull();
+  expect(screen.queryByText("Content type text/plain")).toBeNull();
   expect(screen.queryByRole("button", { name: "photos/a.txt" })).toBeNull();
 });
 
@@ -573,7 +580,7 @@ test("encodes each key segment when loading metadata", async () => {
   );
   renderObjects();
   fireEvent.click(await screen.findByRole("button", { name: "dir/a?b.txt" }));
-  expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   const meta = calls.find((call) => call.includes("a%3Fb.txt"));
   expect(meta).toBe("/api/buckets/bkt-1/objects/dir/a%3Fb.txt");
 });
@@ -1157,7 +1164,7 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
   expectNoViewer();
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
-  expect(await screen.findByText("text/plain")).toBeTruthy();
+  expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   expect(screen.queryByText("secret bytes")).toBeNull();
   expectNoViewer();
 });
@@ -1713,10 +1720,10 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   );
   renderObjects();
   expect(await screen.findByRole("button", { name: "photos/cat.jpg" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Inspect photos/cat.jpg" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Object details (photos/cat.jpg)" })).toBeNull();
   cleanup();
   renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
-  const inspect = await screen.findByRole("button", { name: "Inspect photos/cat.jpg" });
+  const inspect = await screen.findByRole("button", { name: "Object details (photos/cat.jpg)" });
   expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   fireEvent.click(inspect);
@@ -1986,4 +1993,57 @@ test("returns to the prior object page using its continuation cursor", async () 
   fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
   await screen.findByRole("button", { name: "first.txt" });
   expect(tokens).toEqual([null, "page-2", null]);
+});
+
+
+test("explicit filename feedback receives focus before metadata resolves and on repeat click without changing bulk selection", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/auth/status") return json({ can_share: false });
+    if (url === "/api/buckets/bkt-1/objects/a.txt") return new Promise<Response>((resolve) => { release = resolve; });
+    if (url.includes("preview=1")) return new Response("safe text body", { status: 200 });
+    return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z"), objectRow("b.txt", 5, "2026-10-11T00:00:00Z")]));
+  }));
+  renderObjects();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  const filename = screen.getByRole("button", { name: "a.txt" });
+  fireEvent.click(filename);
+  const panel = screen.getByRole("region", { name: "Object details" });
+  expect(document.activeElement).toBe(panel);
+  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  expect(within(panel).getByRole("status")).toBeTruthy();
+  release(json({ key: "a.txt", size: 4, etag: "abc", lastModified: "2026-10-11T00:00:00Z", contentType: "text/plain" }));
+  expect(await within(panel).findByText("safe text body")).toBeTruthy();
+  expect((screen.getByRole("checkbox", { name: "Select a.txt" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "Select b.txt" }) as HTMLInputElement).checked).toBe(true);
+  const beforeRepeat = vi.mocked(HTMLElement.prototype.scrollIntoView).mock.calls.length;
+  expect(beforeRepeat).toBeGreaterThan(1);
+  filename.focus();
+  fireEvent.click(filename);
+  expect(document.activeElement).toBe(panel);
+  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(beforeRepeat + 1);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(beforeRepeat + 1);
+});
+
+test("explicit inspect feedback is focused while loading and shows a failure in the same panel", async () => {
+  let release: (response: Response) => void = () => {};
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/inspect/")) return new Promise<Response>((resolve) => { release = resolve; });
+    if (url === "/api/auth/status") return json({ can_share: false });
+    return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]));
+  }));
+  renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
+  const inspect = await screen.findByRole("button", { name: "Object details (a.txt)" });
+  fireEvent.click(inspect);
+  const panel = screen.getByRole("region", { name: "Inspect a.txt" });
+  expect(document.activeElement).toBe(panel);
+  expect(within(panel).getByRole("status")).toBeTruthy();
+  release(json({ message: "inspection failed", code: "inspect_failed" }, 500));
+  expect(await within(panel).findByText("inspection failed")).toBeTruthy();
+  expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
 });

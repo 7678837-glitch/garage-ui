@@ -725,6 +725,9 @@ export function Objects({
   const [zipLink, setZipLink] = useState<{ keys: readonly string[]; href: string } | null>(null);
   const [inspectKey, setInspectKey] = useState<string | null>(null);
   const zipAnchor = useRef<HTMLAnchorElement>(null);
+  const previewPanel = useRef<HTMLElement>(null);
+  const inspectPanel = useRef<HTMLElement>(null);
+  const [feedback, setFeedback] = useState<{ kind: "preview" | "inspect"; key: string } | null>(null);
   const stepRef = useRef<{ previewKey: string | null; visibleKeys: readonly string[] }>({
     previewKey: null,
     visibleKeys: [],
@@ -737,6 +740,7 @@ export function Objects({
   const prefixChanged = trackedPrefix !== prefix;
   if (prefixChanged) {
     inspected = null;
+    if (feedback !== null) setFeedback(null);
     pageToken = null;
     search = null;
     selected = null;
@@ -798,11 +802,6 @@ export function Objects({
     queryKey: ["bucket-object-inspect", bucketId, inspected],
     queryFn: () => readJson(inspectPath(bucketId, inspected ?? "")).then(parseInspect),
     enabled: inspected !== null && !listBusy,
-  });
-  const meta = useQuery({
-    queryKey: ["bucket-object", bucketId, selected],
-    queryFn: () => readJson(metadataPath(bucketId, selected ?? "")).then(parseMeta),
-    enabled: selected !== null,
   });
   const removeObject = useMutation({
     mutationFn: async (key: string) => {
@@ -880,7 +879,7 @@ export function Objects({
   const archiveKeys = batchSelection(visible, shownPicked).keys;
   const zipHref = zipLink !== null && sameKeys(zipLink.keys, archiveKeys) ? zipLink.href : null;
   const singleKey = shownPicked.length === 1 ? shownPicked[0] : null;
-  const previewKey = canTransfer ? singleKey : null;
+  const previewKey = selected ?? (canTransfer ? singleKey : null);
   stepRef.current = { previewKey, visibleKeys };
   const shareObject = useMutation({
     mutationFn: async (ttl: number) => {
@@ -922,7 +921,7 @@ export function Objects({
     previewKey !== null && previewMeta.data && previewMeta.data.key === previewKey
       ? previewMeta.data
       : null;
-  const kind = preview === null ? null : inlineKind(preview.contentType);
+  const kind = preview === null || !canTransfer ? null : inlineKind(preview.contentType);
   const previewText = useQuery({
     queryKey: ["bucket-object-text", bucketId, previewKey],
     queryFn: ({ signal }) => readPreviewText(previewPath(bucketId, previewKey ?? ""), signal),
@@ -934,7 +933,8 @@ export function Objects({
   const loading = searching ? found.isLoading : list.isLoading;
   const listFailure = !searching && list.isError ? failureOf(list.error) : null;
   const searchFailure = searching && found.isError ? failureOf(found.error) : null;
-  const metaFailure = selected !== null && meta.isError ? failureOf(meta.error) : null;
+  const previewFailure = previewKey !== null && previewMeta.isError ? failureOf(previewMeta.error) : null;
+  const inspectFailure = inspected !== null && inspect.isError ? failureOf(inspect.error) : null;
   const failure = listFailure ?? searchFailure;
   const needsKey = canWrite && listFailure?.code === "no_usable_key";
   const keyChoices = useQuery({
@@ -964,9 +964,11 @@ export function Objects({
         return;
       }
       setCopyNote(null);
+      setFeedback(null);
       setBrowse((state) => ({
         ...state,
         picked: [next],
+        selected: null,
         anchor: next,
       }));
     }
@@ -976,7 +978,14 @@ export function Objects({
     };
   }, []);
   const showFailure = failure !== null && !isGarageDown(failure);
-  const showMeta = metaFailure !== null && !isGarageDown(metaFailure);
+  const feedbackStatus = feedback?.kind === "preview" ? `${previewMeta.status}:${kind === "text" ? previewText.status : ""}` : inspect.status;
+  useEffect(() => {
+    const panel = feedback?.kind === "preview" ? previewPanel.current : feedback?.kind === "inspect" ? inspectPanel.current : null;
+    if (panel) {
+      panel.focus();
+      panel.scrollIntoView({ block: "start" });
+    }
+  }, [feedback, feedbackStatus]);
   const showRows = visible.length > 0 && (searching ? found.isSuccess : page !== null);
   const showEmpty = searching
     ? found.isSuccess && found.data !== undefined && found.data.matches.length === 0
@@ -1004,8 +1013,10 @@ export function Objects({
 
   function pick(key: string, shift: boolean) {
     setCopyNote(null);
+    setFeedback(null);
     setBrowse((current) => ({
       ...current,
+      selected: null,
       picked: shift
         ? rangeKeys(visibleKeys, current.anchor, key)
         : toggleKey(pickedOnPage(current.picked, visibleKeys), key),
@@ -1015,8 +1026,10 @@ export function Objects({
 
   function selectPage() {
     setCopyNote(null);
+    setFeedback(null);
     setBrowse((current) => ({
       ...current,
+      selected: null,
       picked: visibleKeys,
       anchor: visibleKeys.length > 0 ? visibleKeys[visibleKeys.length - 1] : null,
     }));
@@ -1035,7 +1048,7 @@ export function Objects({
       void list.refetch();
     }
     if (selected !== null) {
-      void meta.refetch();
+      void previewMeta.refetch();
     }
   }
 
@@ -1177,9 +1190,7 @@ export function Objects({
           {chooseKey.error instanceof Error ? <p>{chooseKey.error.message}</p> : null}
         </form>
       ) : null}
-      {showMeta && metaFailure ? <p>{metaFailure.message}</p> : null}
-      {showMeta && metaFailure?.code ? <p>{metaFailure.code}</p> : null}
-      {showFailure || showMeta ? (
+      {showFailure ? (
         <button
           className="ui-button"
           type="button"
@@ -1369,6 +1380,7 @@ export function Objects({
                           type="button"
                           onClick={() => {
                             setBrowse((current) => ({ ...current, selected: entry.key }));
+                            setFeedback({ kind: "preview", key: entry.key });
                           }}
                         >
                           {entry.key}
@@ -1376,10 +1388,11 @@ export function Objects({
                         {canManage ? (
                           <button
                             className="ui-button"
-                            aria-label={fill(copy("ui.inspect"), { key: entry.key })}
+                            aria-label={`${copy("ui.object.details")} (${entry.key})`}
                             type="button"
                             onClick={() => {
                               setInspectKey(entry.key);
+                              setFeedback({ kind: "inspect", key: entry.key });
                             }}
                           >
                             {copy("ui.object.details")}</button>
@@ -1416,8 +1429,11 @@ export function Objects({
           }}
         />
       ) : null}
-      {preview ? (
-        <section className="ui-panel" aria-label={copy("ui.object.details")}>
+      {preview || (feedback?.kind === "preview" && selected === feedback.key) ? (
+        <section ref={previewPanel} tabIndex={-1} className="ui-panel ui-object-preview" aria-label={copy("ui.object.details")}>
+          {previewMeta.isPending ? <p role="status">{copy("ui.working")}</p> : null}
+          {previewFailure ? <><p>{previewFailure.message}</p>{previewFailure.code ? <p>{previewFailure.code}</p> : null}<button className="ui-button" onClick={() => { void previewMeta.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {preview ? <>
           <h3 className="ui-identifier">{preview.key}</h3>
           <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
           <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
@@ -1425,6 +1441,8 @@ export function Objects({
           <p>
             {copy("ui.last.modified")} <InstantText value={preview.lastModified} />
           </p>
+          {previewText.isError ? <><p>{failureOf(previewText.error).message}</p><button className="ui-button" onClick={() => { void previewText.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {kind === "text" && previewText.isPending ? <p role="status">{copy("ui.working")}</p> : null}
           {kind !== null ? (
             <InlineBody
               kind={kind}
@@ -1433,10 +1451,14 @@ export function Objects({
               text={previewText.data}
             />
           ) : null}
+          </> : null}
         </section>
       ) : null}
-      {inspect.data && inspected !== null && inspect.data.key === inspected ? (
-        <section className="ui-panel" aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
+      {inspected !== null ? (
+        <section ref={inspectPanel} tabIndex={-1} className="ui-panel" aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
+          {inspect.isPending ? <p role="status">{copy("ui.working")}</p> : null}
+          {inspectFailure ? <><p>{inspectFailure.message}</p>{inspectFailure.code ? <p>{inspectFailure.code}</p> : null}<button className="ui-button" onClick={() => { void inspect.refetch(); }}>{copy("ui.retry")}</button></> : null}
+          {inspect.data && inspect.data.key === inspected ? <>
           <h3 className="ui-identifier">{inspected}</h3>
           {inspect.data.versions.map((version) => (
             <div key={version.uuid}>
@@ -1448,9 +1470,9 @@ export function Objects({
               ))}
             </div>
           ))}
+          </> : null}
         </section>
       ) : null}
-      {meta.data && selected === meta.data.key ? <p>{meta.data.contentType}</p> : null}
       {pendingDelete?.kind === "object" ? (
         <ConfirmDialog
           action="delete-object"
