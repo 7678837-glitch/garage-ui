@@ -104,15 +104,36 @@ pub async fn issue_session(
             .await
             .map_err(|_| ApiError::internal())?;
     }
-    let id = hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?);
-    let csrf = hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?);
+    let session = new_session(app, user_id)?;
+    db::insert_session(
+        &app.db,
+        &session.id,
+        user_id,
+        &session.csrf_token,
+        &session.key_id,
+        session.last_seen_at,
+        session.expires_at,
+    )
+    .await
+    .map_err(|_| ApiError::internal())?;
+    Ok((
+        session.id,
+        session.csrf_token,
+        app.settings.session_absolute.as_secs(),
+    ))
+}
+
+pub(crate) fn new_session(app: &App, user_id: i64) -> Result<db::Session, ApiError> {
     let now = now_secs();
     let ttl = app.settings.session_absolute.as_secs();
-    let expires = now.saturating_add(i64::try_from(ttl).unwrap_or(i64::MAX));
-    db::insert_session(&app.db, &id, user_id, &csrf, &app.key_id, now, expires)
-        .await
-        .map_err(|_| ApiError::internal())?;
-    Ok((id, csrf, ttl))
+    Ok(db::Session {
+        id: hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?),
+        user_id,
+        csrf_token: hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?),
+        key_id: app.key_id.to_string(),
+        last_seen_at: now,
+        expires_at: now.saturating_add(i64::try_from(ttl).unwrap_or(i64::MAX)),
+    })
 }
 
 pub fn apply_login_cookies(

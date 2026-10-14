@@ -849,3 +849,135 @@
         assert!(!audit_text(row).contains(PASSWORD));
         assert!(!audit_text(row).contains(replacement));
     }
+
+    #[tokio::test]
+    async fn change_password_preserves_live_permissions_and_rejects_revoked_authentication() {
+        for mutation in [
+            "permissions",
+            "role",
+            "disabled",
+            "password",
+            "session",
+            "demoted",
+        ] {
+            let dir = crate::util::temp_dir();
+            let app = state::test_app(&dir).await;
+            let (session, _) = login(&app).await;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "cookie",
+                HeaderValue::from_str(&cookie_header(&session)).unwrap(),
+            );
+            if mutation == "permissions" {
+                let user = crate::db::find_user_by_name(&app.db, "Ada")
+                    .await
+                    .unwrap()
+                    .unwrap();
+                crate::db::update_user(&app.db, user.id, "viewer", true, true, false, None)
+                    .await
+                    .unwrap();
+            }
+            let current = crate::session::authenticate(&app, &headers, "127.0.0.1")
+                .await
+                .unwrap();
+            let id = current.user.id;
+            let original_hash = current.user.password_hash.clone();
+            match mutation {
+                "permissions" | "role" => {
+                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None)
+                        .await
+                        .unwrap()
+                }
+                "disabled" => crate::db::update_user(&app.db, id, "admin", false, false, true, None)
+                    .await
+                    .unwrap(),
+                "password" => {
+                    let changed_hash = crate::password::hash_async("other password".into(), 4)
+                        .await
+                        .unwrap();
+                    crate::db::update_user(
+                        &app.db,
+                        id,
+                        "admin",
+                        false,
+                        false,
+                        false,
+                        Some(&changed_hash),
+                    )
+                    .await
+                    .unwrap();
+                }
+                "session" => crate::db::delete_user_sessions(&app.db, id).await.unwrap(),
+                "demoted" => {
+                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None)
+                        .await
+                        .unwrap();
+                    crate::db::delete_user_sessions(&app.db, id).await.unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before = crate::db::find_user_by_id(&app.db, id)
+                .await
+                .unwrap()
+                .unwrap();
+            let body = serde_json::from_value(
+                json!({"current_password": PASSWORD, "new_password": "updated password"}),
+            )
+            .unwrap();
+            let result = super::auth::change_password(
+                axum::extract::State(app.clone()),
+                super::Authed(current),
+                axum::Json(body),
+            )
+            .await;
+            let after = crate::db::find_user_by_id(&app.db, id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(after.role, before.role, "{mutation} restored the role");
+            assert_eq!(
+                after.can_download, before.can_download,
+                "{mutation} restored download permission"
+            );
+            assert_eq!(
+                after.can_share, before.can_share,
+                "{mutation} restored share permission"
+            );
+            assert_eq!(
+                after.disabled, before.disabled,
+                "{mutation} restored the account"
+            );
+            if matches!(mutation, "permissions" | "role") {
+                let response = result.unwrap();
+                let data = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let user: Value = serde_json::from_slice(&data).unwrap();
+                assert_eq!(user["role"], "viewer");
+                assert_eq!(user["can_download"], false);
+                assert_ne!(after.password_hash, original_hash);
+                assert!(crate::password::verify(
+                    "updated password",
+                    &after.password_hash
+                ));
+            } else {
+                assert_eq!(
+                    result.unwrap_err().status_code(),
+                    StatusCode::UNAUTHORIZED,
+                    "{mutation}"
+                );
+                assert_eq!(
+                    after.password_hash, before.password_hash,
+                    "{mutation} overwrote the password"
+                );
+                if matches!(mutation, "session" | "demoted") {
+                    assert!(
+                        crate::db::load_session(&app.db, &session.id)
+                            .await
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }

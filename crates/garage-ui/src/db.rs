@@ -271,6 +271,79 @@ pub async fn update_user(
     Ok(())
 }
 
+pub async fn reset_user_password(
+    pool: &SqlitePool,
+    id: i64,
+    password_hash: &str,
+) -> Result<bool, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let changed = sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(password_hash)
+        .bind(id)
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected()
+        == 1;
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(changed)
+}
+
+pub async fn change_user_password(
+    pool: &SqlitePool,
+    id: i64,
+    expected_password_hash: &str,
+    current_session_id: &str,
+    password_hash: &str,
+    replacement: &Session,
+    idle_seconds: i64,
+) -> Result<Option<User>, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    // The password proof and session must still be current when the password is committed.
+    let row = sqlx::query(
+        "UPDATE users SET password_hash = ?
+         WHERE id = ? AND password_hash = ? AND disabled = 0
+           AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = users.id
+             AND key_id = ? AND expires_at > ? AND last_seen_at >= ?)
+         RETURNING id, username, password_hash, role, can_download, can_share, disabled",
+    )
+    .bind(password_hash)
+    .bind(id)
+    .bind(expected_password_hash)
+    .bind(current_session_id)
+    .bind(&replacement.key_id)
+    .bind(replacement.last_seen_at)
+    .bind(replacement.last_seen_at.saturating_sub(idle_seconds))
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let Some(row) = row else {
+        transaction.rollback().await?;
+        return Ok(None);
+    };
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, csrf_token, key_id, created_at, last_seen_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&replacement.id)
+    .bind(id)
+    .bind(&replacement.csrf_token)
+    .bind(&replacement.key_id)
+    .bind(replacement.last_seen_at)
+    .bind(replacement.last_seen_at)
+    .bind(replacement.expires_at)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(Some(user_from_row(&row)))
+}
+
 pub async fn delete_user(pool: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(id)
@@ -333,19 +406,6 @@ pub async fn touch_session(pool: &SqlitePool, id: &str, now: i64) -> Result<(), 
 pub async fn delete_session(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM sessions WHERE id = ?")
         .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-pub async fn delete_other_sessions(
-    pool: &SqlitePool,
-    user_id: i64,
-    keep: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM sessions WHERE user_id = ? AND id <> ?")
-        .bind(user_id)
-        .bind(keep)
         .execute(pool)
         .await?;
     Ok(())

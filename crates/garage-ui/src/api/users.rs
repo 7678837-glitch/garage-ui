@@ -523,20 +523,12 @@ pub(crate) async fn reset_password(
     }
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
     let _guard = app.write.lock().await;
-    db::update_user(
-        &app.db,
-        target.id,
-        &target.role,
-        target.can_download,
-        target.can_share,
-        target.disabled,
-        Some(&hash),
-    )
-    .await
-    .map_err(|_| ApiError::internal())?;
-    db::delete_user_sessions(&app.db, target.id)
+    if !db::reset_user_password(&app.db, target.id, &hash)
         .await
-        .map_err(|_| ApiError::internal())?;
+        .map_err(|_| ApiError::internal())?
+    {
+        return Err(ApiError::not_found());
+    }
     record(
         &app,
         &current.user.username,

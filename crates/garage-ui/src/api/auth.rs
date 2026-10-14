@@ -279,21 +279,41 @@ pub(crate) async fn change_password(
     }
     let hash = hash_password(&body.new_password, app.settings.bcrypt_cost).await?;
     let _guard = app.write.lock().await;
-    db::update_user(
+    let replacement = session::new_session(&app, current.user.id)?;
+    let user = db::change_user_password(
         &app.db,
         current.user.id,
-        &current.user.role,
-        current.user.can_download,
-        current.user.can_share,
-        current.user.disabled,
-        Some(&hash),
+        &current.user.password_hash,
+        &current.session_id,
+        &hash,
+        &replacement,
+        i64::try_from(app.settings.session_idle.as_secs()).unwrap_or(i64::MAX),
     )
     .await
     .map_err(|_| ApiError::internal())?;
-    db::delete_other_sessions(&app.db, current.user.id, &current.session_id)
-        .await
-        .map_err(|_| ApiError::internal())?;
-    let response = login_response(&app, &current.user, Some(&current.session_id)).await?;
+    let Some(user) = user else {
+        record(
+            &app,
+            &current.user.username,
+            &current.ip,
+            "failure",
+            "invalid_credentials",
+            "POST",
+            "/api/auth/change-password",
+            "",
+            401,
+        )
+        .await?;
+        return Err(ApiError::invalid_credentials());
+    };
+    let mut response = user_response(&user);
+    apply_login_cookies(
+        response.headers_mut(),
+        &app.settings,
+        &replacement.id,
+        &replacement.csrf_token,
+        app.settings.session_absolute.as_secs(),
+    );
     record(
         &app,
         &current.user.username,
@@ -381,15 +401,19 @@ async fn login_response(
     replace: Option<&str>,
 ) -> Result<Response, ApiError> {
     let (id, csrf, ttl) = session::issue_session(app, user.id, replace).await?;
-    let mut response = Json(json!({
+    let mut response = user_response(user);
+    apply_login_cookies(response.headers_mut(), &app.settings, &id, &csrf, ttl);
+    Ok(response)
+}
+
+fn user_response(user: &User) -> Response {
+    Json(json!({
         "username": user.username,
         "role": user.role,
         "can_download": user.actor().download,
         "can_share": effective_share(user),
     }))
-    .into_response();
-    apply_login_cookies(response.headers_mut(), &app.settings, &id, &csrf, ttl);
-    Ok(response)
+    .into_response()
 }
 
 fn effective_share(user: &User) -> bool {

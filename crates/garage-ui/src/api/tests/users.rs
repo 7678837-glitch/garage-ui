@@ -1421,3 +1421,80 @@
         assert_eq!(row.bucket_id, "bkt-1");
         assert_eq!(row.keys_json, r#"["a.txt"]"#);
     }
+
+    #[tokio::test]
+    async fn reset_password_does_not_restore_a_concurrent_authorization_change() {
+        use std::future::Future;
+        use std::task::Poll;
+        let dir = crate::util::temp_dir();
+        let mut app = state::test_app(&dir).await;
+        let (admin, _) = login(&app).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_str(&cookie_header(&admin)).unwrap(),
+        );
+        let current = crate::session::authenticate(&app, &headers, "127.0.0.1")
+            .await
+            .unwrap();
+        let hash = crate::password::hash_async(PASSWORD.into(), 4)
+            .await
+            .unwrap();
+        let id = crate::db::insert_user(&app.db, "Target", &hash, "admin", true, true)
+            .await
+            .unwrap();
+        app.db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new().filename(dir.join("garage-ui.sqlite")),
+            )
+            .await
+            .unwrap();
+        let guard = app.write.lock().await;
+        let held = app.db.acquire().await.unwrap();
+        let body = serde_json::from_value(json!({"password": "reset password"})).unwrap();
+        let reset = super::users::reset_password(
+            axum::extract::State(app.clone()),
+            super::Authed(current),
+            axum::extract::Path(id),
+            axum::Json(body),
+        );
+        tokio::pin!(reset);
+        std::future::poll_fn(|cx| {
+            assert!(reset.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        // SQLx serves acquisition requests in FIFO order: this writer follows the target SELECT.
+        let writer = app.db.acquire();
+        tokio::pin!(writer);
+        std::future::poll_fn(|cx| {
+            assert!(writer.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(held);
+        let (result, ()) = tokio::join!(reset, async {
+            let mut connection = writer.await.unwrap();
+            sqlx::query("UPDATE users SET role = 'viewer', can_download = 0, can_share = 0, disabled = 1 WHERE id = ?")
+                .bind(id).execute(&mut *connection).await.unwrap();
+            drop(connection);
+            drop(guard);
+        });
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+        let target = crate::db::find_user_by_id(&app.db, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            target.role, "viewer",
+            "password reset restored the old role"
+        );
+        assert!(!target.can_download);
+        assert!(!target.can_share);
+        assert!(target.disabled);
+        assert!(crate::password::verify(
+            "reset password",
+            &target.password_hash
+        ));
+    }

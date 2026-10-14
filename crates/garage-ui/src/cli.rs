@@ -113,20 +113,12 @@ async fn reset_password(
     let hash = crate::password::hash_async(password.to_string(), cost)
         .await
         .map_err(|_| anyhow::anyhow!("failed to hash password"))?;
-    crate::db::update_user(
-        pool,
-        user.id,
-        &user.role,
-        user.can_download,
-        user.can_share,
-        user.disabled,
-        Some(&hash),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("failed to write user"))?;
-    crate::db::delete_user_sessions(pool, user.id)
+    if !crate::db::reset_user_password(pool, user.id, &hash)
         .await
-        .map_err(|_| anyhow::anyhow!("failed to clear sessions"))?;
+        .map_err(|_| anyhow::anyhow!("failed to write user"))?
+    {
+        anyhow::bail!("user does not exist");
+    }
     Ok(())
 }
 
@@ -365,5 +357,58 @@ mod tests {
         assert_eq!(strip_password_line("0123456789\r\n"), "0123456789");
         assert_eq!(strip_password_line("  0123456789 \n"), "  0123456789 ");
         assert_eq!(strip_password_line("0123456789"), "0123456789");
+    }
+    #[tokio::test]
+    async fn cli_password_reset_preserves_concurrent_authorization_revocation() {
+        use std::future::Future;
+        use std::task::Poll;
+        let dir = crate::util::temp_dir();
+        let path = dir.join("reset.sqlite");
+        let initial = crate::db::open(&path).await.unwrap();
+        let hash = crate::password::hash_async("original password".into(), 4)
+            .await
+            .unwrap();
+        let id = crate::db::insert_user(&initial, "Ada", &hash, "admin", true, true)
+            .await
+            .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+        let held = pool.acquire().await.unwrap();
+        let reset = reset_password(&pool, "Ada", "replacement password", 4);
+        tokio::pin!(reset);
+        std::future::poll_fn(|cx| {
+            assert!(reset.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let writer = pool.acquire();
+        tokio::pin!(writer);
+        std::future::poll_fn(|cx| {
+            assert!(writer.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(held);
+        let (result, ()) = tokio::join!(reset, async {
+            let mut connection = writer.await.unwrap();
+            sqlx::query("UPDATE users SET role = 'viewer', can_download = 0, can_share = 0, disabled = 1 WHERE id = ?")
+                .bind(id).execute(&mut *connection).await.unwrap();
+        });
+        result.unwrap();
+        let target = crate::db::find_user_by_id(&pool, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.role, "viewer", "CLI reset restored the old role");
+        assert!(!target.can_download);
+        assert!(!target.can_share);
+        assert!(target.disabled);
+        assert!(crate::password::verify(
+            "replacement password",
+            &target.password_hash
+        ));
     }
 }
