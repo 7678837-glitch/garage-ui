@@ -1,3 +1,4 @@
+import { Button, Checkbox, Dialog, Table, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
@@ -168,7 +169,7 @@ function parseKeys(payload: unknown): BucketKeyGrant[] {
   return grants;
 }
 
-function GrantForm({ bucketId }: { bucketId: string }) {
+function GrantForm({ bucketId, onPendingChange }: { bucketId: string; onPendingChange: (pending: boolean) => void }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(blankGrant);
   const grant = useMutation({
@@ -177,6 +178,8 @@ function GrantForm({ bucketId }: { bucketId: string }) {
         method: "POST",
         body: permissionBody(body.accessKeyId.trim(), body.owner, body.read, body.write),
       }),
+    onMutate: () => onPendingChange(true),
+    onSettled: () => onPendingChange(false),
     onSuccess: async () => {
       setDraft(blankGrant);
       await client.invalidateQueries({ queryKey: permissionQueryKey(bucketId) });
@@ -197,8 +200,7 @@ function GrantForm({ bucketId }: { bucketId: string }) {
       }}
     >
       <label className="ui-field">
-        {copy("ui.access.key")}<input
-          className="ui-input"
+        {copy("ui.access.key")}<TextField.Root size="2"
           autoComplete="off"
           value={draft.accessKeyId}
           onChange={(event) => {
@@ -208,47 +210,28 @@ function GrantForm({ bucketId }: { bucketId: string }) {
         />
       </label>
       <label className="ui-checkbox-field">
-        <input
-          className="mr-2"
-          type="checkbox"
-          checked={draft.owner}
-          onChange={(event) => {
-            const owner = event.target.checked;
-            setDraft((current) => ({ ...current, owner }));
-          }}
-        />
+        <Checkbox disabled={grant.isPending} checked={draft.owner} onCheckedChange={(checked) => {
+            setDraft((current) => ({ ...current, owner: checked === true }));
+          }} />
         {copy("ui.owner.2")}</label>
       <label className="ui-checkbox-field">
-        <input
-          className="mr-2"
-          type="checkbox"
-          checked={draft.read}
-          onChange={(event) => {
-            const read = event.target.checked;
-            setDraft((current) => ({ ...current, read }));
-          }}
-        />
+        <Checkbox disabled={grant.isPending} checked={draft.read} onCheckedChange={(checked) => {
+            setDraft((current) => ({ ...current, read: checked === true }));
+          }} />
         {copy("ui.read.2")}</label>
       <label className="ui-checkbox-field">
-        <input
-          className="mr-2"
-          type="checkbox"
-          checked={draft.write}
-          onChange={(event) => {
-            const write = event.target.checked;
-            setDraft((current) => ({ ...current, write }));
-          }}
-        />
+        <Checkbox disabled={grant.isPending} checked={draft.write} onCheckedChange={(checked) => {
+            setDraft((current) => ({ ...current, write: checked === true }));
+          }} />
         {copy("ui.write.2")}</label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {grant.isSuccess ? <p>{copy("ui.permissions.granted")}</p> : null}
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2" variant="solid"
         type="submit"
         disabled={!ready || grant.isPending}
       >
         {grant.isPending ? copy("ui.granting") : copy("ui.grant")}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -256,6 +239,8 @@ function GrantForm({ bucketId }: { bucketId: string }) {
 function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage: boolean }) {
   const client = useQueryClient();
   const [target, setTarget] = useState<BucketKeyGrant | null>(null);
+  const [grantOpen, setGrantOpen] = useState(false);
+  const [grantPending, setGrantPending] = useState(false);
   const keys = useQuery({
     queryKey: permissionQueryKey(bucketId),
     queryFn: () => loadBucketKeys(bucketId),
@@ -291,14 +276,13 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               void keys.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {view.empty ? (
@@ -310,27 +294,34 @@ function PermissionPanel({ bucketId, canManage }: { bucketId: string; canManage:
       ) : null}
       {keys.data && keys.data.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.keys")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table"><thead><tr>
-            <th scope="col">{copy("ui.key.2")}</th>
-            <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
-            {canManage ? <th scope="col">{copy("ui.actions")}</th> : null}
-          </tr></thead><tbody>{keys.data.map((key, index) => (
-            <tr key={`${key.accessKeyId}-${index}`} role="row">
+          <Table.Root className="ui-table ui-table-records"><Table.Header><Table.Row>
+            <Table.ColumnHeaderCell>{copy("ui.key.2")}</Table.ColumnHeaderCell>
+            <Table.ColumnHeaderCell>{copy("ui.owner.2")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell>{copy("ui.read.2")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell>{copy("ui.write.2")}</Table.ColumnHeaderCell>
+            {canManage ? <Table.ColumnHeaderCell>{copy("ui.actions")}</Table.ColumnHeaderCell> : null}
+          </Table.Row></Table.Header><Table.Body>{keys.data.map((key, index) => (
+            <Table.Row key={`${key.accessKeyId}-${index}`} role="row">
               <DataCell kind="identity" label={copy("ui.key.2")}><ResourceIdentity id={key.accessKeyId} name={key.name || undefined} /></DataCell>
               <DataCell label={copy("ui.owner.2")}>{fill(copy("ui.owner"), { flag: yesNo(key.owner) })}</DataCell>
               <DataCell label={copy("ui.read.2")}>{fill(copy("ui.read"), { flag: yesNo(key.read) })}</DataCell>
               <DataCell label={copy("ui.write.2")}>{fill(copy("ui.write"), { flag: yesNo(key.write) })}</DataCell>
-              {canManage ? <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}>{hasPermission(key) ? <button className="ui-button ui-button-danger" type="button"
+              {canManage ? <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}>{hasPermission(key) ? <Button size="2" color="red" type="button"
                 aria-label={fill(copy("ui.revoke"), { accessKeyId: key.accessKeyId })}
-                onClick={() => { revoke.reset(); setTarget(key); }}>{translate("Revoke")}</button> : null}</DataCell> : null}
-            </tr>
-          ))}</tbody></table>
+                onClick={() => { revoke.reset(); setTarget(key); }}>{translate("Revoke")}</Button> : null}</DataCell> : null}
+            </Table.Row>
+          ))}</Table.Body></Table.Root>
         </div>
       ) : null}
-      {canManage ? <details className="ui-disclosure">
-        <summary aria-label={copy("ui.grant.key")}>{copy("ui.grant.key")}</summary>
-        <GrantForm bucketId={bucketId} />
-      </details> : null}
+      {canManage ? <Dialog.Root open={grantOpen} onOpenChange={(open) => { if (!grantPending) setGrantOpen(open); }}>
+        <Dialog.Trigger><Button size="2" color="gray" variant="soft">{copy("ui.grant.key")}</Button></Dialog.Trigger>
+        <Dialog.Content maxWidth="480px" aria-busy={grantPending}
+          onEscapeKeyDown={(event) => { if (grantPending) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (grantPending) event.preventDefault(); }}>
+          <Dialog.Title>{copy("ui.grant.key")}</Dialog.Title>
+          <Dialog.Description>{fill(copy("ui.grant.permissions.on"), { bucketId })}</Dialog.Description>
+          <GrantForm bucketId={bucketId} onPendingChange={setGrantPending} />
+          <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={grantPending} onClick={() => setGrantOpen(false)}>{copy("ui.cancel")}</Button></div>
+        </Dialog.Content>
+      </Dialog.Root> : null}
       {target !== null ? (
         <ConfirmDialog
           action="revoke-permission"
@@ -368,14 +359,13 @@ export function BucketPermissions({
   }
   return (
     <>
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setOpen(true);
         }}
       >
-        {fill(copy("ui.permissions.for"), { bucketId: bucketId })}</button>
+        {fill(copy("ui.permissions.for"), { bucketId: bucketId })}</Button>
       {open ? <PermissionPanel bucketId={bucketId} canManage={canManage} /> : null}
     </>
   );

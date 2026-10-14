@@ -1,6 +1,18 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { Theme } from "@radix-ui/themes";
+import type { ReactNode } from "react";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { CapacityField } from "./CapacityField";
+
+globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+
+function render(ui: ReactNode) { return rtlRender(<Theme>{ui}</Theme>); }
+
+function selectOption(label: string, option: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+HTMLElement.prototype.scrollIntoView = () => {};
 
 afterEach(() => {
   cleanup();
@@ -30,7 +42,7 @@ function save() {
 test("shows 1800000000000 bytes as 1.80 TB and submits that digit string unchanged", () => {
   const submitted = setup("1800000000000");
   expect(capacityInput().value).toBe("1.80");
-  expect((screen.getByLabelText("Unit") as HTMLSelectElement).value).toBe("TB");
+  expect(screen.getByRole("combobox", { name: "Unit" }).textContent).toBe("TB");
   save();
   expect(submitted).toEqual(["1800000000000"]);
 });
@@ -65,7 +77,7 @@ test("submits a leading zero in the original byte string unchanged", () => {
 
 test("keeps the original byte string when only the unit changes", () => {
   const submitted = setup("1800000000000");
-  fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "GB" } });
+  selectOption("Unit", "GB");
   expect(capacityInput().value).toBe("1800.00");
   save();
   expect(submitted).toEqual(["1800000000000"]);
@@ -80,7 +92,7 @@ test("submits an edited 1.81 TB as 1810000000000 bytes", () => {
 
 test("submits an edited byte string past the 53-bit mantissa unchanged as digits", () => {
   const submitted = setup("1");
-  fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "B" } });
+  selectOption("Unit", "B");
   fireEvent.change(capacityInput(), { target: { value: "9007199254740993" } });
   save();
   expect(submitted).toEqual(["9007199254740993"]);
@@ -88,7 +100,7 @@ test("submits an edited byte string past the 53-bit mantissa unchanged as digits
 
 test("rejects a fraction of a byte instead of rounding it", () => {
   const submitted = setup("2");
-  fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "B" } });
+  selectOption("Unit", "B");
   fireEvent.change(capacityInput(), { target: { value: "1.5" } });
   save();
   expect(screen.getByRole("alert").textContent).toBe("Enter a whole number of bytes");

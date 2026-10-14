@@ -1,3 +1,4 @@
+import { Button, Checkbox, Select } from "@radix-ui/themes";
 import { useState, type FormEvent } from "react";
 import { copy } from "./i18n";
 
@@ -63,48 +64,29 @@ export function KeyGrant({
     <form className="ui-form" aria-label={copy("ui.grant.key")} onSubmit={onSubmit}>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.key.2")}</span>
-        <select
-          className="ui-input"
-          value={accessKeyId}
-          onChange={(event) => setAccessKeyId(event.target.value)}
-        >
-          <option value="">{copy("ui.select.a.key")}</option>
-          {keys.map((key) => (
-            <option key={key.id} value={key.id}>
-              {key.label}
-            </option>
-          ))}
-        </select>
+        <Select.Root value={accessKeyId} onValueChange={setAccessKeyId} disabled={pending}>
+          <Select.Trigger aria-label={copy("ui.key.2")} placeholder={copy("ui.select.a.key")} />
+          <Select.Content>{keys.map((key) => (
+            <Select.Item key={key.id} value={key.id}>{key.label}</Select.Item>
+          ))}</Select.Content>
+        </Select.Root>
       </label>
       <label className="ui-checkbox-field">
-        <input
-          type="checkbox"
-          checked={read}
-          onChange={(event) => setRead(event.target.checked)}
-        />{" "}
+        <Checkbox disabled={pending} checked={read} onCheckedChange={(checked) => setRead(checked === true)} />{" "}
         {copy("ui.read.2")}</label>
       <label className="ui-checkbox-field">
-        <input
-          type="checkbox"
-          checked={write}
-          onChange={(event) => setWrite(event.target.checked)}
-        />{" "}
+        <Checkbox disabled={pending} checked={write} onCheckedChange={(checked) => setWrite(checked === true)} />{" "}
         {copy("ui.write.2")}</label>
       <label className="ui-checkbox-field">
-        <input
-          type="checkbox"
-          checked={owner}
-          onChange={(event) => setOwner(event.target.checked)}
-        />{" "}
+        <Checkbox disabled={pending} checked={owner} onCheckedChange={(checked) => setOwner(checked === true)} />{" "}
         {copy("ui.owner.2")}</label>
       {error ? <p role="alert">{error}</p> : null}
       {succeeded ? <p>{copy("ui.key.granted")}</p> : null}
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2" variant="solid"
         type="submit"
         disabled={!canSubmit || pending}
       >
-        {copy(pending ? "ui.granting" : "ui.grant")}</button>
+        {copy(pending ? "ui.granting" : "ui.grant")}</Button>
     </form>
   );
 }

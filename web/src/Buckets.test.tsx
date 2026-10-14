@@ -1,7 +1,28 @@
+import { Theme } from "@radix-ui/themes";
+import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { Buckets } from "./Buckets";
+
+globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+
+function render(ui: ReactNode) { return rtlRender(<Theme>{ui}</Theme>); }
+
+function selectOption(label: string, option: string) {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+HTMLElement.prototype.scrollIntoView = () => {};
+
+async function bucketAction(id: string, action: string) {
+  fireEvent.keyDown(await screen.findByRole("button", { name: `Actions ${id}` }), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: action }));
+}
+async function openSettings(id = "bkt-1") {
+  await bucketAction(id, `Edit ${id}`);
+  await screen.findByRole("region", { name: "Aliases" });
+}
 
 afterEach(() => {
   cleanup();
@@ -76,6 +97,7 @@ test("shows the bucket id and string aliases without letting an alias hide the i
   );
   renderBuckets();
   expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
+  expect(screen.getAllByRole("table")).toHaveLength(1);
   expect(screen.getByText("bkt-2", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("east")).toBeTruthy();
   expect(screen.getByText("a&b=c")).toBeTruthy();
@@ -453,19 +475,20 @@ test("cancels a bucket delete without a request, then confirms the delete", asyn
     }),
   );
   renderBuckets(true);
-  fireEvent.click(await screen.findByRole("button", { name: "Delete bkt-1" }));
+  await bucketAction("bkt-1", "Delete bkt-1");
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("bkt-1");
   expect(dialog.textContent).toContain("still contains objects");
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions bkt-1" })));
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Delete bkt-1" }));
+  await bucketAction("bkt-1", "Delete bkt-1");
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Delete bkt-1" }));
+  await bucketAction("bkt-1", "Delete bkt-1");
   fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
   expect(await screen.findByText("Bucket deleted")).toBeTruthy();
   expect(await screen.findByText("There are no buckets. Create the first bucket.")).toBeTruthy();
@@ -492,7 +515,7 @@ test("shows the API message when deleting a bucket fails and keeps the bucket li
     }),
   );
   renderBuckets(true);
-  fireEvent.click(await screen.findByRole("button", { name: "Delete bkt-1" }));
+  await bucketAction("bkt-1", "Delete bkt-1");
   fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
   expect(await screen.findByText("Bucket is not empty")).toBeTruthy();
   expect(screen.getByRole("dialog").textContent).toContain("bkt-1");
@@ -512,10 +535,11 @@ test("shows the API message when removing an alias fails and keeps the alias", a
     }),
   );
   renderBuckets(true);
-  fireEvent.click(await screen.findByRole("button", { name: "Remove global alias east" }));
+  await openSettings();
+  fireEvent.click(screen.getByRole("button", { name: "Remove global alias east" }));
   expect(await screen.findByText("Alias is still in use")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Remove global alias east" })).toBeTruthy();
-  expect(screen.getByText("east")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Aliases" })).getByText("east")).toBeTruthy();
 });
 
 test("adds and removes a global alias without sending a bucket id", async () => {
@@ -535,6 +559,7 @@ test("adds and removes a global alias without sending a bucket id", async () => 
         aliases = aliases.filter((name) => name !== "east");
         return new Response(null, { status: 204 });
       }
+      if (call.url === "/api/buckets/bkt-1") return json({ id: "bkt-1", globalAliases: aliases });
       return json({
         items: [{ id: "bkt-1", globalAliases: aliases }],
         hasMore: false,
@@ -542,24 +567,19 @@ test("adds and removes a global alias without sending a bucket id", async () => 
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
-  expect(await screen.findByText("east")).toBeTruthy();
+  await openSettings();
+  expect(await within(screen.getByRole("region", { name: "Aliases" })).findByText("east")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Add alias" }));
   fireEvent.change(screen.getByLabelText("Global alias for bkt-1"), { target: { value: "photos" } });
   fireEvent.click(screen.getByRole("button", { name: "Add alias to bkt-1" }));
   expect(await screen.findByText("photos")).toBeTruthy();
   expect(screen.getByText("Alias added")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "Remove global alias east" }));
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Remove global alias east" })).toBeNull();
   });
-  expect(screen.getByText("photos")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Aliases" })).getByText("photos")).toBeTruthy();
   expect(calls.find((call) => call.method === "POST")?.body).toEqual({ globalAlias: "photos" });
   expect(calls.find((call) => call.method === "DELETE")?.body).toEqual({ globalAlias: "east" });
   expect(calls.find((call) => call.method === "POST")?.csrf).toBe("csrf-token");
@@ -588,19 +608,14 @@ test("adds and removes a local alias with its access key and keeps the draft whe
         localAliases = [];
         return new Response(null, { status: 204 });
       }
+      if (call.url === "/api/buckets/bkt-1") return json({ id: "bkt-1", localAliases });
       return json({ items: [{ id: "bkt-1", localAliases }], hasMore: false });
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   expect(await screen.findByText("bkt-1", { selector: "code" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Add alias" }));
   fireEvent.click(screen.getByRole("radio", { name: "Local for bkt-1" }));
   fireEvent.change(screen.getByLabelText("Local alias for bkt-1"), { target: { value: "site" } });
   fireEvent.change(screen.getByLabelText("Access key for bkt-1"), { target: { value: "GK1" } });
@@ -611,6 +626,8 @@ test("adds and removes a local alias with its access key and keeps the draft whe
   expect((screen.getByLabelText("Access key for bkt-1") as HTMLInputElement).value).toBe("GK1");
   fail = false;
   fireEvent.click(screen.getByRole("button", { name: "Add alias to bkt-1" }));
+  await screen.findByText("Alias added");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(await screen.findByRole("button", { name: "Remove local alias site for GK1" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove local alias site for GK1" }));
   await waitFor(() => {
@@ -673,23 +690,17 @@ test("sends an unchanged maxSize as the digit text from the list response", asyn
         bodies.push(String(init?.body));
         return new Response(null, { status: 204 });
       }
+      if (String(input) === "/api/buckets/bkt-1") return new Response(page.slice(page.indexOf("[{" ) + 1, page.indexOf("}],") + 1), { status: 200 });
       expect(String(input)).toContain("/api/buckets?");
       expect(init?.credentials).toBe("include");
       return new Response(page, { status: 200 });
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
-  expect(await screen.findByText("4 of 12 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  await openSettings();
+  expect(await screen.findByText("4 of 12 objects")).toBeTruthy();
   expect(
-    screen.getByText("9007199254740993 B", { selector: ".ui-bucket-usage-desktop code" }),
+    screen.getByText("9007199254740993 B", { selector: "code" }),
   ).toBeTruthy();
   const size = screen.getByLabelText("Max size for bkt-1") as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
@@ -731,14 +742,7 @@ test("clears both quotas with null and keeps the entered values when save fails"
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
   expect(size.value).toBe("10");
@@ -750,7 +754,7 @@ test("clears both quotas with null and keeps the entered values when save fails"
   expect(size.value).toBe("");
   expect(objects.value).toBe("");
   expect(bodies).toEqual(['{"maxSize":null,"maxObjects":null}']);
-  expect(screen.getByText("1 of 20 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
+  expect(screen.getByText("1 of 20 objects")).toBeTruthy();
   expect(screen.getByText("Save failed")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save quotas for bkt-1" })).toBeTruthy();
 });
@@ -781,14 +785,7 @@ test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps t
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   const size = (await screen.findByLabelText("Max size for bkt-1")) as HTMLInputElement;
   const objects = screen.getByLabelText("Max objects for bkt-1") as HTMLInputElement;
   expect(size.value).toBe("10");
@@ -807,9 +804,9 @@ test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps t
   expect(window.onbeforeunload).toBe(uploadGuard);
   window.onbeforeunload = null;
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  fireEvent.click(screen.getByRole("button", { name: "Open objects (bkt-1)" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Objects" }));
   expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
-  expect(window.location.hash).toBe("");
+  expect(window.location.hash).toBe("#bucket/bkt-1/settings");
   expect(objects.value).toBe("21");
   window.location.hash = "#buckets/bkt-1";
   await act(async () => {
@@ -817,7 +814,7 @@ test("quota form shows unsaved, saving, and saved, and a cancelled leave keeps t
       setTimeout(resolve, 0);
     });
   });
-  expect(window.location.hash).toBe("");
+  expect(window.location.hash).toBe("#bucket/bkt-1/settings");
   expect(objects.value).toBe("21");
   await act(async () => {
     await new Promise((resolve) => {
@@ -855,21 +852,15 @@ test("hides the quota editor when the row has no quotas object", async () => {
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
-  expect(await screen.findByText("4 objects", { selector: ".ui-bucket-usage-desktop *" })).toBeTruthy();
-  expect(screen.getByText("9 B", { selector: ".ui-bucket-usage-desktop code" })).toBeTruthy();
+  await openSettings();
+  expect(await screen.findByText("4 objects")).toBeTruthy();
+  expect(screen.getByText("9 B", { selector: "code" })).toBeTruthy();
   expect(screen.queryByText("Object quota is not set")).toBeNull();
   expect(screen.queryByText("Size quota is not set")).toBeNull();
   expect(screen.queryByLabelText("Max size for bkt-1")).toBeNull();
   expect(screen.queryByRole("button", { name: "Save quotas for bkt-1" })).toBeNull();
   expect(screen.getByRole("button", { name: "Delete bkt-1" })).toBeTruthy();
+  await changeBucketHash("#buckets");
   expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
   expect(calls.some((call) => call.method === "PUT")).toBe(false);
 });
@@ -932,14 +923,14 @@ test("loads permissions for an encoded bucket id only after the row button is cl
     }),
   );
   renderBuckets();
-  expect(await screen.findByRole("button", { name: "Permissions for a&b=c" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Actions a&b=c" })).toBeTruthy();
   expect(
     calls.some(
       (call) =>
         call.startsWith("/api/buckets/") && !call.endsWith("/cors") && !call.endsWith("/lifecycle"),
     ),
   ).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Permissions for a&b=c" }));
+  await bucketAction("a&b=c", "Permissions for a&b=c");
   expect(await screen.findByText("GK1", { selector: "code" })).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.getByText("read yes")).toBeTruthy();
@@ -1052,7 +1043,7 @@ test("filters loaded buckets from the query string and keeps that choice in the 
   expect(window.location.hash).toBe("#kept");
   expect(calls).toBe(1);
 
-  fireEvent.change(screen.getByLabelText("Sort buckets"), { target: { value: "alias" } });
+  selectOption("Sort buckets", "Alias");
   expect(bucketRowText()[0]).toContain("amy");
   expect(bucketRowText()[1]).toContain("zed");
   expect(bucketRowText()[2]).toContain("nope");
@@ -1073,7 +1064,7 @@ test("filters loaded buckets from the query string and keeps that choice in the 
   expect(screen.queryByText("There are no buckets.")).toBeNull();
   expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   expect((screen.getByLabelText("Filter buckets") as HTMLInputElement).value).toBe("missing");
-  expect((screen.getByLabelText("Sort buckets") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByRole("combobox", { name: "Sort buckets" }).textContent).toBe("Id");
   expect(window.location.hash).toBe("#kept");
   expect(calls).toBe(1);
 });
@@ -1098,17 +1089,14 @@ test("sorts loaded buckets by created time and keeps the choice in the address",
   expect(bucketRowText()[0]).toContain("later-bucket");
   expect(bucketRowText()[1]).toContain("earlier-bucket");
   expect(bucketRowText()[2]).toContain("undated-bucket");
-  const created = screen.getByRole("option", { name: "Created" }) as HTMLOptionElement;
-  expect(created.value).toBe("created");
-
-  fireEvent.change(screen.getByLabelText("Sort buckets"), { target: { value: "created" } });
+  selectOption("Sort buckets", "Created");
   expect(bucketRowText()[0]).toContain("earlier-bucket");
   expect(bucketRowText()[1]).toContain("later-bucket");
   expect(bucketRowText()[2]).toContain("undated-bucket");
   expect(window.location.search).toContain("bucketsSort=created");
   expect(window.location.search).toContain("keep=1");
   expect(window.location.hash).toBe("#kept");
-  expect((screen.getByLabelText("Sort buckets") as HTMLSelectElement).value).toBe("created");
+  expect(screen.getByRole("combobox", { name: "Sort buckets" }).textContent).toBe("Created");
 });
 
 test("saves a bucket CORS rule after showing the diff", async () => {
@@ -1147,14 +1135,7 @@ test("saves a bucket CORS rule after showing the diff", async () => {
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   expect(await screen.findByRole("button", { name: "Edit CORS" })).toBeTruthy();
   const corsGets = () =>
     calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/cors");
@@ -1197,7 +1178,7 @@ test("saves a bucket CORS rule after showing the diff", async () => {
   cleanup();
   calls.length = 0;
   renderBuckets(false);
-  fireEvent.click(await screen.findByLabelText("Settings bkt-1"));
+  await screen.findByRole("region", { name: "Aliases" });
   expect(await screen.findByText("photos")).toBeTruthy();
   expect(screen.getByText("https://old.example")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit CORS" })).toBeNull();
@@ -1246,14 +1227,7 @@ test("saves a bucket lifecycle rule after showing the diff", async () => {
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   expect(await screen.findByRole("button", { name: "Edit lifecycle" })).toBeTruthy();
   const lifecycleGets = () =>
     calls.filter((call) => call.method === "GET" && call.url === "/api/buckets/bkt-1/lifecycle");
@@ -1298,7 +1272,7 @@ test("saves a bucket lifecycle rule after showing the diff", async () => {
   cleanup();
   calls.length = 0;
   renderBuckets(false);
-  fireEvent.click(await screen.findByLabelText("Settings bkt-1"));
+  await screen.findByRole("region", { name: "Aliases" });
   expect(await screen.findByText("logs")).toBeTruthy();
   expect(screen.getByText("Enabled")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Edit lifecycle" })).toBeNull();
@@ -1352,14 +1326,7 @@ test("shows incomplete uploads and cleans up older than one hour", async () => {
     }),
   );
   renderBuckets(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  await openSettings();
   expect(await screen.findByRole("button", { name: "Incomplete uploads" })).toBeTruthy();
   expect(calls.some((call) => call.url.endsWith("/multipart"))).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Incomplete uploads" }));
@@ -1400,34 +1367,29 @@ test("keeps a long bucket identifier complete for accessible naming and inspecti
   expect(link.textContent).toBe("Bucket");
   expect(link.getAttribute("title")).toBe(resourceId);
   expect(link.getAttribute("href")).toBe(`#bucket/${resourceId}/overview`);
-  fireEvent.click(screen.getByLabelText(`Edit ${resourceId}`));
+  await openSettings(resourceId);
   expect(screen.getByText(resourceId, { selector: "code" })).toBeTruthy();
 });
 
- test("creation and row editing open on demand and keep collapsed drafts", async () => {
+test("creation uses a dialog and row settings preserve a rejected departure draft", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ id: "compact", quotas: { maxSize: 10, maxObjects: 20 } }], hasMore: false })));
   renderBuckets(true);
   expect(await screen.findByText("compact", { selector: "code" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "Global alias" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(screen.getByRole("dialog", { name: "Create bucket" })).toBeTruthy();
   expect(screen.getByRole("textbox", { name: "Global alias" })).toBeTruthy();
-  const disclosure = screen.getByLabelText("Edit compact").closest("details");
-  expect(disclosure?.open).toBe(false);
-  fireEvent.click(screen.getByLabelText("Edit compact"));
-  const input = screen.getByLabelText("Max size for compact") as HTMLInputElement;
-  fireEvent.change(input, { target: { value: "42" } });
-  fireEvent.click(screen.getByLabelText("Edit compact"));
-  expect(disclosure?.open).toBe(false);
-  fireEvent.click(screen.getByLabelText("Edit compact"));
-  expect((screen.getByLabelText("Max size for compact") as HTMLInputElement).value).toBe("42");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await openSettings("compact");
+  fireEvent.change(screen.getByLabelText("Max size for compact"), { target: { value: "42" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
-  fireEvent.click(screen.getByLabelText("Edit compact"));
   const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
   const before = window.location.hash;
-  fireEvent.click(screen.getByRole("link", { name: "Bucket (compact)" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
   expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe(before);
- });
+  expect((screen.getByLabelText("Max size for compact") as HTMLInputElement).value).toBe("42");
+});
 
 async function changeBucketHash(next: string) {
   const oldURL = window.location.href;
@@ -1604,4 +1566,28 @@ test.each([
   await waitFor(() => expect(screen.queryByRole("button", { name: "Remove local alias site for GK1" })).toBeNull());
   expect(calls.find(call => call.url === "/api/buckets/bkt-1/aliases" && call.method === "DELETE")?.body)
     .toEqual({ localAlias: "site", accessKeyId: "GK1" });
+});
+
+
+test("bucket deletion locks cancellation and duplicate submits while pending", async () => {
+  let release: (response: Response) => void = () => {};
+  let deletes = 0;
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") { deletes += 1; return new Promise<Response>((resolve) => { release = resolve; }); }
+    return json({ items: [{ id: "bkt-1" }], hasMore: false });
+  }));
+  renderBuckets(true);
+  await bucketAction("bkt-1", "Delete bkt-1");
+  fireEvent.click(screen.getByRole("button", { name: "Delete bucket" }));
+  const pending = await screen.findByRole("button", { name: "Deleting bucket" }) as HTMLButtonElement;
+  expect(pending.disabled).toBe(true);
+  fireEvent.click(pending);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(deletes).toBe(1);
+  release(json({ message: "Bucket is not empty" }, 409));
+  await screen.findByText("Bucket is not empty");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions bkt-1" })));
 });

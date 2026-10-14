@@ -1,3 +1,4 @@
+import { Button, Select, TextField } from "@radix-ui/themes";
 import { useState, type FormEvent } from "react";
 import { unitCopyKey, useI18n, copy } from "./i18n";
 
@@ -106,8 +107,7 @@ export function CapacityField({
     <form className="ui-form" aria-label={copy("ui.node.capacity")} onSubmit={onSubmit}>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.capacity")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           inputMode="decimal"
           autoComplete="off"
           value={shown}
@@ -119,28 +119,18 @@ export function CapacityField({
       </label>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.unit")}</span>
-        <select
-          className="ui-input"
-          value={unit}
-          onChange={(event) => {
-            const next = event.target.value;
-            if (!isDecimalUnit(next)) {
-              return;
-            }
-            setUnit(next);
-            setError(null);
-          }}
-        >
-          {DECIMAL_UNITS.map((item) => (
-            <option key={item} value={item}>
-              {t(unitCopyKey(item))}
-            </option>
-          ))}
-        </select>
+        <Select.Root value={unit} onValueChange={(next) => {
+          if (isDecimalUnit(next)) { setUnit(next); setError(null); }
+        }}>
+          <Select.Trigger aria-label={copy("ui.unit")} />
+          <Select.Content>{DECIMAL_UNITS.map((item) => (
+            <Select.Item key={item} value={item}>{t(unitCopyKey(item))}</Select.Item>
+          ))}</Select.Content>
+        </Select.Root>
       </label>
       {alertText ? <p role="alert">{alertText}</p> : null}
-      <button className="ui-button ui-button-primary" type="submit" disabled={pending}>
-        {pending ? copy("ui.working") : copy("ui.save")}</button>
+      <Button size="2" variant="solid" type="submit" disabled={pending}>
+        {pending ? copy("ui.working") : copy("ui.save")}</Button>
     </form>
   );
 }

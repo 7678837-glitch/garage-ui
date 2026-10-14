@@ -1,5 +1,6 @@
+import { Button, Dialog, DropdownMenu, RadioGroup, Select, Table, TextField } from "@radix-ui/themes";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { BucketPermissions, bucketUrl } from "./BucketPermissions";
@@ -495,9 +496,8 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
       }}
     >
       <label className={`${wrap} ui-field`}>
-        {copy("ui.max.size")}<input
+        {copy("ui.max.size")}<TextField.Root size="2"
           aria-label={fill(copy("ui.max.size.for"), { bucketId: bucketId })}
-          className="ui-input"
           inputMode="numeric"
           autoComplete="off"
           value={maxSize}
@@ -507,9 +507,8 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
         />
       </label>
       <label className={`${wrap} ui-field`}>
-        {copy("ui.max.objects")}<input
+        {copy("ui.max.objects")}<TextField.Root size="2"
           aria-label={fill(copy("ui.max.objects.for"), { bucketId: bucketId })}
-          className="ui-input"
           inputMode="numeric"
           autoComplete="off"
           value={maxObjects}
@@ -520,14 +519,14 @@ function QuotaEditor({ bucketId, quotas }: { bucketId: string; quotas: Quotas })
       </label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {quotaStatus ? <p>{quotaStatus}</p> : null}
-      <button
-        className={`${wrap} ui-button`}
+      <Button size="2" variant="solid"
+        className={wrap}
         type="submit"
         disabled={save.isPending}
         aria-label={save.isPending ? copy("ui.saving.quotas") : fill(copy("ui.save.quotas.for"), { bucketId: bucketId })}
       >
         {save.isPending ? copy("ui.saving.quotas") : copy("ui.save.quotas")}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -707,14 +706,13 @@ function CorsEditor({ bucketId }: { bucketId: string }) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setOpen(true);
         }}
       >
-        {copy("ui.edit.cors")}</button>
+        {copy("ui.edit.cors")}</Button>
     );
   }
   return <CorsForm bucketId={bucketId} />;
@@ -769,8 +767,7 @@ function CorsForm({ bucketId }: { bucketId: string }) {
             CORS_FIELDS.map(([key, label]) => (
               <label key={label} className="ui-field">
                 {translate(label)}
-                <input
-                  className="ui-input"
+                <TextField.Root size="2"
                   value={rule[key]}
                   onChange={(event) => {
                     replaceRule(index, { ...rule, [key]: event.target.value });
@@ -779,26 +776,23 @@ function CorsForm({ bucketId }: { bucketId: string }) {
               </label>
             ))
           )}
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
             }}
           >
-            {copy("ui.remove.cors.rule")}</button>
+            {copy("ui.remove.cors.rule")}</Button>
         </div>
       ))}
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setDrafts([...drafts, emptyCorsDraft()]);
         }}
       >
-        {copy("ui.add.cors.rule")}</button>
-      <button
-        className="ui-button"
+        {copy("ui.add.cors.rule")}</Button>
+      <Button size="2" color="gray" variant="soft"
         type="button"
         disabled={!ready}
         onClick={() => {
@@ -813,29 +807,27 @@ function CorsForm({ bucketId }: { bucketId: string }) {
             });
         }}
       >
-        {copy("ui.review.cors")}</button>
+        {copy("ui.review.cors")}</Button>
       {reviewError ? <p>{reviewError}</p> : null}
       {current !== null ? (
         <>
           <pre aria-label={copy("ui.current")}>{current}</pre>
           <pre aria-label={copy("ui.next")}>{nextCorsText(drafts)}</pre>
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               setCurrent(null);
             }}
           >
-            {copy("ui.cancel")}</button>
-          <button
-            className="ui-button"
+            {copy("ui.cancel")}</Button>
+          <Button size="2" color="gray" variant="soft"
             type="button"
             disabled={save.isPending || !ready}
             onClick={() => {
               save.mutate(corsBody(drafts));
             }}
           >
-            {copy("ui.save.cors")}</button>
+            {copy("ui.save.cors")}</Button>
           {save.error instanceof Error ? <p>{save.error.message}</p> : null}
         </>
       ) : null}
@@ -1130,14 +1122,13 @@ function LifecycleEditor({ bucketId }: { bucketId: string }) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setOpen(true);
         }}
       >
-        {copy("ui.edit.lifecycle")}</button>
+        {copy("ui.edit.lifecycle")}</Button>
     );
   }
   return <LifecycleForm bucketId={bucketId} />;
@@ -1194,8 +1185,7 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
             LIFECYCLE_FIELDS.map(([key, label]) => (
               <label key={label} className="ui-field">
                 {translate(label)}
-                <input
-                  className="ui-input"
+                <TextField.Root size="2"
                   value={rule[key]}
                   onChange={(event) => {
                     replaceRule(index, { ...rule, [key]: event.target.value });
@@ -1204,26 +1194,23 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
               </label>
             ))
           )}
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               setDrafts(drafts.filter((_, itemIndex) => itemIndex !== index));
             }}
           >
-            {copy("ui.remove.lifecycle.rule")}</button>
+            {copy("ui.remove.lifecycle.rule")}</Button>
         </div>
       ))}
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setDrafts([...drafts, emptyLifecycleDraft()]);
         }}
       >
-        {copy("ui.add.lifecycle.rule")}</button>
-      <button
-        className="ui-button"
+        {copy("ui.add.lifecycle.rule")}</Button>
+      <Button size="2" color="gray" variant="soft"
         type="button"
         disabled={!ready}
         onClick={() => {
@@ -1240,29 +1227,27 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
             });
         }}
       >
-        {copy("ui.review.lifecycle")}</button>
+        {copy("ui.review.lifecycle")}</Button>
       {reviewError ? <p>{reviewError}</p> : null}
       {current !== null ? (
         <>
           <pre aria-label={copy("ui.current")}>{current}</pre>
           <pre aria-label={copy("ui.next")}>{nextLifecycleText(drafts)}</pre>
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               setCurrent(null);
             }}
           >
-            {copy("ui.cancel")}</button>
-          <button
-            className="ui-button"
+            {copy("ui.cancel")}</Button>
+          <Button size="2" color="gray" variant="soft"
             type="button"
             disabled={save.isPending || !ready}
             onClick={() => {
               save.mutate(lifecycleBody(drafts));
             }}
           >
-            {copy("ui.save.lifecycle")}</button>
+            {copy("ui.save.lifecycle")}</Button>
           {save.error instanceof Error ? <p>{save.error.message}</p> : null}
         </>
       ) : null}
@@ -1325,14 +1310,13 @@ function IncompleteUploads({ bucketId }: { bucketId: string }) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         onClick={() => {
           setOpen(true);
         }}
       >
-        {copy("ui.incomplete.uploads")}</button>
+        {copy("ui.incomplete.uploads")}</Button>
     );
   }
   return <IncompleteUploadsPanel bucketId={bucketId} />;
@@ -1378,8 +1362,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
         </p>
       ))}
       <label className="ui-field">
-        {copy("ui.older.than.hours")}<input
-          className="ui-input"
+        {copy("ui.older.than.hours")}<TextField.Root size="2"
           inputMode="numeric"
           value={hours}
           onChange={(event) => {
@@ -1387,8 +1370,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
           }}
         />
       </label>
-      <button
-        className="ui-button"
+      <Button size="2" color="gray" variant="soft"
         type="button"
         disabled={secs === null || cleanup.isPending}
         onClick={() => {
@@ -1398,14 +1380,14 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
           cleanup.mutate(secs);
         }}
       >
-        {copy("ui.clean.up")}</button>
+        {copy("ui.clean.up")}</Button>
       {cleanup.error instanceof Error ? <p>{cleanup.error.message}</p> : null}
       {deleted !== null ? <p>{fill(copy("ui.cleaned.up"), { deleted: deleted })}</p> : null}
     </div>
   );
 }
 
-function CreateBucketForm() {
+function CreateBucketForm({ onPendingChange }: { onPendingChange: (pending: boolean) => void }) {
   const client = useQueryClient();
   const [globalAlias, setGlobalAlias] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -1413,8 +1395,10 @@ function CreateBucketForm() {
     mutationFn: (alias: string) =>
       api("/api/buckets", { method: "POST", body: JSON.stringify(createBody(alias)) }),
     onMutate: () => {
+      onPendingChange(true);
       setNote(null);
     },
+    onSettled: () => onPendingChange(false),
     onSuccess: async () => {
       setGlobalAlias("");
       setNote(copy("ui.bucket.created"));
@@ -1429,13 +1413,12 @@ function CreateBucketForm() {
       className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
-        create.mutate(globalAlias);
+        if (!create.isPending) create.mutate(globalAlias);
       }}
     >
       <label className="ui-field">
         <span className="text-sm">{copy("ui.global.alias")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           value={globalAlias}
           onChange={(event) => {
             setGlobalAlias(event.target.value);
@@ -1444,18 +1427,18 @@ function CreateBucketForm() {
       </label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
-      <button
-        className="ui-button"
+      <Button size="2" variant="solid"
         type="submit"
         disabled={create.isPending}
       >
         {create.isPending ? copy("ui.creating.bucket") : copy("ui.create.bucket")}
-      </button>
+      </Button>
     </form>
   );
 }
 
 function AliasControls({ bucketId }: { bucketId: string }) {
+  const [open, setOpen] = useState(false);
   const client = useQueryClient();
   const [draft, setDraft] = useState(blankAliasDraft);
   const [note, setNote] = useState<string | null>(null);
@@ -1473,86 +1456,70 @@ function AliasControls({ bucketId }: { bucketId: string }) {
   });
   const error = add.error instanceof Error ? add.error.message : null;
   return (
-    <form
-      className="ui-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        add.mutate(draftBody(draft));
-      }}
-    >
-      <fieldset className="grid min-w-0 gap-1">
-        <legend className={`${wrap} text-sm`}>{copy("ui.add.alias")}</legend>
-        <label className={`${wrap} ui-checkbox-field`}>
-          <input
-            className="mr-2"
-            type="radio"
-            name={`alias-scope-${bucketId}`}
-            aria-label={fill(copy("ui.global.for"), { bucketId: bucketId })}
-            checked={draft.scope === "global"}
-            onChange={() => {
-              setDraft((current) => ({ ...current, scope: "global" }));
-            }}
-          />
-          {copy("ui.global")}</label>
-        <label className={`${wrap} ui-checkbox-field`}>
-          <input
-            className="mr-2"
-            type="radio"
-            name={`alias-scope-${bucketId}`}
-            aria-label={fill(copy("ui.local.for"), { bucketId: bucketId })}
-            checked={draft.scope === "local"}
-            onChange={() => {
-              setDraft((current) => ({ ...current, scope: "local" }));
-            }}
-          />
-          {copy("ui.local")}</label>
-      </fieldset>
-      {draft.scope === "global" ? (
-        <label className={`${wrap} ui-field`}>
-          {copy("ui.global.alias")}<input
-            aria-label={fill(copy("ui.global.alias.for"), { bucketId: bucketId })}
-            className="ui-input"
-            value={draft.globalAlias}
-            onChange={(event) => {
-              setDraft((current) => ({ ...current, globalAlias: event.target.value }));
-            }}
-          />
-        </label>
-      ) : (
-        <>
-          <label className={`${wrap} ui-field`}>
-            {copy("ui.local.alias")}<input
-              aria-label={fill(copy("ui.local.alias.for"), { bucketId: bucketId })}
-              className="ui-input"
-              value={draft.localAlias}
-              onChange={(event) => {
-                setDraft((current) => ({ ...current, localAlias: event.target.value }));
-              }}
-            />
-          </label>
-          <label className={`${wrap} ui-field`}>
-            {copy("ui.access.key")}<input
-              aria-label={fill(copy("ui.access.key.for"), { bucketId: bucketId })}
-              className="ui-input"
-              value={draft.accessKeyId}
-              onChange={(event) => {
-                setDraft((current) => ({ ...current, accessKeyId: event.target.value }));
-              }}
-            />
-          </label>
-        </>
-      )}
-      {error ? <p className="ui-alert">{error}</p> : null}
-      {note ? <p>{note}</p> : null}
-      <button
-        className={`${wrap} ui-button`}
-        type="submit"
-        disabled={add.isPending}
-        aria-label={add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
-      >
-        {add.isPending ? copy("ui.adding.alias") : copy("ui.add.alias")}
-      </button>
-    </form>
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!add.isPending) setOpen(next); }}>
+      <Dialog.Trigger><Button size="2" color="gray" variant="soft">{copy("ui.add.alias")}</Button></Dialog.Trigger>
+      <Dialog.Content maxWidth="480px" aria-busy={add.isPending}
+        onEscapeKeyDown={(event) => { if (add.isPending) event.preventDefault(); }}
+        onInteractOutside={(event) => { if (add.isPending) event.preventDefault(); }}>
+        <Dialog.Title>{copy("ui.add.alias")}</Dialog.Title>
+        <Dialog.Description>{bucketId}</Dialog.Description>
+        <form
+          className="ui-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!add.isPending) add.mutate(draftBody(draft));
+          }}
+        >
+          <RadioGroup.Root value={draft.scope} onValueChange={(scope) => setDraft((current) => ({ ...current, scope: scope as AliasDraft["scope"] }))} disabled={add.isPending}>
+            <RadioGroup.Item value="global" aria-label={fill(copy("ui.global.for"), { bucketId })}>{copy("ui.global")}</RadioGroup.Item>
+            <RadioGroup.Item value="local" aria-label={fill(copy("ui.local.for"), { bucketId })}>{copy("ui.local")}</RadioGroup.Item>
+          </RadioGroup.Root>
+          {draft.scope === "global" ? (
+            <label className={`${wrap} ui-field`}>
+              {copy("ui.global.alias")}<TextField.Root size="2"
+                aria-label={fill(copy("ui.global.alias.for"), { bucketId: bucketId })}
+                value={draft.globalAlias}
+                onChange={(event) => {
+                  setDraft((current) => ({ ...current, globalAlias: event.target.value }));
+                }}
+              />
+            </label>
+          ) : (
+            <>
+              <label className={`${wrap} ui-field`}>
+                {copy("ui.local.alias")}<TextField.Root size="2"
+                  aria-label={fill(copy("ui.local.alias.for"), { bucketId: bucketId })}
+                  value={draft.localAlias}
+                  onChange={(event) => {
+                    setDraft((current) => ({ ...current, localAlias: event.target.value }));
+                  }}
+                />
+              </label>
+              <label className={`${wrap} ui-field`}>
+                {copy("ui.access.key")}<TextField.Root size="2"
+                  aria-label={fill(copy("ui.access.key.for"), { bucketId: bucketId })}
+                  value={draft.accessKeyId}
+                  onChange={(event) => {
+                    setDraft((current) => ({ ...current, accessKeyId: event.target.value }));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {error ? <p className="ui-alert">{error}</p> : null}
+          {note ? <p>{note}</p> : null}
+          <Button size="2" variant="solid"
+            className={wrap}
+            type="submit"
+            disabled={add.isPending}
+            aria-label={add.isPending ? copy("ui.adding.alias") : fill(copy("ui.add.alias.to"), { bucketId: bucketId })}
+          >
+            {add.isPending ? copy("ui.adding.alias") : copy("ui.add.alias")}
+          </Button>
+        </form>
+        <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={add.isPending} onClick={() => setOpen(false)}>{copy("ui.cancel")}</Button></div>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -1573,8 +1540,8 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
   const error = remove.error instanceof Error ? remove.error.message : null;
   return (
     <>
-      <button
-        className={`${wrap} ui-button`}
+      <Button size="2" color="gray" variant="soft"
+        className={wrap}
         type="button"
         disabled={remove.isPending}
         onClick={() => {
@@ -1582,7 +1549,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
         }}
       >
         {remove.isPending ? copy("ui.removing.alias") : label}
-      </button>
+      </Button>
       {error ? <p className="ui-alert">{error}</p> : null}
     </>
   );
@@ -1601,60 +1568,24 @@ function DeleteBucketDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    if (typeof dialog.showModal === "function") {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-    } else {
-      dialog.setAttribute("open", "");
-    }
-    cancelRef.current?.focus();
-  }, [bucketId]);
+  const [opener] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby="delete-bucket-title"
-      className="ui-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
-      }}
-    >
-      <h3 id="delete-bucket-title" className="font-medium">
-        {fill(copy("ui.delete.bucket"), { bucketId: bucketId })}</h3>
-      <p>
-        {fill(copy("ui.this.permanently.deletes.bucket.and.its.aliases.garage"), { bucketId: bucketId })}</p>
-      {error ? <p className="ui-alert">{error}</p> : null}
-      <button
-        ref={cancelRef}
-        className="ui-button"
-        type="button"
-        onClick={onCancel}
-      >
-        {copy("ui.cancel")}</button>
-      <button
-        className="ui-button"
-        type="button"
-        disabled={pending}
-        onClick={onConfirm}
-      >
-        {pending ? copy("ui.deleting.bucket") : copy("ui.delete.bucket.2")}
-      </button>
-    </dialog>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !pending) onCancel(); }}>
+      <Dialog.Content maxWidth="480px" aria-busy={pending}
+        onOpenAutoFocus={(event) => { event.preventDefault(); cancelRef.current?.focus(); }}
+        onCloseAutoFocus={(event) => { event.preventDefault(); if (opener?.isConnected) opener.focus(); }}
+        onEscapeKeyDown={(event) => { if (pending) event.preventDefault(); }}
+        onInteractOutside={(event) => { if (pending) event.preventDefault(); }}>
+        <Dialog.Title>{fill(copy("ui.delete.bucket"), { bucketId })}</Dialog.Title>
+        <Dialog.Description>{fill(copy("ui.this.permanently.deletes.bucket.and.its.aliases.garage"), { bucketId })}</Dialog.Description>
+        {error ? <p className="ui-alert">{error}</p> : null}
+        <div className="ui-actions">
+          <Button ref={cancelRef} size="2" color="gray" variant="soft" disabled={pending} onClick={onCancel}>{copy("ui.cancel")}</Button>
+          <Button size="2" color="red" disabled={pending} onClick={() => { if (!pending) onConfirm(); }}>{copy(pending ? "ui.deleting.bucket" : "ui.delete.bucket.2")}</Button>
+        </div>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -1743,20 +1674,6 @@ function compareCreated(left: string | null, right: string | null): number {
   return left < right ? -1 : 1;
 }
 
-// A caller that passes only canManage still shows object writes and preview.
-function BucketRowSettings({ bucket, canManage }: { bucket: Bucket; canManage: boolean }) {
-  const [inspected, setInspected] = useState(false);
-  return <details className="ui-disclosure" onToggle={(event) => { if (event.currentTarget.open) setInspected(true); }}>
-    <summary aria-label={`${copy(canManage ? "ui.edit" : "nav.settings")} ${bucket.id}`}>{copy(canManage ? "ui.edit" : "nav.settings")}</summary>
-    <div className="ui-form">
-      {canManage && bucket.quotas ? <QuotaEditor key={`${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`} bucketId={bucket.id} quotas={bucket.quotas} /> : null}
-      {canManage ? <><CorsEditor key={`cors:${bucket.id}`} bucketId={bucket.id} /><LifecycleEditor key={`lifecycle:${bucket.id}`} bucketId={bucket.id} /><IncompleteUploads bucketId={bucket.id} />
-        {bucket.aliases.map((alias, aliasIndex) => <RemoveAliasButton key={aliasIndex} bucketId={bucket.id} alias={alias} />)}
-        <AliasControls bucketId={bucket.id} /></> : inspected ? <><CorsSummary bucketId={bucket.id} /><LifecycleSummary bucketId={bucket.id} /></> : null}
-    </div>
-  </details>;
-}
-
 export function Buckets({
   canManage = false,
   canWrite = canManage,
@@ -1768,6 +1685,7 @@ export function Buckets({
 }) {
   const client = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [createPending, setCreatePending] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [hash, assignHash] = useLocationHash();
@@ -1835,7 +1753,17 @@ export function Buckets({
     <section className="ui-page" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
       {listing ? <header className="ui-page-header">
         <h2>{copy("nav.buckets")}</h2>
-        {listing && canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
+        {listing && canManage ? <Dialog.Root open={creating} onOpenChange={(open) => { if (!createPending) setCreating(open); }}>
+          <Dialog.Trigger><Button size="2" type="button">{copy("common.create")}</Button></Dialog.Trigger>
+          <Dialog.Content maxWidth="480px" aria-busy={createPending}
+            onEscapeKeyDown={(event) => { if (createPending) event.preventDefault(); }}
+            onInteractOutside={(event) => { if (createPending) event.preventDefault(); }}>
+            <Dialog.Title>{copy("ui.create.bucket")}</Dialog.Title>
+            <Dialog.Description>{copy("ui.global.alias")}</Dialog.Description>
+            <CreateBucketForm onPendingChange={setCreatePending} />
+            <div className="ui-actions"><Button size="2" color="gray" variant="soft" disabled={createPending} onClick={() => setCreating(false)}>{copy("ui.cancel")}</Button></div>
+          </Dialog.Content>
+        </Dialog.Root> : null}
       </header> : null}
       {bucketDetail ? (
         <DetailTabs
@@ -1853,7 +1781,7 @@ export function Buckets({
           {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div> : null}
           {["settings", "overview"].includes(bucketDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
-            <button className="ui-button" onClick={() => { void addressedBucket.refetch(); }}>{copy("ui.retry")}</button>
+            <Button size="2" color="gray" variant="soft" onClick={() => { void addressedBucket.refetch(); }}>{copy("ui.retry")}</Button>
           </div> : null}
           {bucketDetail.tab === "objects" ? (
             <Objects
@@ -1897,13 +1825,12 @@ export function Buckets({
             {canManage ? <>
               <SettingsSection title={copy("ui.incomplete.uploads")}><IncompleteUploads bucketId={openedBucket.id} /></SettingsSection>
               <SettingsSection title={translate("Danger zone")} danger>
-                <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</button>
+                <Button size="2" color="red" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</Button>
               </SettingsSection>
             </> : null}
           </div> : null}
         </DetailTabs>
       ) : null}
-      {listing && canManage ? <div className="ui-panel" hidden={!creating}><CreateBucketForm /></div> : null}
       {bucketDetail === null && view.loading ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.buckets")}>{copy("ui.loading.buckets")}</div>
       ) : null}
@@ -1912,22 +1839,20 @@ export function Buckets({
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             onClick={() => {
               void list.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {listing ? (
         <div className="ui-toolbar ui-resource-filters">
           <label className="ui-field">
-            {copy("ui.filter.buckets")}<input
-              className="ui-input"
+            {copy("ui.filter.buckets")}<TextField.Root size="2"
               value={query.filter}
               onChange={(event) => {
                 const next = { filter: event.target.value, sort: query.sort };
@@ -1937,22 +1862,17 @@ export function Buckets({
             />
           </label>
           <label className="ui-field">
-            {copy("ui.sort.buckets")}<select
-              className="ui-input"
-              value={query.sort}
-              onChange={(event) => {
-                const next = {
-                  filter: query.filter,
-                  sort: bucketSortFrom(event.target.value),
-                };
-                setQuery(next);
-                writeBucketQuery(next);
-              }}
-            >
-              <option value="id">Id</option>
-              <option value="alias">{copy("ui.alias")}</option>
-              <option value="created">{copy("ui.created")}</option>
-            </select>
+            {copy("ui.sort.buckets")}<Select.Root value={query.sort} onValueChange={(value) => {
+              const next = { filter: query.filter, sort: bucketSortFrom(value) };
+              setQuery(next); writeBucketQuery(next);
+            }}>
+              <Select.Trigger aria-label={copy("ui.sort.buckets")} />
+              <Select.Content>
+                <Select.Item value="id">Id</Select.Item>
+                <Select.Item value="alias">{copy("ui.alias")}</Select.Item>
+                <Select.Item value="created">{copy("ui.created")}</Select.Item>
+              </Select.Content>
+            </Select.Root>
           </label>
           <details className="ui-filter-help"><summary>{copy("ui.only.loaded.rows")}</summary><p className="ui-muted">{copy("ui.default.order.is.id")}</p></details>
         </div>
@@ -1978,12 +1898,12 @@ export function Buckets({
       ) : null}
       {listing && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.bucket")} tabIndex={0}>
-          <table className="ui-table ui-table-records ui-bucket-list" role="table">
-            <thead><tr>
-              <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.usage")}</th><th scope="col">{copy("ui.actions")}</th>
-            </tr></thead>
-            <tbody>{shown.map((bucket, index) => (
-              <tr key={`${bucket.id}-${index}`} role="row">
+          <Table.Root className="ui-table ui-table-records ui-bucket-list">
+            <Table.Header><Table.Row>
+              <Table.ColumnHeaderCell>{copy("ui.bucket")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell>{copy("ui.usage")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell>{copy("ui.actions")}</Table.ColumnHeaderCell>
+            </Table.Row></Table.Header>
+            <Table.Body>{shown.map((bucket, index) => (
+              <Table.Row key={`${bucket.id}-${index}`} role="row">
                 <DataCell kind="identity" label={copy("ui.bucket")}>
                   <a className="ui-resource-name text-[var(--accent)]" title={bucket.id} aria-label={`${bucket.aliases[0]?.name || copy("ui.bucket")} (${bucket.id})`}
                     href={hashForDetail({ resource: "bucket", id: bucket.id, tab: "overview" })}
@@ -2001,36 +1921,36 @@ export function Buckets({
                   </details> : null}
                 </DataCell>
                 <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}><div className="ui-actions">
-                  <button className="ui-button" type="button" aria-label={`${translate("Open objects")} (${bucket.id})`}
-                    onClick={() => goHash(hashForObjects(bucket.id, ""))}>{translate("Open objects")}</button>
-                  <details className="ui-disclosure">
-                    <summary aria-label={`${copy("ui.actions")} ${bucket.id}`}>{copy("ui.actions")}</summary>
-                    <div className="ui-actions">
-                      <button className="ui-button ui-button-quiet" type="button" aria-label={fill(copy("ui.permissions.for"), { bucketId: bucket.id })}
-                        onClick={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "permissions" }))}>{copy("tab.permissions")}</button>
-                      <BucketRowSettings bucket={bucket} canManage={canManage} />
-                      {canManage ? <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: bucket.id })}
-                        onClick={() => { removeBucket.reset(); setDeleteId(bucket.id); }}>{copy("ui.delete.2")}</button> : null}
-                    </div>
-                  </details>
+                  <Button size="2" color="gray" variant="soft" type="button" aria-label={`${translate("Open objects")} (${bucket.id})`}
+                    onClick={() => goHash(hashForObjects(bucket.id, ""))}>{translate("Open objects")}</Button>
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger><Button size="2" color="gray" variant="soft" aria-label={`${copy("ui.actions")} ${bucket.id}`}>{copy("ui.actions")}</Button></DropdownMenu.Trigger>
+                    <DropdownMenu.Content>
+                      <DropdownMenu.Item aria-label={fill(copy("ui.permissions.for"), { bucketId: bucket.id })}
+                        onSelect={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "permissions" }))}>{copy("tab.permissions")}</DropdownMenu.Item>
+                      <DropdownMenu.Item aria-label={`${copy(canManage ? "ui.edit" : "nav.settings")} ${bucket.id}`}
+                        onSelect={() => goHash(hashForDetail({ resource: "bucket", id: bucket.id, tab: "settings" }))}>{copy(canManage ? "ui.edit" : "nav.settings")}</DropdownMenu.Item>
+                      {canManage ? <DropdownMenu.Item color="red" aria-label={fill(copy("ui.delete"), { id: bucket.id })}
+                        onSelect={() => { removeBucket.reset(); setDeleteId(bucket.id); }}>{copy("ui.delete.2")}</DropdownMenu.Item> : null}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Root>
                 </div></DataCell>
-              </tr>
-            ))}</tbody>
-          </table>
+              </Table.Row>
+            ))}</Table.Body>
+          </Table.Root>
         </div>
       ) : null}
       {listing && view.partial ? (
         <>
           <p>{copy("ui.more.buckets.are.available")}</p>
-          <button
-            className="ui-button"
+          <Button size="2" color="gray" variant="soft"
             type="button"
             disabled={list.isFetchingNextPage}
             onClick={() => {
               void list.fetchNextPage();
             }}
           >
-            {copy("ui.load.more")}</button>
+            {copy("ui.load.more")}</Button>
         </>
       ) : null}
       {deleteId !== null ? (
