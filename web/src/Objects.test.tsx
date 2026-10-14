@@ -145,7 +145,7 @@ function expectNoViewer() {
   expect(document.querySelector("img, pre, iframe, video, audio")).toBeNull();
 }
 
-test("shows the Upload region after opening a bucket", async () => {
+test("keeps upload collapsed until opened and preserves jobs when closed", async () => {
   class QuietRequest {
     upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
     open() {}
@@ -171,6 +171,11 @@ test("shows the Upload region after opening a bucket", async () => {
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(await screen.findByRole("button", { name: "Objects for bkt-1" }));
   const objectButton = await screen.findByRole("button", { name: "photos/a.txt" });
+  const summary = screen.getByText("Upload", { selector: "summary" });
+  const disclosure = summary.closest("details");
+  expect(disclosure?.open).toBe(false);
+  fireEvent.click(summary);
+  expect(disclosure?.open).toBe(true);
   const upload = screen.getByRole("region", { name: "Upload" });
   const prefixButton = screen.getByRole("button", { name: "photos/" });
   expect(upload.textContent).toContain("Drop files here.");
@@ -201,6 +206,14 @@ test("shows the Upload region after opening a bucket", async () => {
   }
   expect(prefixFile.textContent).toContain("Uploading");
   expect(within(prefixFile).queryByRole("button", { name: "Overwrite" })).toBeNull();
+  fireEvent.click(summary);
+  expect(disclosure?.open).toBe(false);
+  expect(screen.getByRole("button", { name: "photos/a.txt" })).toBe(objectButton);
+  fireEvent.click(summary);
+  expect(disclosure?.open).toBe(true);
+  expect(screen.getByRole("region", { name: "Upload" })).toBe(upload);
+  expect(within(upload).getByText("photos/a.txt").closest("li")).toBe(objectFile);
+  expect(within(upload).getByText("photos/").closest("li")).toBe(prefixFile);
 });
 
 test("opens a bucket, shows the chosen object's type, and returns to the table", async () => {
@@ -449,6 +462,7 @@ test("says there are no objects after the list loads", async () => {
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   release(json(page([])));
   expect(await screen.findByText("There are no objects. Upload the first object.")).toBeTruthy();
+  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
   expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
   expect(screen.queryByLabelText("Loading objects")).toBeNull();
   expect(screen.queryByText("Loading objects")).toBeNull();
@@ -486,6 +500,7 @@ test("keeps the short empty sentence when a search has no matches", async () => 
   expect(await screen.findByText("There are no objects.")).toBeTruthy();
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   expect(screen.queryByRole("button", { name: "listed.txt" })).toBeNull();
+  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
   expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
 });
 

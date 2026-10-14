@@ -1269,7 +1269,14 @@ export function Objects({
           ) : null}
         </section>
       ) : null}
-      {canWrite ? <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} /> : null}
+      {canWrite ? (
+        <details>
+          <summary className="cursor-pointer py-2 text-lg font-semibold focus-visible:outline focus-visible:outline-2">
+            {copy("ui.upload")}
+          </summary>
+          <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} />
+        </details>
+      ) : null}
       {showRows && visible.length > 0 ? (
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
