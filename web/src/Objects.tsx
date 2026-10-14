@@ -316,7 +316,7 @@ function bitmapKey(key: string): boolean {
 }
 
 function thumbnailPath(bucketId: string, key: string): string {
-  return `${metadataPath(bucketId, key)}/thumbnail`;
+  return `${metadataPath(bucketId, key)}?thumbnail=1`;
 }
 
 function ObjectThumb({ src }: { src: string }) {

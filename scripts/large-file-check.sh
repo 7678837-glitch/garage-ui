@@ -585,7 +585,7 @@ def cmd_multipart():
 
 def fetch_thumb(index):
     key = f"t{index:03d}.jpg"
-    conn = open_conn("GET", object_path(f"{key}/thumbnail"))
+    conn = open_conn("GET", object_path(key, "thumbnail=1"))
     resp = conn.getresponse()
     ctype = resp.headers.get("Content-Type", "")
     chunks = []

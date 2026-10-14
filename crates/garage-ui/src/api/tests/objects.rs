@@ -2429,13 +2429,16 @@
             "/api/buckets/bkt-1/objects/note.txt?preview=1&download=1",
             "/api/buckets/bkt-1/objects/note.txt?preview=2",
             "/api/buckets/bkt-1/objects/note.txt?download=0",
+            "/api/buckets/bkt-1/objects/note.txt?thumbnail=0",
+            "/api/buckets/bkt-1/objects/note.txt?thumbnail=1&preview=1",
+            "/api/buckets/bkt-1/objects/note.txt?thumbnail=1&download=1",
         ] {
             let response = exchange(&app, request("GET", uri, None, Some(&session))).await;
             assert_error(
                 &response,
                 StatusCode::BAD_REQUEST,
                 "invalid_view",
-                "Choose preview or download",
+                "Choose preview, download, or thumbnail",
             );
         }
         assert!(mock.requests().is_empty());
@@ -2620,7 +2623,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt/thumbnail",
+                "/api/buckets/bkt-1/objects/note.txt?thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -2785,7 +2788,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -2836,7 +2839,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -3091,7 +3094,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png/thumbnail",
+                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
                 None,
                 Some(&session),
             ),
@@ -3932,4 +3935,60 @@
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 412);
         assert!(!audit_text(row).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn literal_thumbnail_suffix_is_an_object_key_for_metadata_and_transfer() {
+        let mock = S3Mock::start(object_get_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (admin, _) = login(&app).await;
+        let viewer = viewer_session(&app, &admin).await;
+        let meta = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/dir/thumbnail",
+                None,
+                Some(&viewer),
+            ),
+        )
+        .await;
+        assert_eq!(meta.status, StatusCode::OK, "{}", meta.body);
+        assert_eq!(
+            serde_json::from_str::<Value>(&meta.body).unwrap()["key"],
+            "dir/thumbnail"
+        );
+        for intent in ["preview", "download"] {
+            let result = exchange(
+                &app,
+                request(
+                    "GET",
+                    &format!("/api/buckets/bkt-1/objects/dir/thumbnail?{intent}=1"),
+                    None,
+                    Some(&admin),
+                ),
+            )
+            .await;
+            assert_eq!(result.status, StatusCode::OK, "{}", result.body);
+            assert_eq!(result.body, "hello plain");
+        }
+        assert!(
+            mock.requests()
+                .iter()
+                .all(|line| object_key_of(line) == "dir/thumbnail"),
+            "{:?}",
+            mock.requests()
+        );
+        let unauthenticated = exchange(
+            &app,
+            request(
+                "GET",
+                "/api/buckets/bkt-1/objects/dir/thumbnail?thumbnail=1",
+                None,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(unauthenticated.status, StatusCode::UNAUTHORIZED);
     }

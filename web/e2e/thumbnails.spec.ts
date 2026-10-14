@@ -21,12 +21,12 @@ test("lists thumbnails for bitmap keys and skips them without download permissio
   const viewerThumbs: string[] = [];
   let watchViewer = false;
   page.on("response", (response) => {
-    if (response.status() === 200 && response.url().includes("/thumbnail")) {
+    if (response.status() === 200 && new URL(response.url()).searchParams.get("thumbnail") === "1") {
       served.push(response.url());
     }
   });
   page.on("request", (request) => {
-    if (watchViewer && request.url().includes("/thumbnail")) {
+    if (watchViewer && new URL(request.url()).searchParams.get("thumbnail") === "1") {
       viewerThumbs.push(request.url());
     }
   });

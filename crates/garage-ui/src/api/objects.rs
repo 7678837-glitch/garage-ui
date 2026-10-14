@@ -825,10 +825,12 @@ pub(crate) async fn inspect_object(
 pub(crate) struct ObjectViewQuery {
     preview: Option<String>,
     download: Option<String>,
+    thumbnail: Option<String>,
 }
 
 enum ObjectIntent {
     Meta,
+    Thumbnail,
     Transfer(Transfer),
 }
 
@@ -839,13 +841,18 @@ enum Transfer {
 }
 
 fn object_intent(query: &ObjectViewQuery) -> Result<ObjectIntent, ApiError> {
-    match (query.preview.as_deref(), query.download.as_deref()) {
-        (None, None) => Ok(ObjectIntent::Meta),
-        (Some("1"), None) => Ok(ObjectIntent::Transfer(Transfer::Preview)),
-        (None, Some("1")) => Ok(ObjectIntent::Transfer(Transfer::Download)),
+    match (
+        query.preview.as_deref(),
+        query.download.as_deref(),
+        query.thumbnail.as_deref(),
+    ) {
+        (None, None, None) => Ok(ObjectIntent::Meta),
+        (Some("1"), None, None) => Ok(ObjectIntent::Transfer(Transfer::Preview)),
+        (None, Some("1"), None) => Ok(ObjectIntent::Transfer(Transfer::Download)),
+        (None, None, Some("1")) => Ok(ObjectIntent::Thumbnail),
         _ => Err(ApiError::bad_request(
             "invalid_view",
-            "Choose preview or download",
+            "Choose preview, download, or thumbnail",
         )),
     }
 }
@@ -943,15 +950,11 @@ pub(crate) async fn object_metadata(
     Query(query): Query<ObjectViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    // matchit does not allow `{*key}` followed by `/thumbnail`. That pattern conflicts with this route.
-    // When the last segment is thumbnail, the key is the path before it. axum has already decoded the segments.
-    if let Some(object_key) = key.strip_suffix("/thumbnail")
-        && !object_key.is_empty()
-    {
-        require(&current.user, Op::ReadObjects)?;
-        return thumb::deliver(&app, &id, object_key).await;
-    }
     match object_intent(&query)? {
+        ObjectIntent::Thumbnail => {
+            require(&current.user, Op::ReadObjects)?;
+            thumb::deliver(&app, &id, &key).await
+        }
         ObjectIntent::Meta => {
             require(&current.user, Op::ViewObjects)?;
             let meta = objects::metadata(&app, &id, &key).await?;

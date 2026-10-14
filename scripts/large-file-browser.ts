@@ -14,7 +14,7 @@ if (!origin || !work || new URL(origin).hostname !== "127.0.0.1") {
 }
 const bucket = readFileSync(join(work, "bucket_id"), "utf8").trim();
 const expectedPaths = new Set(Array.from({ length: 100 }, (_, i) =>
-  `/api/buckets/${encodeURIComponent(bucket)}/objects/thumbnails/t${String(i).padStart(3, "0")}.jpg/thumbnail`,
+  `/api/buckets/${encodeURIComponent(bucket)}/objects/thumbnails/t${String(i).padStart(3, "0")}.jpg?thumbnail=1`,
 ));
 const cookies = readFileSync(join(work, "cookies"), "utf8").split("\n")
   .filter((line) => line.startsWith("#HttpOnly_") || (line.length > 0 && !line.startsWith("#")))
@@ -33,7 +33,8 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   page.on("response", (response) => {
-    const path = new URL(response.url()).pathname;
+    const url = new URL(response.url());
+    const path = `${url.pathname}${url.search}`;
     if (expectedPaths.has(path)) {
       network.push({ path, status: response.status(), content_type: response.headers()["content-type"] ?? "" });
     }

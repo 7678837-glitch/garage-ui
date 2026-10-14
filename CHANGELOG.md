@@ -10,6 +10,7 @@ Unpublished release candidate following 20261014.1. This update completes layout
 - Verify existing metrics, layout history, worker and block diagnostics, repair controls, object inspection, key grants, bucket CORS and lifecycle editing, upload cleanup counts, audit export, and admin-token warnings against real Garage instances. Strengthen viewer-permission, ZIP-token revocation, browser preflight, and video-seeking regression coverage.
 - Update frontend dependencies to resolve security advisories and verify HTTP transport timeouts and graceful shutdown. Add repeatable browser list-performance, ZIP-memory, and large-file thumbnail checks; redact session cookies from browser-check failure logs.
 - Share the image-build interface with unsigned release preparation and support local builds of both Linux amd64 and arm64 images through `scripts/build.sh --images`.
+- Preserve authorization revocations during password changes and resets, rotate password-change sessions atomically, and use an explicit thumbnail query so object keys ending in `/thumbnail` remain accessible.
 
 ## 20261014.1
 

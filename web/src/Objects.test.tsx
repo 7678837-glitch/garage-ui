@@ -1884,7 +1884,7 @@ test("shows a thumbnail for an allowlisted bitmap and does not request one witho
     }
     const encoded = key.split("/").map((segment) => encodeURIComponent(segment)).join("/");
     expect(img.getAttribute("src")).toBe(
-      `/api/buckets/${encodeURIComponent("bkt 1")}/objects/${encoded}/thumbnail`,
+      `/api/buckets/${encodeURIComponent("bkt 1")}/objects/${encoded}?thumbnail=1`,
     );
   }
   for (const key of plain) {
@@ -1905,7 +1905,7 @@ test("shows a thumbnail for an allowlisted bitmap and does not request one witho
   renderObjects("bkt 1", { canWrite: false, canTransfer: false });
   expect(await screen.findByRole("button", { name: exactName("shot.png") })).toBeTruthy();
   expect(document.querySelector("img, svg")).toBeNull();
-  expect(calls.some((url) => url.includes("/thumbnail"))).toBe(false);
+  expect(calls.some((url) => url.includes("thumbnail=1"))).toBe(false);
   for (const key of bitmap) {
     const row = screen.getByRole("button", { name: exactName(key) }).closest("tr");
     expect(row?.querySelector("img")).toBeNull();
