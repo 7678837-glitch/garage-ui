@@ -1,5 +1,7 @@
 #!/bin/bash
-# Rerun the p3-large-file gate against a fresh Garage v2.4.1 volume.
+# Rerun the large-file and browser thumbnail gate against fresh Garage v2.4.1 volumes.
+# Requires installed web dependencies and Playwright Chromium; receipts remain in
+# LARGE_FILE_RECEIPTS_DIR (default /tmp/garage-close-f-large), one directory per run.
 # Pass a UI image as the first argument. With no argument, build this checkout
 # for linux/arm64 with docker buildx and the orbstack builder. The UI image id is not pinned.
 set -euo pipefail
@@ -9,14 +11,20 @@ else
   MAGICK=magick
 fi
 
-WORK=/tmp/p3-large-file
+root="$(cd "$(dirname "$0")/.." && pwd)"
+umask 077
+mkdir -p "${LARGE_FILE_RECEIPTS_DIR:-/tmp/garage-close-f-large}"
+WORK="$(mktemp -d "${LARGE_FILE_RECEIPTS_DIR:-/tmp/garage-close-f-large}/run.XXXXXXXX")"
 LOG="${WORK}/run.log"
-UI=p3-large-file-ui
-GARAGE=p3-large-file-garage
-NET=p3-large-file
-VOL_GARAGE=p3-large-file-garage-data
-VOL_UI=p3-large-file-ui-data
-VOL_CONFIG=p3-large-file-config
+RUN_ID="p3-large-file-$(basename "$WORK" | tr '[:upper:]' '[:lower:]')"
+UI="${RUN_ID}-ui"
+GARAGE="${RUN_ID}-garage"
+CLIENT="${RUN_ID}-client"
+NET="$RUN_ID"
+VOL_GARAGE="${RUN_ID}-garage-data"
+VOL_UI="${RUN_ID}-ui-data"
+VOL_CONFIG="${RUN_ID}-config"
+BUN="${BUN:-${HOME}/.bun/bin/bun}"
 GARAGE_IMAGE=dxflrs/garage:v2.4.1
 PY_IMAGE=python:3.12-slim
 ALPINE_IMAGE=alpine:3
@@ -46,13 +54,14 @@ cleanup() {
       docker logs --tail 80 "$GARAGE" 2>&1 || true
     } | GATE_WORK="$WORK" python3 "${WORK}/gate.py" redact >>"$LOG" 2>/dev/null || true
   fi
-  docker rm -f "$UI" "$GARAGE" p3-large-file-client >/dev/null 2>&1 || true
+  docker rm -f "$UI" "$GARAGE" "$CLIENT" >/dev/null 2>&1 || true
   docker volume rm "$VOL_GARAGE" "$VOL_UI" "$VOL_CONFIG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   rm -rf "${WORK}/secrets" "${WORK}/garage.toml" "${WORK}/env.ui" "${WORK}/session" \
     "${WORK}/client.out" "${WORK}/thumb.jpg" "${WORK}/samples.txt" "${WORK}/sample.stop" \
     "${WORK}/outcome.json" "${WORK}/disconnect.sent" "${WORK}/multipart.body" \
-    "${WORK}/body.started" || true
+    "${WORK}/body.started" "${WORK}/cookies" "${WORK}/login.json" \
+    "${WORK}/login.body" "${WORK}/login.headers" "${WORK}/headers" "${WORK}/body" || true
   {
     printf '%s cleanup_removed containers=%s,%s volumes=%s,%s,%s network=%s\n' \
       "$(date -u +%H:%M:%S)" "$GARAGE" "$UI" "$VOL_GARAGE" "$VOL_UI" "$VOL_CONFIG" "$NET"
@@ -91,15 +100,18 @@ mkdir -p "$WORK"
 umask 077
 trap cleanup EXIT
 
+log "evidence_directory=${WORK}"
 log "containers_created=${GARAGE},${UI}"
 log "volumes_created=${VOL_GARAGE},${VOL_UI},${VOL_CONFIG}"
-log "harness memory_metric=docker_stats_display memory_swap=256m idle_timeout_secs=3600 cookie_secure=false ports_published=none"
+log "harness memory_metric=docker_stats_display memory_swap=256m idle_timeout_secs=3600 cookie_secure=false ports_published=ui_loopback_ephemeral"
 log "load=$(uptime)"
 log "disk_avail_kb=$(df -k /tmp | awk 'NR==2 {print $4}')"
 
 require_image "$GARAGE_IMAGE" 2711bbf081dc
 docker image inspect "$PY_IMAGE" >/dev/null
 docker image inspect "$ALPINE_IMAGE" >/dev/null
+docker image inspect "$CURL_IMAGE" >/dev/null
+"$BUN" "${root}/scripts/large-file-browser.ts" --check
 
 if [[ $# -gt 1 ]]; then
   log "usage: scripts/large-file-check.sh [ui-image]"
@@ -108,7 +120,6 @@ fi
 if [[ -n "${1:-}" ]]; then
   UI_IMAGE="$1"
 else
-  root="$(cd "$(dirname "$0")/.." && pwd)"
   UI_IMAGE="garage-ui:large-file-arm64"
   log "ui_build builder=orbstack platform=linux/arm64 context=${root}"
   docker buildx build \
@@ -122,10 +133,10 @@ fi
 ui_id="$(docker image inspect "${UI_IMAGE}" --format '{{.Id}}')"
 ui_platform="$(docker image inspect "${UI_IMAGE}" --format '{{.Os}}/{{.Architecture}}')"
 log "image ${UI_IMAGE} id=${ui_id} platform=${ui_platform}"
-
-docker rm -f "$UI" "$GARAGE" p3-large-file-client >/dev/null 2>&1 || true
-docker volume rm "$VOL_GARAGE" "$VOL_UI" "$VOL_CONFIG" >/dev/null 2>&1 || true
-docker network rm "$NET" >/dev/null 2>&1 || true
+if [[ "$ui_platform" != "linux/arm64" ]]; then
+  log "ui_platform_rejected expected=linux/arm64"
+  exit 1
+fi
 
 cat >"${WORK}/gate.py" <<'PY'
 import http.client
@@ -279,14 +290,17 @@ def cmd_assert_ports(container):
         text=True,
     )
     ports = json.loads(raw) or {}
-    forbidden = {"3900", "3901", "3902", "3903", "3909"}
+    allowed = container == os.environ.get("GATE_UI_CONTAINER")
+    published = []
     for spec, binds in ports.items():
-        if not binds:
-            continue
-        for bind in binds:
-            host = str(bind.get("HostPort") or "")
-            if host in forbidden:
-                raise SystemExit(f"published forbidden port {spec} -> {host}")
+        for bind in binds or []:
+            if not allowed or spec != "3909/tcp" or bind.get("HostIp") != "127.0.0.1":
+                raise SystemExit(f"unexpected published port {spec}")
+            if not str(bind.get("HostPort", "")).isdigit():
+                raise SystemExit("invalid browser port")
+            published.append(bind)
+    if allowed and len(published) != 1:
+        raise SystemExit("expected exactly one loopback browser port")
     print(f"published_ports={json.dumps(ports)}")
 
 
@@ -887,48 +901,15 @@ multipart)
   cat /work/multipart.body
   echo
   ;;
-thumbs)
+seed-thumbs)
   i=0
   while [ "$i" -lt 100 ]; do
-    key=$(printf 't%03d.jpg' "$i")
+    key=$(printf 'thumbnails/t%03d.jpg' "$i")
     put_file "$key" image/jpeg /work/thumb.jpg >/dev/null
     head -n 1 /work/headers | grep -q ' 201 '
     i=$((i + 1))
   done
   echo "thumb_puts=100"
-  ok=0
-  i=0
-  while [ "$i" -lt 100 ]; do
-    batch=0
-    while [ "$batch" -lt 4 ] && [ "$i" -lt 100 ]; do
-      key=$(printf 't%03d.jpg' "$i")
-      curl -sS -b /work/cookies -o "/tmp/thumb-${i}" -w '%{http_code}' \
-        "${BASE}/api/buckets/$(bucket)/objects/${key}/thumbnail" > "/tmp/thumb-code-${i}" &
-      i=$((i + 1))
-      batch=$((batch + 1))
-    done
-    wait
-  done
-  i=0
-  while [ "$i" -lt 100 ]; do
-    if [ "$(cat "/tmp/thumb-code-${i}")" = 200 ]; then
-      ok=$((ok + 1))
-    fi
-    i=$((i + 1))
-  done
-  echo "thumb_image_responses=${ok}"
-  i=0
-  while [ "$i" -lt 100 ]; do
-    if [ "$(cat "/tmp/thumb-code-${i}")" != 200 ]; then
-      echo "thumb_fail_status=$(cat "/tmp/thumb-code-${i}")"
-      head -c 200 "/tmp/thumb-${i}" || true
-      echo
-      break
-    fi
-    i=$((i + 1))
-  done
-  echo "$ok" > /work/thumb.count
-  test "$ok" = 100
   ;;
 transfer)
   put_zeros five.bin 5120 5368709120 application/octet-stream
@@ -967,7 +948,7 @@ docker run --rm --pull never \
   sh -c 'cp /work/garage.toml /config/garage.toml && chmod 600 /config/garage.toml'
 
 docker run -d --name "$GARAGE" --pull never \
-  --network "$NET" \
+  --network "$NET" --network-alias p3-large-file-garage \
   -e GARAGE_CONFIG_FILE=/config/garage.toml \
   -v "${VOL_CONFIG}:/config:ro" \
   -v "${VOL_GARAGE}:/var/lib/garage" \
@@ -1067,6 +1048,7 @@ fi
 
 docker run -d --name "$UI" --pull never \
   --network "$NET" \
+  -p 127.0.0.1::3909 \
   --memory=256m \
   --memory-swap=256m \
   --read-only \
@@ -1076,8 +1058,8 @@ docker run -d --name "$UI" --pull never \
   "$UI_IMAGE" >/dev/null
 log "ui_started"
 docker inspect -f 'ui memory={{.HostConfig.Memory}} swap={{.HostConfig.MemorySwap}} readonly={{.HostConfig.ReadonlyRootfs}} tmpfs={{json .HostConfig.Tmpfs}}' "$UI" | tee -a "$LOG"
-GATE_WORK="$WORK" python3 "${WORK}/gate.py" assert-ports "$UI" | tee -a "$LOG"
-GATE_WORK="$WORK" python3 "${WORK}/gate.py" assert-ports "$GARAGE" | tee -a "$LOG"
+GATE_UI_CONTAINER="$UI" GATE_WORK="$WORK" python3 "${WORK}/gate.py" assert-ports "$UI" | tee -a "$LOG"
+GATE_UI_CONTAINER="$UI" GATE_WORK="$WORK" python3 "${WORK}/gate.py" assert-ports "$GARAGE" | tee -a "$LOG"
 
 run_client wait-ready
 log "listen=ready"
@@ -1117,9 +1099,8 @@ mem_pass="$(tr -d '\n' <"${WORK}/check.memory")"
 
 disc_code=0
 rm -f "${WORK}/disconnect.sent" "${WORK}/client.out"
-docker rm -f p3-large-file-client >/dev/null 2>&1 || true
 rm -f "${WORK}/chunks"
-docker run --name p3-large-file-client --rm --pull never \
+docker run --name "$CLIENT" --rm --pull never \
   --network "container:${UI}" \
   --entrypoint /bin/sh \
   -v "${WORK}:/work" \
@@ -1136,7 +1117,7 @@ for _ in $(seq 1 300); do
   fi
   sleep 0.2
 done
-docker kill --signal=KILL p3-large-file-client >/dev/null 2>&1 || true
+docker kill --signal=KILL "$CLIENT" >/dev/null 2>&1 || true
 set +e
 wait "$client_pid"
 disc_code=$?
@@ -1190,7 +1171,17 @@ thumb_bytes="$(python3 -c 'import os; print(os.path.getsize("'"${WORK}/thumb.jpg
 log "thumbnail_source width=${thumb_w} height=${thumb_h} bytes=${thumb_bytes}"
 thumb_code=0
 if [[ "$thumb_w" == 4096 && "$thumb_h" == 4096 && "$thumb_bytes" -lt 20971520 ]]; then
-  run_client thumbs || thumb_code=$?
+  rm -f "${WORK}/sample.stop"
+  GATE_WORK="$WORK" python3 "${WORK}/gate.py" mem-watch "$UI" "${WORK}/browser.samples" "${WORK}/sample.stop" &
+  watch_pid=$!
+  run_client seed-thumbs || thumb_code=$?
+  if [[ "$thumb_code" == 0 ]]; then
+    browser_port="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "3909/tcp") 0).HostPort}}' "$UI")"
+    "$BUN" "${root}/scripts/large-file-browser.ts" "http://127.0.0.1:${browser_port}" "$WORK" >"${WORK}/client.out" 2>&1 || thumb_code=$?
+    GATE_WORK="$WORK" python3 "${WORK}/gate.py" redact <"${WORK}/client.out" | tee -a "$LOG"
+    rm -f "${WORK}/client.out"
+  fi
+  stop_watch
 else
   thumb_code=1
   log "thumbnail_source_rejected"
@@ -1199,22 +1190,26 @@ oom_after="$(docker inspect -f '{{.State.OOMKilled}}' "$UI")"
 ui_status="$(docker inspect -f '{{.State.Status}}' "$UI")"
 python3 - <<PY | tee -a "$LOG"
 import json
-outcome = {}
-path = "${WORK}/outcome.json"
+import pathlib
 try:
-    outcome = json.loads(open(path, encoding="utf-8").read())
+    outcome = json.loads(pathlib.Path("${WORK}/browser.json").read_text())
 except FileNotFoundError:
     outcome = {}
-try:
-    images = int(open("${WORK}/thumb.count", encoding="utf-8").read().strip())
-except (FileNotFoundError, ValueError):
-    images = outcome.get("image_responses", 0)
-source_bytes = outcome.get("source_bytes", ${thumb_bytes})
+lines = pathlib.Path("${WORK}/browser.samples").read_text().splitlines() if pathlib.Path("${WORK}/browser.samples").exists() else []
+samples = [int(line) for line in lines if line.isdigit()]
+peak = max(samples, default=0)
+images = outcome.get("decoded_images", 0)
+responses = outcome.get("image_responses", 0)
 oom = "${oom_after}".strip().lower() == "true"
-passed = ${thumb_code} == 0 and not oom and "${ui_status}" == "running"
+passed = (${thumb_code} == 0 and outcome.get("passed") is True
+          and pathlib.Path("${WORK}/browser.png").is_file()
+          and images == 100 and responses == 100 and samples
+          and len(samples) == len(lines) and peak < 268435456
+          and not oom and "${ui_status}" == "running")
 print(
     "check thumbnails sources=100 width=${thumb_w} height=${thumb_h} "
-    f"source_bytes={source_bytes} image_responses={images} "
+    f"source_bytes=${thumb_bytes} image_responses={responses} decoded_images={images} "
+    f"peak_bytes={peak} sample_count={len(samples)} "
     f"oom_killed={'true' if oom else 'false'} container_status=${ui_status} "
     f"pass={'true' if passed else 'false'}"
 )
@@ -1249,6 +1244,11 @@ else
   log "check transfer skipped container_status=${ui_status} oom_killed=${oom_after} pass=false"
 fi
 
+final_state="$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.State.OOMKilled}} {{.State.Status}}' "$UI")"
+log "final_container ${final_state}"
+if [[ "$final_state" != "268435456 268435456 false running" ]]; then
+  transfer_pass=1
+fi
 log "results memory=${mem_pass} disconnect=${disc_pass} thumbnails=${thumb_pass} transfer=${transfer_pass}"
 if [[ "$mem_pass" == 0 && "$disc_pass" == 0 && "$thumb_pass" == 0 && "$transfer_pass" == 0 ]]; then
   ok=1
