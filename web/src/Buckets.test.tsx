@@ -1421,3 +1421,124 @@ test("keeps a long bucket identifier complete for accessible naming and inspecti
   expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe(before);
  });
+
+async function changeBucketHash(next: string) {
+  const oldURL = window.location.href;
+  await act(async () => {
+    window.history.replaceState(null, "", next);
+    window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: window.location.href }));
+  });
+}
+
+for (const kind of ["cors", "lifecycle"] as const) {
+  for (const delayed of [false, true]) {
+    test(`${kind} keeps a rejected departure draft and discards it on accepted bucket switch (${delayed ? "delayed" : "loaded"} B)`, async () => {
+      window.history.replaceState(null, "", "#bucket/A/settings");
+      const calls: Call[] = [];
+      let releaseB: (response: Response) => void = () => {};
+      const label = kind === "cors" ? "CORS" : "lifecycle";
+      const field = kind === "cors" ? "AllowedOrigin" : "Expiration.Days";
+      const edited = kind === "cors" ? "https://edited.example" : "7";
+      const payload = (id: string) => kind === "cors"
+        ? { corsRules: [{ ID: id, AllowedOrigin: [`https://${id}.example`], AllowedMethod: ["GET"] }] }
+        : { lifecycleRules: [{ ID: id, Status: "Enabled", Filter: { Prefix: `${id}/` }, Expiration: { Days: 30 } }] };
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const call = recordedCall(input, init);
+        calls.push(call);
+        if (call.method === "PUT") return new Response(null, { status: 204 });
+        if (call.url.endsWith(`/${kind}`)) return json(payload(call.url.includes("/A/") ? "A" : "B"));
+        if (call.url === "/api/buckets/B" && delayed) return new Promise<Response>((resolve) => { releaseB = resolve; });
+        if (call.url === "/api/buckets/A" || call.url === "/api/buckets/B") return json({ id: call.url.endsWith("A") ? "A" : "B" });
+        return json({ items: delayed ? [{ id: "A" }] : [{ id: "A" }, { id: "B" }], hasMore: false });
+      }));
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const client = renderBuckets(true);
+      fireEvent.click(await screen.findByRole("button", { name: `Edit ${label}` }));
+      fireEvent.change(await screen.findByLabelText(field), { target: { value: edited } });
+      fireEvent.click(screen.getByRole("button", { name: `Review ${label}` }));
+      expect((await screen.findByLabelText("Next")).textContent).toContain(edited);
+      await client.invalidateQueries({ queryKey: [`bucket-${kind}`, "A"] });
+      expect((screen.getByLabelText(field) as HTMLInputElement).value).toBe(edited);
+      await changeBucketHash("#bucket/B/settings");
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(window.location.hash).toBe("#bucket/A/settings");
+      expect((screen.getByLabelText(field) as HTMLInputElement).value).toBe(edited);
+      confirm.mockReturnValue(true);
+      await changeBucketHash("#bucket/B/settings");
+      expect(screen.queryByRole("button", { name: `Save ${label}` })).toBeNull();
+      expect(screen.queryByLabelText("Next")).toBeNull();
+      if (delayed) await act(async () => { releaseB(json({ id: "B" })); });
+      fireEvent.click(await screen.findByRole("button", { name: `Edit ${label}` }));
+      expect((await screen.findByLabelText(field) as HTMLInputElement).value).not.toBe(edited);
+      fireEvent.click(screen.getByRole("button", { name: `Review ${label}` }));
+      await screen.findByLabelText("Next");
+      fireEvent.click(screen.getByRole("button", { name: `Save ${label}` }));
+      await waitFor(() => expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1));
+      expect(calls.find((call) => call.method === "PUT")?.url).toBe(`/api/buckets/B/${kind}`);
+      expect(JSON.stringify(calls.find((call) => call.method === "PUT")?.body)).not.toContain(edited);
+      await waitFor(() => expect(screen.queryByLabelText("Next")).toBeNull());
+      confirm.mockClear();
+      await changeBucketHash("#buckets");
+      expect(confirm).not.toHaveBeenCalled();
+    });
+  }
+}
+
+test("bucket detail objects discard A's list and deletion selection while B is loading", async () => {
+  window.history.replaceState(null, "", "#bucket/A/objects");
+  let releaseB: (response: Response) => void = () => {};
+  const writes: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if ((init?.method ?? "GET") !== "GET") writes.push(url);
+    if (url.startsWith("/api/buckets/A/objects?")) return json({ prefix: "", entries: [{ kind: "object", key: "report.txt", size: 1, lastModified: "2026-10-11T00:00:00Z", etag: "a" }], next: null });
+    if (url.startsWith("/api/buckets/B/objects?")) return new Promise<Response>((resolve) => { releaseB = resolve; });
+    if (url === "/api/buckets/A/objects/report.txt") return json({ key: "report.txt", size: 1, contentType: "application/octet-stream" });
+    return json({ items: [{ id: "A" }, { id: "B" }], hasMore: false });
+  }));
+  renderBuckets(true);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select report.txt" }));
+  expect((screen.getByRole("checkbox", { name: "Select report.txt" }) as HTMLInputElement).checked).toBe(true);
+  await changeBucketHash("#bucket/B/objects");
+  expect(screen.queryByRole("checkbox", { name: "Select report.txt" })).toBeNull();
+  expect(screen.queryByText("report.txt")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
+  expect(writes).toEqual([]);
+  await act(async () => { releaseB(json({ prefix: "", entries: [], next: null })); });
+});
+
+
+test("bucket object departure preserves an active upload on stay and cancels it on leave", async () => {
+  window.history.replaceState(null, "", "#bucket/A/objects");
+  const requests: { url: string; aborted: boolean }[] = [];
+  class UploadRequest {
+    url = "";
+    aborted = false;
+    upload = { onprogress: null };
+    onabort: (() => void) | null = null;
+    open(_method: string, url: string) { this.url = url; }
+    setRequestHeader() {}
+    send() { requests.push(this); }
+    abort() { this.aborted = true; this.onabort?.(); }
+  }
+  vi.stubGlobal("XMLHttpRequest", UploadRequest);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/objects?")) return json({ prefix: "", entries: [], next: null });
+    return json({ items: [{ id: "A" }, { id: "B" }], hasMore: false });
+  }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  renderBuckets(true);
+  fireEvent.click(await screen.findByText("Upload"));
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["body"], "new.txt")] } });
+  await waitFor(() => expect(requests).toHaveLength(1));
+  await changeBucketHash("#bucket/B/objects");
+  expect(window.location.hash).toBe("#bucket/A/objects");
+  expect(requests[0]?.aborted).toBe(false);
+  expect(screen.getByText("new.txt")).toBeTruthy();
+  confirm.mockReturnValue(true);
+  await changeBucketHash("#bucket/B/objects");
+  expect(requests[0]?.aborted).toBe(true);
+  expect(screen.queryByText("new.txt")).toBeNull();
+  expect(requests[0]?.url).toBe("/api/buckets/A/objects/new.txt");
+});

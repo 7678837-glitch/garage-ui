@@ -738,15 +738,27 @@ function CorsForm({ bucketId }: { bucketId: string }) {
     refetchOnWindowFocus: false,
   });
   const [drafts, setDrafts] = useState<CorsDraft[] | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
   const [current, setCurrent] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   useEffect(() => {
     if (query.isSuccess && drafts === null) {
-      setDrafts(draftsFromCors(query.data));
+      const loaded = draftsFromCors(query.data);
+      setDrafts(loaded);
+      setSaved(corsBody(loaded));
     }
   }, [query.isSuccess, query.data, drafts]);
+  const dirty = drafts !== null && (corsBody(drafts) !== saved || current !== null);
+  useEffect(() => {
+    setFormDirty(`cors:${bucketId}`, dirty);
+    return () => setFormDirty(`cors:${bucketId}`, false);
+  }, [bucketId, dirty]);
   const save = useMutation({
     mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/cors`, { method: "PUT", body }),
+    onSuccess: (_response, body) => {
+      setSaved(body);
+      setCurrent(null);
+    },
   });
   if (query.isError) {
     return <p>{query.error instanceof Error ? query.error.message : copy("ui.cors.rules.are.unavailable")}</p>;
@@ -1149,15 +1161,27 @@ function LifecycleForm({ bucketId }: { bucketId: string }) {
     refetchOnWindowFocus: false,
   });
   const [drafts, setDrafts] = useState<LifecycleDraft[] | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
   const [current, setCurrent] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   useEffect(() => {
     if (query.isSuccess && drafts === null) {
-      setDrafts(draftsFromLifecycle(query.data));
+      const loaded = draftsFromLifecycle(query.data);
+      setDrafts(loaded);
+      setSaved(lifecycleBody(loaded));
     }
   }, [query.isSuccess, query.data, drafts]);
+  const dirty = drafts !== null && (lifecycleBody(drafts) !== saved || current !== null);
+  useEffect(() => {
+    setFormDirty(`lifecycle:${bucketId}`, dirty);
+    return () => setFormDirty(`lifecycle:${bucketId}`, false);
+  }, [bucketId, dirty]);
   const save = useMutation({
     mutationFn: (body: string) => api(`${bucketUrl(bucketId)}/lifecycle`, { method: "PUT", body }),
+    onSuccess: (_response, body) => {
+      setSaved(body);
+      setCurrent(null);
+    },
   });
   if (query.isError) {
     return (
@@ -1738,7 +1762,7 @@ function BucketRowSettings({ bucket, canManage }: { bucket: Bucket; canManage: b
     <div className="ui-form">
       {bucket.id.length > 24 ? <p className="ui-identifier">{bucket.id}</p> : null}
       {canManage && bucket.quotas ? <QuotaEditor key={`${fieldText(bucket.quotas.maxSize)}:${fieldText(bucket.quotas.maxObjects)}`} bucketId={bucket.id} quotas={bucket.quotas} /> : null}
-      {canManage ? <><CorsEditor bucketId={bucket.id} /><LifecycleEditor bucketId={bucket.id} /><IncompleteUploads bucketId={bucket.id} />
+      {canManage ? <><CorsEditor key={`cors:${bucket.id}`} bucketId={bucket.id} /><LifecycleEditor key={`lifecycle:${bucket.id}`} bucketId={bucket.id} /><IncompleteUploads bucketId={bucket.id} />
         {bucket.aliases.map((alias, aliasIndex) => <RemoveAliasButton key={aliasIndex} bucketId={bucket.id} alias={alias} />)}
         <AliasControls bucketId={bucket.id} /></> : inspected ? <><CorsSummary bucketId={bucket.id} /><LifecycleSummary bucketId={bucket.id} /></> : null}
     </div>
@@ -1843,6 +1867,7 @@ export function Buckets({
           </div> : null}
           {bucketDetail.tab === "objects" ? (
             <Objects
+              key={bucketDetail.id}
               bucketId={bucketDetail.id}
               canWrite={canWrite}
               canTransfer={canTransfer}
@@ -1865,10 +1890,10 @@ export function Buckets({
               quotas={openedBucket.quotas}
             />
           ) : null}
-          {bucketDetail.tab === "settings" && openedBucket ? <div className="ui-form">
+          {bucketDetail.tab === "settings" && openedBucket ? <div key={openedBucket.id} className="ui-form">
             {canManage ? <><AliasControls bucketId={openedBucket.id} />
               {openedBucket.aliases.map((alias, index) => <RemoveAliasButton key={index} bucketId={openedBucket.id} alias={alias} />)}
-              <CorsEditor bucketId={openedBucket.id} /><LifecycleEditor bucketId={openedBucket.id} /><IncompleteUploads bucketId={openedBucket.id} />
+              <CorsEditor key={`cors:${openedBucket.id}`} bucketId={openedBucket.id} /><LifecycleEditor key={`lifecycle:${openedBucket.id}`} bucketId={openedBucket.id} /><IncompleteUploads bucketId={openedBucket.id} />
               <button className="ui-button ui-button-danger" type="button" aria-label={fill(copy("ui.delete"), { id: openedBucket.id })} onClick={() => { removeBucket.reset(); setDeleteId(openedBucket.id); }}>{copy("ui.delete.2")}</button>
             </> : <><CorsSummary bucketId={openedBucket.id} /><LifecycleSummary bucketId={openedBucket.id} /></>}
           </div> : null}
