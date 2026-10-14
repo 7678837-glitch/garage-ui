@@ -1,6 +1,6 @@
 {
   "name": "garage-ui-web",
-  "version": "20261014.1.0",
+  "version": "20261014.2.0",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.4.2",

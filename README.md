@@ -2,21 +2,19 @@
 
 garage-ui is an unofficial web admin UI for Garage, the S3-compatible object store from Deuxfleurs. The program is one static Rust binary.
 
-The current version is 20261014.1.
+The current development version is 20261014.2 (DRAFT, not published). The minimum supported Garage version is v2.3.0; compatibility has been tested with v2.3.0 and v2.4.1.
 
 ## Current behavior
 
-You can set up an account, log in, log out, and change your password. The roles are admin and viewer. An admin can grant a viewer the download permission bit and the share permission bit.
-
-You can read cluster health, cluster status, and cluster statistics.
-
-You can list buckets with pagination, create a bucket, and delete a bucket. You can set bucket aliases and bucket quotas. You can grant and revoke bucket permissions.
-
-You can list keys with pagination, create a key, delete a key, and rename a key. You can allow a key to create buckets. Viewing a key secret requires a second confirmation.
-
-A prefix walk of 5000 objects is included. Allowlisted inline preview truncates long text. You can delete one object. A batch delete requires the selected count. A recursive delete walks list pages. The tested case lists three pages and deletes 2500 objects.
-
-You can select more than one object. You can open the upload panel. The UI shows a new credential once, and you can copy it. You can choose a light theme, a dark theme, or the system theme. Keyboard focus is visible. You can open the About page.
+- Set up the first administrator, log in and out, and change your password. Administrators manage users, reset passwords, and grant viewers separate download and share permissions.
+- Read cluster health, status, capacity statistics, and a Prometheus metrics summary of S3 requests, errors, and block traffic. A notice identifies unavailable metrics or disabled TLS verification.
+- List, filter, and sort nodes; connect a node; stage capacity changes; preview and apply a layout at the next version; revert staged changes; view layout history and sync trackers; and skip dead nodes with explicit data-loss confirmation when missing data is allowed.
+- Inspect node workers and their variables, change a worker variable, and launch repair tasks, including scrub start, pause, resume, and cancel. Inspect block errors and block information, retry resync, purge blocks with confirmation, and request metadata snapshots for one node or every node. These operations require an administrator.
+- List, filter, sort, create, and delete buckets. Manage global and local aliases, quotas and usage, key permissions, website access, CORS rules, and lifecycle rules. Inspect and abort incomplete multipart uploads, or clean up uploads older than a chosen age and see the removed count.
+- List, filter, sort, create, delete, and rename access keys. Allow bucket creation, inspect each key's bucket grants, and reveal a key secret after confirmation. Manage Garage admin tokens, their expiration and scopes; a newly created token secret is shown once, and full-admin scopes carry a warning.
+- Browse objects by prefix with pagination and breadcrumbs, search within a prefix, and sort the loaded page by size or time. Inspect metadata and administrator-only version diagnostics. Preview allowlisted text, images, audio, and video; use Left and Right to move between objects in the loaded directory. Bitmap list thumbnails require download permission and load as their rows enter view.
+- Upload files and folders with an upload queue, progress, cancellation, retry, overwrite confirmation, and multipart upload for large files. Download objects, stream selected objects or a prefix as a ZIP, and create expiring share links when permitted. Delete an object, a counted selection, or a prefix recursively after confirmation.
+- Filter audit events and export CSV as an administrator. Use English or Simplified Chinese, localized timestamps and capacity units, light/dark/system themes, visible keyboard focus, loading/error/retry states, and the About page. Main pages and destructive-action dialogs accommodate narrow viewports.
 
 ## Writes stop below Garage v2.3.0
 
@@ -32,7 +30,15 @@ From the repository root, build the frontend and the binary.
 scripts/build.sh
 ```
 
-`scripts/build.sh` runs `bun install --frozen-lockfile`, then `bun run build`, then `cargo build --release -p garage-ui --bin garage-ui`.
+With no arguments, `scripts/build.sh` runs `bun install --frozen-lockfile`, then `bun run build`, then `cargo build --release -p garage-ui --bin garage-ui` for the host.
+
+To build and load both Linux images locally:
+
+```sh
+scripts/build.sh --images
+```
+
+Use `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64` for one architecture. Image builds use Docker buildx with `--no-cache` and load local tags `garage-ui:<VERSION>-amd64` and `garage-ui:<VERSION>-arm64`.
 
 To call a Garage cluster, set the admin API address and the admin token before you start the binary. Do not commit the token. The example Garage config in `deploy/garage-entrypoint.sh` binds the admin API on port 3903, so a local address is `http://127.0.0.1:3903`.
 
