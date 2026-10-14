@@ -255,7 +255,7 @@ for arch in ("amd64", "arm64"):
                 with urllib.request.urlopen(url, timeout=2) as response:
                     health = json.load(response)
                 break
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
                 if time.monotonic() >= deadline:
                     raise SystemExit(f"Health probe timed out for {image}")
                 time.sleep(1)
