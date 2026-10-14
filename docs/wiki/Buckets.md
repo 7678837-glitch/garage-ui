@@ -20,7 +20,7 @@ Use the corresponding **Remove global alias** or **Remove local alias** action t
 
 ## Set quotas
 
-In **Settings → Quotas**, enter **Max size** as a whole number of bytes and **Max objects** as a whole object count. Leave a field empty to unset that quota. Choose **Save quotas** and wait for **Saved**. The usage view shows limits and current usage when Garage supplies them.
+In **Settings → Quotas**, enter **Max size** as a whole number of bytes and **Max objects** as a whole object count. Leave a field empty to unset that quota. Choose **Save quotas** and wait for **Saved**. The usage view shows limits and current usage when Garage supplies them. On phones, expand **Usage** to reach exact byte values and the complete quota information.
 
 For example, a size quota of `1073741824` is 1 GiB. A quota constrains storage; it does not grant anyone permission to use it. If saving fails, retain the error message and check that values are whole numbers and that Garage accepts the requested update.
 

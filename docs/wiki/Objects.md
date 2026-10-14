@@ -10,11 +10,11 @@ Enter a search term of at least two characters in **Search** and submit the sear
 
 **Size** and **Time** sorting apply only to the loaded page, as the **Only this page** notice states. Prefix rows stay ahead of objects. The list does not globally sort every object in the bucket.
 
-Select individual checkboxes or **Select page**. Selection actions use the objects selected on the displayed page. **Copy path** copies selected keys; if clipboard access is unavailable, the UI displays selectable paths for manual copying.
+Select individual checkboxes or **Select page**. Selection actions use the objects selected on the displayed page. **Clear selection** clears the checked objects. **Copy path** copies selected keys; if clipboard access is unavailable, the UI displays selectable paths for manual copying.
 
 ## Upload files or a folder
 
-Administrators can upload. In the upload panel:
+Administrators can upload. Choose **Upload** to open the panel. **Close upload** hides it while retaining the current queue; choose **Upload** again to reopen it. In the upload panel:
 
 1. Use **Choose files**, **Choose folder**, or drop files into the panel.
 2. Watch each row move from **Queued** through **Checking destination** and **Uploading** to **Done**.
@@ -31,7 +31,7 @@ Keep the page open until uploads finish. Leaving after the unfinished-upload war
 
 ## Inspect an object
 
-Select an object to see its key, size, content type, ETag, and last-modified time. **Inspect** is an administrator-only diagnostic action showing Garage object versions and related details. It does not restore a previous version.
+Choose an object filename to preview its key, size, content type, ETag, and last-modified time. For administrators, **Details** opens exact size, last-modified time, and Garage object versions. It does not restore a previous version.
 
 For content previews and transfers, see [Downloads and sharing](Downloads-and-sharing.md).
 
