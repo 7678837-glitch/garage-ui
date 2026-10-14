@@ -6,6 +6,7 @@ COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
+COPY web/public ./public
 # The image embeds the Vite bundle. `bun run build` also typechecks tests, which this image does not ship.
 RUN bunx vite build
 
