@@ -910,3 +910,14 @@ test("an unrecognized usersOffset stays on the first page and does not rewrite t
     true,
   );
 });
+
+test("discloses page-local user filtering and keeps navigation for no matches", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json(userPage([ada], true))));
+  renderUsers();
+  await screen.findByRole("cell", { name: "Ada" });
+  expect(screen.getByText("Filtering and sorting apply to the current page")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "missing" } });
+  expect(screen.getByText("No matches on this page.")).toBeTruthy();
+  expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
+  expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(false);
+});

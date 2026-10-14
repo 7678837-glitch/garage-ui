@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
-import { copy, fill } from "./i18n";
+import { copy, fill, translate } from "./i18n";
 
 type Role = "admin" | "viewer";
 
@@ -604,6 +604,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           </select>
         </label>
         <p>{copy("ui.default.order.is.username")}</p>
+        <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
         <div className="flex gap-2">
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
@@ -645,6 +646,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
             {copy("ui.retry")}</button>
         </>
       ) : null}
+      {users.isSuccess && loaded.length > 0 && shown.length === 0 ? <p>{translate("No matches on this page.")}</p> : null}
       {view.empty ? <p>{copy("ui.there.are.no.users.create.the.first.user")}</p> : null}
       {users.data && shown.length > 0 ? (
         <div className="overflow-x-auto">

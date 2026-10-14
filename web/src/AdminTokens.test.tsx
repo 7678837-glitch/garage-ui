@@ -917,3 +917,14 @@ test("shows No admin tokens when the list is empty", async () => {
     "false",
   );
 });
+
+test("discloses page-local token filtering without claiming the repository is empty", async () => {
+  installApi();
+  renderTokens();
+  await screen.findByRole("cell", { name: "issued-reader" });
+  expect(screen.getByText("Filtering and sorting apply to the current page")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Filter admin tokens"), { target: { value: "missing" } });
+  expect(screen.getByText("No matches on this page.")).toBeTruthy();
+  expect(screen.queryByText("No admin tokens")).toBeNull();
+  expect(screen.getByRole("button", { name: "Previous" })).toBeTruthy();
+});

@@ -104,21 +104,21 @@ test("filtering the audit list by user Ada", async () => {
   const fetchMock = stubAdminAudit();
   renderApp();
   expect(await screen.findByText("login")).toBeTruthy();
-  expect(auditUrls(fetchMock, "list")).toEqual(["/api/audit"]);
+  expect(auditUrls(fetchMock, "list")).toEqual(["/api/audit?offset=0&limit=100"]);
   fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
   await waitFor(() => {
     expect(auditUrls(fetchMock, "export")).toEqual(["/api/audit/export"]);
   });
   fireEvent.change(screen.getByLabelText("User"), { target: { value: "Ada" } });
   await waitFor(() => {
-    expect(auditUrls(fetchMock, "list").at(-1)).toBe("/api/audit?user=Ada");
+    expect(auditUrls(fetchMock, "list").at(-1)).toBe("/api/audit?user=Ada&offset=0&limit=100");
   });
   fireEvent.change(screen.getByLabelText("From"), { target: { value: "1700000000" } });
   fireEvent.change(screen.getByLabelText("To"), { target: { value: "1700000100" } });
   fireEvent.change(screen.getByLabelText("Action"), { target: { value: "bucket-1" } });
   await waitFor(() => {
     expect(auditUrls(fetchMock, "list").at(-1)).toBe(
-      "/api/audit?user=Ada&from=1700000000&to=1700000100&action=bucket-1",
+      "/api/audit?user=Ada&from=1700000000&to=1700000100&action=bucket-1&offset=0&limit=100",
     );
   });
   fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
@@ -311,4 +311,32 @@ test("keeps one visible audit row while a later fetch refreshes", async () => {
   });
   expect(screen.getByText("login")).toBeTruthy();
   expect(calls).toBe(2);
+});
+
+test("pages audit with filters and resets the range when filters change", async () => {
+  const requests: URL[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    requests.push(url);
+    return json({ items: [{ ...auditRow, reason: `page-${url.searchParams.get("offset") ?? "0"}` }], hasMore: true });
+  }));
+  renderAudit();
+  await screen.findByText("page-0");
+  expect(requests.at(-1)?.searchParams.get("limit")).toBe("100");
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "Ada" } });
+  await waitFor(() => expect(requests.at(-1)?.searchParams.get("user")).toBe("Ada"));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText("page-100");
+  expect(requests.at(-1)?.searchParams.get("user")).toBe("Ada");
+  fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+  await screen.findByText("page-0");
+  await waitFor(() => expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText("page-100");
+  fireEvent.change(screen.getByLabelText("Action"), { target: { value: "login" } });
+  await screen.findByText("page-0");
+  expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
+  expect(requests.at(-1)?.searchParams.get("user")).toBe("Ada");
+  expect(requests.at(-1)?.searchParams.get("action")).toBe("login");
 });

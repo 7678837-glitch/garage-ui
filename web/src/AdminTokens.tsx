@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
-import { InstantText, copy } from "./i18n";
+import { InstantText, copy, translate } from "./i18n";
 import { isGarageDown } from "./garageDown";
 
 type AdminToken = {
@@ -948,6 +948,7 @@ export function AdminTokens() {
           </select>
         </label>
         <p>{copy("ui.default.sort.is.by.name")}</p>
+        <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
         <div className="flex gap-2">
           <button
             className="border border-neutral-900 px-3 py-1 text-left"
@@ -1004,7 +1005,7 @@ export function AdminTokens() {
             {copy("ui.retry")}</button>
         </>
       ) : null}
-      {list.isSuccess && shown.length === 0 ? <p>{copy("ui.no.admin.tokens")}</p> : null}
+      {list.isSuccess && shown.length === 0 ? <p>{list.data.items.length === 0 ? copy("ui.no.admin.tokens") : translate("No matches on this page.")}</p> : null}
       {list.isSuccess && shown.length > 0 ? <TokenTable rows={shown} /> : null}
       {current.data ? <CurrentToken token={current.data} /> : null}
     </section>

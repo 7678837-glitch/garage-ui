@@ -2,6 +2,7 @@ import type { CopyKey } from "./copy-en";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
+import { Pagination } from "./ui";
 import { isGarageDown } from "./garageDown";
 import { copy, fill, translate } from "./i18n";
 
@@ -74,8 +75,11 @@ function failureOf(error: unknown): { message: string; code: string | null } {
   return { message: copy("ui.audit.is.unavailable"), code: null };
 }
 
-async function loadAudit(filters: AuditFilters): Promise<AuditPage> {
-  const page = await api<AuditPage>(`/api/audit${auditSearch(filters)}`);
+async function loadAudit(filters: AuditFilters, offset: number): Promise<AuditPage> {
+  const params = new URLSearchParams(auditSearch(filters).replace(/^\?/, ""));
+  params.set("offset", String(offset));
+  params.set("limit", "100");
+  const page = await api<AuditPage>(`/api/audit?${params}`);
   if (!Array.isArray(page.items) || typeof page.hasMore !== "boolean") {
     throw new Error(copy("ui.audit.is.unavailable"));
   }
@@ -106,9 +110,10 @@ export function Audit() {
     to: "",
     action: "",
   });
+  const [offset, setOffset] = useState(0);
   const listed = useQuery({
-    queryKey: ["audit", filters],
-    queryFn: () => loadAudit(filters),
+    queryKey: ["audit", filters, offset],
+    queryFn: () => loadAudit(filters, offset),
   });
   const [exportFailed, setExportFailed] = useState(false);
   const items = listed.data?.items ?? [];
@@ -133,6 +138,7 @@ export function Audit() {
               onChange={(event) => {
                 const value = event.target.value;
                 setFilters((current) => ({ ...current, [key]: value }));
+                setOffset(0);
               }}
             />
           </label>
@@ -191,6 +197,10 @@ export function Audit() {
           </tbody>
         </table>
       </div>
+      <Pagination page={Math.floor(offset / 100) + 1} hasPrevious={offset > 0}
+        hasNext={listed.data?.hasMore === true} pending={listed.isFetching}
+        onPrevious={() => setOffset(Math.max(0, offset - 100))}
+        onNext={() => setOffset(offset + 100)} />
     </section>
   );
 }
