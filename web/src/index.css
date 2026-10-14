@@ -205,3 +205,10 @@ button[aria-pressed="true"] { font-weight: 600; background: var(--accent-soft); 
 }
 
 @media (max-width: 639px) { .ui-table-records .ui-record-actions-wide { grid-column: 1 / -1; } }
+
+.ui-value-text { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.ui-value-details { display: inline-block; min-width: 0; max-width: 100%; font-weight: 400; }
+.ui-value-details > summary { display: inline-flex; align-items: center; gap: 4px; min-height: var(--control-height); cursor: pointer; color: var(--muted); font-size: 12px; }
+.ui-value-details > summary::before { content: "▸"; }
+.ui-value-details[open] > summary::before { content: "▾"; }
+.ui-value-details > :not(summary) { display: block; overflow-wrap: anywhere; white-space: normal; user-select: text; }

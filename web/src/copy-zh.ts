@@ -1,6 +1,18 @@
 import type { CopyKey } from "./copy-en";
 
 export const zh = {
+  "ux.bucketQuotas": "配额",
+  "ux.bucketCors": "CORS",
+  "ux.bucketLifecycle": "生命周期",
+  "ux.openObjects": "打开对象",
+  "ux.revoke": "撤销",
+  "value.exactBytes": "精确字节数",
+  "value.exactInstant": "精确时间戳",
+  "value.approximate": "近似值",
+  "audit.utc.dates": "日期均为 UTC 时间。",
+  "audit.invalid.utc.datetime": "请输入有效的 UTC 日期和时间。",
+  "common.rootPrefix": "根目录",
+
   "ux.general": "常规",
   "ux.credentials": "凭据",
   "ux.danger.zone": "危险操作",

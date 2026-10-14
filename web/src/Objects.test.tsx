@@ -2137,3 +2137,16 @@ test.each([{ deleted: -1, errors: [] }, { deleted: 1, errors: [{ key: "folder/a.
   await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("Objects are unavailable"));
   expect(lists).toBeGreaterThan(2);
 });
+
+
+test("embedded objects keeps prefix browsing and uploads under the parent's single context", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json(page([{ kind: "prefix", prefix: "folder/" }]))));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><Objects embedded bucketId="bkt-1" onBack={() => {}} canWrite canTransfer /></QueryClientProvider>);
+  await screen.findByRole("button", { name: "folder/" });
+  expect(screen.queryByRole("heading", { name: "Objects" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "bkt-1" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Root" })).toBeTruthy();
+  expect(screen.getByText("Upload", { selector: "summary" })).toBeTruthy();
+});

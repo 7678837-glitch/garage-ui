@@ -1,4 +1,16 @@
 export const en = {
+  "ux.bucketQuotas": "Quotas",
+  "ux.bucketCors": "CORS",
+  "ux.bucketLifecycle": "Lifecycle",
+  "ux.openObjects": "Open objects",
+  "ux.revoke": "Revoke",
+  "value.exactBytes": "Exact bytes",
+  "value.exactInstant": "Exact timestamp",
+  "value.approximate": "Approximate",
+  "audit.utc.dates": "Dates are in UTC.",
+  "audit.invalid.utc.datetime": "Enter a valid UTC date and time.",
+  "common.rootPrefix": "Root",
+
   "ux.general": "General",
   "ux.credentials": "Credentials",
   "ux.danger.zone": "Danger zone",

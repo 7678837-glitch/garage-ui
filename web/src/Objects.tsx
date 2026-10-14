@@ -698,12 +698,14 @@ export function Objects({
   canWrite,
   canTransfer,
   canManage = false,
+  embedded = false,
 }: {
   bucketId: string;
   onBack: () => void;
   canWrite: boolean;
   canTransfer: boolean;
   canManage?: boolean;
+  embedded?: boolean;
 }) {
   const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
@@ -1075,7 +1077,7 @@ export function Objects({
 
   return (
     <section className="ui-page" aria-label={copy("nav.objects")} aria-busy={loading}>
-      <header className="ui-page-header">
+      {!embedded ? <header className="ui-page-header">
       <h2>{copy("nav.objects")}</h2>
       <button
         className="ui-button"
@@ -1083,7 +1085,7 @@ export function Objects({
         onClick={onBack}
       >
         {copy("ui.back.to.buckets")}</button>
-      </header>
+      </header> : null}
       <nav aria-label={copy("ui.prefix")} className="ui-actions">
         <button
           className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
@@ -1092,7 +1094,7 @@ export function Objects({
             openPrefix("");
           }}
         >
-          {bucketId}
+          {embedded ? copy("common.rootPrefix") : bucketId}
         </button>
         {prefixSegments(prefix).map((segment) => (
           <button
