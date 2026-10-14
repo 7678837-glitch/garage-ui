@@ -808,7 +808,10 @@ export function Objects({
       setPendingDelete(null);
       setCopyNote(null);
       setBrowse((current) => ({ ...current, picked: [], anchor: null }));
-      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
+        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
+      ]);
     },
   });
   const removePrefix = useMutation({
@@ -820,7 +823,10 @@ export function Objects({
     },
     onSuccess: async () => {
       setPendingDelete(null);
-      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
+        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
+      ]);
     },
   });
   const removeMany = useMutation({
@@ -830,6 +836,11 @@ export function Objects({
         { method: "POST", body: JSON.stringify({ keys }) },
       );
       const failed = parseBatchDelete(body);
+      // A batch may delete some keys even when another key fails.
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
+        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
+      ]);
       if (failed.length > 0) {
         throw new Error(failed.map((item) => `${item.key}: ${item.message}`).join(" "));
       }
@@ -838,7 +849,6 @@ export function Objects({
       setPendingDelete(null);
       setCopyNote(null);
       setBrowse((current) => ({ ...current, picked: [], anchor: null }));
-      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
     },
   });
   const archiveZip = useMutation({
@@ -890,7 +900,10 @@ export function Objects({
     },
     onSuccess: async () => {
       setKeyChoice("");
-      await client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["bucket-objects", bucketId] }),
+        client.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] }),
+      ]);
     },
   });
   const previewMeta = useQuery({
@@ -1274,7 +1287,7 @@ export function Objects({
           <summary className="cursor-pointer py-2 text-lg font-semibold focus-visible:outline focus-visible:outline-2">
             {copy("ui.upload")}
           </summary>
-          <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} />
+          <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} />
         </details>
       ) : null}
       {showRows && visible.length > 0 ? (

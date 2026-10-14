@@ -2,7 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render as renderTree, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { Objects } from "./Objects";
 import { UploadPanel } from "./UploadPanel";
+import { releaseHash } from "./unsaved";
 
 type Progress = { lengthComputable: boolean; loaded: number; total: number };
 
@@ -286,7 +288,7 @@ test("refetches bucket objects after a successful upload", async () => {
     FakeRequest.sent[0]?.succeed();
   });
   expect(row("done.txt").textContent).toContain("Done");
-  expect(invalidate).toHaveBeenCalledTimes(1);
+  expect(invalidate).toHaveBeenCalledTimes(2);
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["bucket-objects", "bkt-9"] });
 });
 
@@ -519,4 +521,72 @@ test("uploads a nested dropped directory under its relative path", async () => {
   });
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.body).toBe(file);
+});
+
+test("preserves active uploads on stay and cancels queued work on accepted navigation", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  expect(releaseHash("#departed")).toBe(false);
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(FakeRequest.sent.every((request) => !request.aborted)).toBe(true);
+  expect(within(row("a.txt")).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  confirm.mockReturnValue(true);
+  act(() => { expect(releaseHash("#departed")).toBe(true); });
+  expect(FakeRequest.sent.every((request) => request.aborted)).toBe(true);
+  await act(async () => { FakeRequest.sent[0]?.succeed(); });
+  expect(FakeRequest.sent).toHaveLength(3);
+  expect(row("d.txt").textContent).toContain("Cancelled");
+});
+test("rejects browser hash departure before page listeners", () => {
+  window.history.replaceState(null, "", "/#objects");
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt"]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const arrival = vi.fn();
+  window.addEventListener("hashchange", arrival);
+  act(() => {
+    window.history.replaceState(null, "", "/#keys");
+    window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: "http://localhost/#objects" }));
+  });
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(arrival).not.toHaveBeenCalled();
+  expect(window.location.hash).toBe("#objects");
+  expect(FakeRequest.sent[0]?.aborted).toBe(false);
+  window.removeEventListener("hashchange", arrival);
+  window.history.replaceState(null, "", "/");
+});
+test("unmount aborts requests without starting queued files", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  cleanup();
+  expect(FakeRequest.sent.every((request) => request.aborted)).toBe(true);
+  await act(async () => { FakeRequest.sent[0]?.succeed(); });
+  expect(FakeRequest.sent).toHaveLength(3);
+});
+
+test("successful upload refreshes rendered search results while collapsed jobs remain mounted", async () => {
+  let searches = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("/search?")) {
+      searches += 1;
+      return new Response(JSON.stringify({ matches: searches > 1 ? [{ key: "new.txt", size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" }] : [], truncated: false }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ prefix: "", entries: [], next: null }), { status: 200 });
+  }));
+  render(<Objects bucketId="bkt-1" onBack={() => {}} canWrite canTransfer={false} />);
+  await screen.findByText("There are no objects. Upload the first object.");
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "new" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText("There are no objects.");
+  const disclosure = screen.getByText("Upload", { selector: "summary" }).closest("details")!;
+  expect(disclosure.open).toBe(false);
+  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  choose(["new.txt"]);
+  fireEvent.click(disclosure.querySelector("summary")!);
+  expect(disclosure.open).toBe(false);
+  expect(FakeRequest.sent[0]?.aborted).toBe(false);
+  await act(async () => { FakeRequest.sent[0]?.succeed(); });
+  expect(await screen.findByRole("button", { name: "new.txt" })).toBeTruthy();
+  expect(searches).toBe(2);
 });

@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
+import { setFormDirty } from "./unsaved";
 import { putObject } from "./api/client";
 import { useI18n, copy, translate } from "./i18n";
 
@@ -186,6 +187,9 @@ export function UploadPanel({
   existingKeys: readonly string[];
 }) {
   const queryClient = useQueryClient();
+  const guardId = useId();
+  const mounted = useRef(true);
+  const dropGeneration = useRef(0);
   const { t } = useI18n();
   const [rows, setRows] = useState<Row[]>([]);
   const rowsRef = useRef(rows);
@@ -202,7 +206,23 @@ export function UploadPanel({
     setRows(next);
   }
 
+  function cancelAll() {
+    dropGeneration.current += 1;
+    const next = rowsRef.current.map((row): Row =>
+      row.phase.kind === "uploading" || row.phase.kind === "queued"
+        ? { ...row, phase: { kind: "cancelled" } }
+        : row,
+    );
+    rowsRef.current = next;
+    for (const abort of abortRef.current.values()) abort();
+    abortRef.current.clear();
+    setFormDirty(guardId, false);
+    window.onbeforeunload = null;
+    if (mounted.current) setRows(next);
+  }
+
   function pump() {
+    if (!mounted.current) return;
     const current = rowsRef.current;
     const keys = new Set(existingRef.current);
     let slots = IN_FLIGHT_LIMIT - current.filter((row) => row.phase.kind === "uploading").length;
@@ -277,12 +297,13 @@ export function UploadPanel({
     );
     if (kind === "done") {
       void queryClient.invalidateQueries({ queryKey: ["bucket-objects", bucketId] });
+      void queryClient.invalidateQueries({ queryKey: ["bucket-object-search", bucketId] });
     }
     pump();
   }
 
   function addFiles(list: File[], directory: boolean) {
-    if (list.length === 0) {
+    if (!mounted.current || list.length === 0) {
       return;
     }
     const added = list.map((file) => {
@@ -364,13 +385,25 @@ export function UploadPanel({
     pumpRef.current();
   }, [bucketId, existingKeys]);
 
+  const cancelAllRef = useRef(cancelAll);
+  cancelAllRef.current = cancelAll;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      cancelAllRef.current();
+    };
+  }, []);
+
   useEffect(() => {
     const busy = rows.some((row) => row.phase.kind === "queued" || row.phase.kind === "uploading");
+    setFormDirty(guardId, busy, () => cancelAllRef.current());
     window.onbeforeunload = busy ? () => "" : null;
     return () => {
+      setFormDirty(guardId, false);
       window.onbeforeunload = null;
     };
-  }, [rows]);
+  }, [guardId, rows]);
 
   const keys = new Set(existingKeys);
 
@@ -389,8 +422,9 @@ export function UploadPanel({
       takeFiles(event.dataTransfer.files, false);
       return;
     }
+    const generation = dropGeneration.current;
     void filesFromDrop(entries).then((files) => {
-      addFiles(files, true);
+      if (generation === dropGeneration.current) addFiles(files, true);
     });
   }
 

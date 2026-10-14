@@ -19,9 +19,10 @@ function renderObjects(
     canWrite: true,
     canTransfer: true,
   },
+  staleTime = 0,
 ) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime }, mutations: { retry: false } },
   });
   const onBack = vi.fn();
   render(
@@ -1911,3 +1912,60 @@ test("shows a thumbnail for an allowlisted bitmap and does not request one witho
     expect(row?.querySelector("img")).toBeNull();
   }
 });
+
+test.each(["single", "batch", "partial"])("refreshes rendered search after %s deletion", async (mode) => {
+  const initial = [objectRow("a.txt", 1, "2026-10-11T00:00:00Z"), objectRow("b.txt", 2, "2026-10-11T00:00:00Z")];
+  let written = false;
+  let searches = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE" || init?.method === "POST") {
+      written = true;
+      return init.method === "DELETE" ? new Response(null, { status: 204 }) : json({ deleted: ["a.txt"], failed: mode === "partial" ? [{ key: "b.txt", message: "denied" }] : [] });
+    }
+    if (String(input).includes("/search?")) {
+      searches += 1;
+      return json({ matches: written ? (mode === "batch" ? [] : initial.slice(1)) : initial, truncated: false, reason: null });
+    }
+    return json(page(initial));
+  }));
+  renderObjects();
+  await screen.findByRole("button", { name: "a.txt" });
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "txt" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(searches).toBe(1));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
+  if (mode !== "single") fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  const dialog = screen.getByRole("dialog");
+  if (mode !== "single") fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "2" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "a.txt" })).toBeNull());
+  expect(searches).toBe(2);
+  if (mode === "partial") expect(screen.getByRole("dialog").textContent).toContain("b.txt: denied");
+});
+
+test("refreshes a previously rendered search after prefix deletion", async () => {
+  let deleted = false;
+  let searches = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") { deleted = true; return json({ deleted: 1, errors: [] }); }
+    if (String(input).includes("/search?")) { searches += 1; return json({ matches: deleted ? [] : [objectRow("folder/a.txt", 1, "2026-10-11T00:00:00Z")], truncated: false }); }
+    return json(page(deleted ? [] : [{ kind: "prefix", prefix: "folder/" }]));
+  }));
+  renderObjects("bkt-1", { canWrite: true, canTransfer: true }, Infinity);
+  await screen.findByRole("button", { name: "folder/" });
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "txt" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("button", { name: "folder/a.txt" });
+  fireEvent.click(screen.getByRole("button", { name: "bkt-1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "folder/" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.change(screen.getByLabelText("Search"), { target: { value: "txt" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "folder/a.txt" })).toBeNull());
+  expect(searches).toBe(2);
+});
+

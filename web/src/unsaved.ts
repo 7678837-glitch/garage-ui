@@ -6,6 +6,11 @@ function leavePrompt(): string {
 }
 
 const dirtyIds = new Set<string>();
+const leaveActions = new Map<string, () => void>();
+
+function acceptDeparture() {
+  for (const action of [...leaveActions.values()]) action();
+}
 let watching = false;
 let ignoredArrival: string | null = null;
 let reverting = false;
@@ -69,8 +74,11 @@ function onHashChange(event: HashChangeEvent) {
     return;
   }
   if (window.confirm(leavePrompt())) {
+    acceptDeparture();
     return;
   }
+  // Keep page listeners from unmounting active work while the rejected address is restored.
+  event.stopImmediatePropagation();
   const previous = previousHash(event.oldURL);
   if (previous === window.location.hash) {
     return;
@@ -82,7 +90,7 @@ function onHashChange(event: HashChangeEvent) {
 
 function watchLeave() {
   if (dirtyIds.size > 0 && !watching) {
-    // The upload panel owns window.onbeforeunload. Listen separately so this does not replace it.
+    // Listen separately from upload progress protection.
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("hashchange", onHashChange, true);
     watching = true;
@@ -97,11 +105,13 @@ function watchLeave() {
   }
 }
 
-export function setFormDirty(id: string, isDirty: boolean) {
+export function setFormDirty(id: string, isDirty: boolean, onLeave?: () => void) {
   if (isDirty) {
     dirtyIds.add(id);
+    if (onLeave) leaveActions.set(id, onLeave);
   } else {
     dirtyIds.delete(id);
+    leaveActions.delete(id);
   }
   watchLeave();
 }
@@ -113,6 +123,7 @@ export function releaseHash(next: string): boolean {
   if (dirtyIds.size > 0 && !window.confirm(leavePrompt())) {
     return false;
   }
+  acceptDeparture();
   // The browser delivers hashchange after the effect. Record the target on a clean page too, or the next page can be marked dirty before it sees this navigation and ask again.
   ignoredArrival = next;
   return true;
