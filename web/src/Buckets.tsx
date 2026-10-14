@@ -14,7 +14,7 @@ import {
 } from "./Nav";
 import { Objects } from "./Objects";
 import { DataCell, ResourceIdentity, SettingsSection } from "./ui";
-import { CompactCapacityText, copy, fill, translate } from "./i18n";
+import { CapacityText, CompactCapacityText, copy, fill, translate } from "./i18n";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type Alias =
@@ -1977,7 +1977,13 @@ export function Buckets({
                   {bucket.aliases.slice(1).map((alias, aliasIndex) => <span key={aliasIndex}> · <span>{alias.name}</span></span>)}
                   <ResourceIdentity id={bucket.id} compact />
                 </DataCell>
-                <DataCell label={copy("ui.usage")}><UsageText bucket={bucket} /></DataCell>
+                <DataCell label={copy("ui.usage")} className="ui-bucket-usage-cell">
+                  <div className="ui-bucket-usage-desktop"><UsageText bucket={bucket} /></div>
+                  {objectUsage(bucket) !== null || bucket.bytes !== null || bucket.quotas?.maxSize !== undefined ? <details className="ui-bucket-usage-mobile">
+                    <summary><span>{copy("ui.usage")}</span>{bucket.objects !== null ? <span>{fill(copy("ui.objects"), { used: bucket.objects })}</span> : null}{bucket.bytes !== null ? <span><CapacityText digits={bucket.bytes} /></span> : null}</summary>
+                    <UsageText bucket={bucket} />
+                  </details> : null}
+                </DataCell>
                 <DataCell kind="actions" className="ui-record-actions-wide" label={copy("ui.actions")}><div className="ui-actions">
                   <button className="ui-button" type="button" aria-label={`${translate("Open objects")} (${bucket.id})`}
                     onClick={() => goHash(hashForObjects(bucket.id, ""))}>{translate("Open objects")}</button>

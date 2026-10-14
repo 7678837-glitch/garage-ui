@@ -1,3 +1,4 @@
+.ui-bucket-usage-mobile { display: none; }
 .ui-user-mobile-summary { display: none; }
 .ui-filter-help { color: var(--muted); font-size: 12px; }
 .ui-filter-help > summary { cursor: pointer; }
@@ -26,6 +27,14 @@
   .ui-bucket-list [data-kind="metadata"] .ui-data-label { display: inline; margin-right: 8px; }
   .ui-bucket-list [data-kind="metadata"] .ui-data-value { display: inline; }
   .ui-bucket-list [data-kind="metadata"] { grid-column: 1 / -1; }
+  .ui-bucket-list .ui-bucket-usage-cell > .ui-data-label { display: none; }
+  .ui-bucket-list .ui-bucket-usage-desktop { display: none; }
+  .ui-bucket-list .ui-bucket-usage-mobile { display: block; }
+  .ui-bucket-usage-mobile > summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; cursor: pointer; }
+  .ui-bucket-usage-mobile > summary::before { content: "▸"; }
+  .ui-bucket-usage-mobile[open] > summary::before { content: "▾"; }
+  .ui-bucket-usage-mobile > summary > :first-child { color: var(--muted); }
+  .ui-bucket-usage-mobile > :not(summary) { padding-block: 4px 12px; }
   .ui-bucket-list [data-kind="identity"] a { display: inline-flex; align-items: center; min-height: 44px; }
   .ui-bucket-list .ui-identity-details > summary { min-height: 44px; padding-block: 0; }
   .ui-key-list [data-kind="identity"] .ui-data-value { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; }
