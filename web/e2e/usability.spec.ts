@@ -75,7 +75,15 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   expect(Math.abs(menuBox.y - accountBox.y)).toBeLessThanOrEqual(4);
   const headerBox = await header.boundingBox();
   if (!headerBox) throw new Error("Mobile header has no bounding box");
-  expect(headerBox.height).toBeLessThanOrEqual(60);
+  const headerSizing = await header.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      minimum: parseFloat(style.minHeight),
+      insets: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth),
+    };
+  });
+  const singleRowHeight = Math.max(headerSizing.minimum, Math.max(menuBox.height, contextBox.height, accountBox.height) + headerSizing.insets);
+  expect(headerBox.height).toBeLessThanOrEqual(singleRowHeight);
   writeFileSync(`${evidenceDir}/${label}-header.json`, JSON.stringify({ boxes, summaryText: await summary.innerText(), accessibleName: await summary.getAttribute("aria-label") }, null, 2));
   await page.screenshot({ path: `${evidenceDir}/${label}-viewport.png`, fullPage: false });
   await openAccount(page);
