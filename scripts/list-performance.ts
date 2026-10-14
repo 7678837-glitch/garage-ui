@@ -28,18 +28,18 @@ const disk = () => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let seedTransientErrors = 0;
-async function checked(url: string, options: RequestInit = {}) {
+async function checked(url: string, options: RequestInit = {}, retry503 = !options.method || options.method === "GET" || options.method === "HEAD") {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, { ...options, signal: AbortSignal.timeout(new URL(url).pathname === "/healthz" ? 1000 : 60_000) });
     if (response.ok) return response;
     await response.arrayBuffer();
-    if (mode === "seed" && response.status === 503 && attempt < 5) {
+    if (mode === "seed" && retry503 && response.status === 503 && attempt < 5) {
       seedTransientErrors++;
       console.log(JSON.stringify({ seedTransientErrors, status: 503, attempt: attempt + 1 }));
       await sleep(250 * (attempt + 1));
       continue;
     }
-    throw new Error(`${options.method ?? "GET"} ${new URL(url).pathname}: HTTP ${response.status}`);
+    throw Object.assign(new Error(`${options.method ?? "GET"} ${new URL(url).pathname}: HTTP ${response.status}`), { status: response.status });
   }
 }
 async function pool(count: number, action: (index: number) => Promise<void>) {
@@ -85,14 +85,26 @@ if (mode === "seed") {
   const key = await admin("CreateKey", { name: "performance", neverExpires: true }) as any;
   fixture.access = key.accessKeyId; fixture.secret = key.secretAccessKey;
   await pool(bucketCount, async (i) => {
-    const bucket = await admin("CreateBucket", { globalAlias: `perf-bucket-${String(i).padStart(5, "0")}` }) as any;
+    const globalAlias = `perf-bucket-${String(i).padStart(5, "0")}`;
+    let bucket: any;
+    try { bucket = await admin("CreateBucket", { globalAlias }); }
+    catch (error: any) {
+      if (error.status !== undefined && error.status !== 503) throw error;
+      // A failed create response can follow a committed alias; never repeat the mutation.
+      bucket = await admin(`GetBucketInfo?globalAlias=${encodeURIComponent(globalAlias)}`);
+      seedTransientErrors++;
+    }
+    if (typeof bucket.id !== "string" || !bucket.id || !Array.isArray(bucket.globalAliases) || bucket.globalAliases.length !== 1 || bucket.globalAliases[0] !== globalAlias) {
+      throw new Error(`CreateBucket reconciliation failed for ${globalAlias}: response does not identify the exact fixture bucket`);
+    }
     if (i === 0) fixture.bucketId = bucket.id;
   });
   await admin("AllowBucketKey", { bucketId: fixture.bucketId, accessKeyId: fixture.access, permissions: { read: true, write: true, owner: true } });
   save("fixture.json", fixture);
   await pool(objectCount, async (i) => {
     const url = new URL(`${fixture.s3}/perf-bucket-00000/perf/object-${String(i).padStart(6, "0")}.txt`);
-    await (await checked(url.href, { method: "PUT", headers: sign("PUT", url, fixture.access, fixture.secret), body: "" })).arrayBuffer();
+    // These deterministic zero-byte PUTs are safe to repeat in this unversioned fixture.
+    await (await checked(url.href, { method: "PUT", headers: sign("PUT", url, fixture.access, fixture.secret), body: "" }, true)).arrayBuffer();
   });
   const buckets = await admin("ListBuckets") as any[];
   let objects = 0, token = "";
