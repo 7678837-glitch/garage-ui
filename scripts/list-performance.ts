@@ -149,7 +149,7 @@ if (mode === "seed") {
         const selector = list === "buckets" ? '[aria-label="Buckets"] tbody tr' : '[aria-label="Objects"] tbody tr';
         await page.waitForFunction((s: string) => {
           const rows = [...document.querySelectorAll(s)];
-          const row = rows.find(r => r.querySelector('input[aria-label^="Select perf/object-"]') || r.querySelector('button[aria-label^="Open objects ("]'));
+          const row = rows.find(r => r.querySelector('[role="checkbox"][aria-label^="Select perf/object-"]') || r.querySelector('button[aria-label^="Open objects ("]'));
           if (!row) return false;
           const bounds = row.getBoundingClientRect();
           if (bounds.width === 0 || bounds.height === 0 || bounds.top >= innerHeight) return false;
