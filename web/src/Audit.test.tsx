@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
-import { Audit } from "./Audit";
+import { Audit, auditSearch } from "./Audit";
 
 afterEach(() => {
   cleanup();
@@ -81,7 +81,7 @@ test("an admin on #audit sees Ada and login", async () => {
   const fetchMock = stubAdminAudit();
   renderApp();
   expect(await screen.findByText("Ada")).toBeTruthy();
-  expect(screen.getByText("login")).toBeTruthy();
+  expect(await screen.findByText("login")).toBeTruthy();
   expect(screen.getByRole("link", { name: "Audit" }).getAttribute("href")).toBe("#audit");
   fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
   await waitFor(() => {
@@ -113,8 +113,8 @@ test("filtering the audit list by user Ada", async () => {
   await waitFor(() => {
     expect(auditUrls(fetchMock, "list").at(-1)).toBe("/api/audit?user=Ada&offset=0&limit=100");
   });
-  fireEvent.change(screen.getByLabelText("From"), { target: { value: "1700000000" } });
-  fireEvent.change(screen.getByLabelText("To"), { target: { value: "1700000100" } });
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2023-11-14T22:13:20" } });
+  fireEvent.change(screen.getByLabelText("To"), { target: { value: "2023-11-14T22:15:00" } });
   fireEvent.change(screen.getByLabelText("Action"), { target: { value: "bucket-1" } });
   await waitFor(() => {
     expect(auditUrls(fetchMock, "list").at(-1)).toBe(
@@ -339,4 +339,61 @@ test("pages audit with filters and resets the range when filters change", async 
   expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
   expect(requests.at(-1)?.searchParams.get("user")).toBe("Ada");
   expect(requests.at(-1)?.searchParams.get("action")).toBe("login");
+});
+
+
+test("encodes audit UTC filters as Unix seconds and preserves unset fields", () => {
+  expect(auditSearch({ user: "Ada", from: "2023-11-14T22:13:20", to: "2023-11-14T22:15", action: "login" })).toBe("?user=Ada&from=1700000000&to=1700000100&action=login");
+  expect(auditSearch({ user: "", from: "", to: "", action: "" })).toBe("");
+});
+
+test("rejects malformed and impossible UTC audit dates", () => {
+  expect(typeof auditSearch).toBe("function");
+  for (const from of ["1700000000", "2023-02-29T12:00", "invalid"]) {
+    expect(() => auditSearch({ user: "", from, to: "", action: "" })).toThrow();
+  }
+});
+
+test("changing a UTC date resets audit pagination with seconds in the request", async () => {
+  const requests: URL[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    requests.push(url);
+    return json({ items: [{ ...auditRow, reason: `date-page-${url.searchParams.get("offset")}` }], hasMore: true });
+  }));
+  renderAudit();
+  await screen.findByText("date-page-0");
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText("date-page-100");
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2023-11-14T22:13:20" } });
+  await screen.findByText("date-page-0");
+  expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
+  expect(requests.at(-1)?.searchParams.get("from")).toBe("1700000000");
+});
+
+
+test("an invalid native UTC date blocks list and export requests visibly", async () => {
+  const fetchMock = stubAdminAudit();
+  renderAudit();
+  await screen.findByText("login");
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2023-11-14T22:13:20" } });
+  await waitFor(() => expect(auditUrls(fetchMock, "list").at(-1)).toContain("from=1700000000"));
+  const input = screen.getByLabelText("From") as HTMLInputElement;
+  Object.defineProperty(input, "validity", { configurable: true, value: { badInput: true, valid: false } });
+  const count = fetchMock.mock.calls.length;
+  fireEvent.change(input, { target: { value: "" } });
+  expect(screen.getByRole("alert").textContent).toBe("Enter a valid UTC date and time.");
+  expect((screen.getByRole("button", { name: "Export audit" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(fetchMock.mock.calls.length).toBe(count);
+});
+
+
+test("renders known audit epoch seconds as a readable UTC instant and preserves invalid raw values", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [auditRow, { ...auditRow, at: "not-a-timestamp", reason: "invalid-time" }], hasMore: false })));
+  renderAudit();
+  await screen.findByText("login");
+  const time = document.querySelector("time");
+  expect(time?.getAttribute("datetime")).toBe("2023-11-14T22:13:20.000Z");
+  expect(time?.textContent).toContain("UTC");
+  expect(screen.getByText("not-a-timestamp")).toBeTruthy();
 });

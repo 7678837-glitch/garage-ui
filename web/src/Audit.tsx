@@ -2,15 +2,15 @@ import type { CopyKey } from "./copy-en";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
-import { Pagination } from "./ui";
+import { DataCell, Pagination } from "./ui";
 import { isGarageDown } from "./garageDown";
-import { copy, fill, translate } from "./i18n";
+import { ReadableInstantText, copy, fill, translate } from "./i18n";
 
 const COLUMNS = [
   "at",
+  "result",
   "username",
   "ip",
-  "result",
   "reason",
   "method",
   "path",
@@ -53,16 +53,40 @@ const FILTER_FIELDS = [
   ["action", "Action"],
 ] as const;
 
-function auditSearch(filters: AuditFilters): string {
+function utcSeconds(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.0{1,3})?)?$/.test(value)) {
+    throw new Error(translate("Enter a valid UTC date and time."));
+  }
+  const seconds = value.replace(/\.0{1,3}$/, "");
+  const normalized = seconds.length === 16 ? `${seconds}:00` : seconds;
+  const milliseconds = Date.parse(`${normalized}Z`);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString().slice(0, 19) !== normalized) {
+    throw new Error(translate("Enter a valid UTC date and time."));
+  }
+  return String(milliseconds / 1000);
+}
+
+export function auditSearch(filters: AuditFilters): string {
   const params = new URLSearchParams();
   for (const [key] of FILTER_FIELDS) {
     const value = filters[key];
     if (value !== "") {
-      params.set(key, value);
+      params.set(key, key === "from" || key === "to" ? utcSeconds(value) : value);
     }
   }
   const search = params.toString();
   return search === "" ? "" : `?${search}`;
+}
+
+function auditInstant(value: string | number): string {
+  const raw = String(value);
+  if (!/^-?\d+$/.test(raw)) return raw;
+  const milliseconds = Number(raw) * 1000;
+  if (!Number.isSafeInteger(milliseconds)) return raw;
+  const date = new Date(milliseconds);
+  if (!Number.isFinite(date.getTime())) return raw;
+  const iso = date.toISOString();
+  return /^\d{4}-/.test(iso) ? iso : raw;
 }
 
 function failureOf(error: unknown): { message: string; code: string | null } {
@@ -111,32 +135,41 @@ export function Audit() {
     action: "",
   });
   const [offset, setOffset] = useState(0);
+  const [invalidInputs, setInvalidInputs] = useState<Record<string, boolean>>({});
+  let filterError: string | null = Object.values(invalidInputs).some(Boolean) ? translate("Enter a valid UTC date and time.") : null;
+  try { auditSearch(filters); } catch (error) { filterError = failureOf(error).message; }
   const listed = useQuery({
     queryKey: ["audit", filters, offset],
     queryFn: () => loadAudit(filters, offset),
+    enabled: filterError === null,
   });
   const [exportFailed, setExportFailed] = useState(false);
   const items = listed.data?.items ?? [];
   const view = {
-    busy: listed.isPending,
+    busy: listed.isPending && filterError === null,
     refreshing: items.length > 0 && listed.isFetching && !listed.isPending,
     empty: Boolean(listed.data) && items.length === 0,
     failure: listed.isError ? failureOf(listed.error) : null,
   };
   return (
     <section className="ui-page" aria-label={copy("nav.audit")} aria-busy={view.busy}>
-      <h2>{copy("nav.audit")}</h2>
+      <div className="ui-page-header"><h2>{copy("nav.audit")}</h2></div>
+      <p className="ui-muted">{translate("Dates are in UTC.")}</p>
       <div className="ui-toolbar">
         {FILTER_FIELDS.map(([key, label]) => (
           <label className="ui-field" key={key}>
             {translate(label)}
             <input
               className="ui-input"
+              type={key === "from" || key === "to" ? "datetime-local" : "text"}
+              step={key === "from" || key === "to" ? 1 : undefined}
+              aria-invalid={invalidInputs[key] || undefined}
               value={filters[key]}
               autoComplete="off"
               spellCheck={false}
               onChange={(event) => {
                 const value = event.target.value;
+                setInvalidInputs((current) => ({ ...current, [key]: !event.target.validity.valid }));
                 setFilters((current) => ({ ...current, [key]: value }));
                 setOffset(0);
               }}
@@ -146,6 +179,7 @@ export function Audit() {
       <button
         className="ui-button"
         type="button"
+        disabled={filterError !== null}
         onClick={() => {
           setExportFailed(false);
           void exportAudit(filters).catch(() => {
@@ -155,6 +189,7 @@ export function Audit() {
       >
         {copy("ui.export.audit")}</button>
       </div>
+      {filterError ? <p className="ui-alert" role="alert">{filterError}</p> : null}
       {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
       {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.audit")}>{copy("ui.loading.audit")}</div> : null}
       {view.refreshing ? <p>{copy("ui.refreshing.audit")}</p> : null}
@@ -174,9 +209,9 @@ export function Audit() {
       ) : null}
       {view.empty ? <p>{copy("ui.there.are.no.audit.events")}</p> : null}
       <div className="ui-table-container" role="region" aria-label={translate("Audit events")} tabIndex={0}>
-        <table className="ui-table">
-          <thead>
-            <tr>
+        <table className="ui-table ui-table-records" role="table">
+          <thead role="rowgroup">
+            <tr role="row">
               {COLUMNS.map((column) => (
                 <th key={column} scope="col">
                   {copy(columnLabel[column])}
@@ -184,13 +219,13 @@ export function Audit() {
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             {items.map((row, index) => (
-              <tr key={`${row.at}-${row.path}-${index}`}>
+              <tr role="row" key={`${row.at}-${row.path}-${index}`}>
                 {COLUMNS.map((column) => (
-                  <td className={column === "path" || column === "target" ? "ui-identifier" : undefined} key={column}>
-                    {String(row[column] ?? "")}
-                  </td>
+                  <DataCell label={copy(columnLabel[column])} kind={column === "at" ? "identity" : "metadata"} className={column === "path" || column === "target" ? "ui-identifier" : undefined} key={column}>
+                    {column === "at" ? <ReadableInstantText value={auditInstant(row[column])} /> : String(row[column] ?? "")}
+                  </DataCell>
                 ))}
               </tr>
             ))}
@@ -198,7 +233,7 @@ export function Audit() {
         </table>
       </div>
       <Pagination page={Math.floor(offset / 100) + 1} hasPrevious={offset > 0}
-        hasNext={listed.data?.hasMore === true} pending={listed.isFetching}
+        hasNext={listed.data?.hasMore === true} pending={listed.isFetching || filterError !== null}
         onPrevious={() => setOffset(Math.max(0, offset - 100))}
         onNext={() => setOffset(offset + 100)} />
     </section>

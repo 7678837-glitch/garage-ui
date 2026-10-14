@@ -172,9 +172,10 @@ async function shown(expandEditors = true) {
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
   if (expandEditors) {
     for (const row of screen.getAllByRole("row").slice(1)) {
+      fireEvent.click(within(row).getByText("Actions", { selector: "summary" }));
       fireEvent.click(within(row).getByText("Edit", { selector: "summary" }));
     }
-    fireEvent.click(screen.getByText("Reset password for Bea", { selector: "summary" }));
+    fireEvent.click(screen.getByLabelText("Reset password for Bea", { selector: "summary" }));
   }
 }
 
@@ -276,8 +277,8 @@ test("shows Saving while an account patch is pending and keeps the alert when it
   expect(role.value).toBe("viewer");
   const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   const remove = screen.getByRole("button", { name: "Delete Bea" }) as HTMLButtonElement;
-  expect(reset.textContent).toBe("Reset password for Bea");
-  expect(remove.textContent).toBe("Delete Bea");
+  expect(reset.textContent).toBe("Reset password");
+  expect(remove.textContent).toBe("Delete");
   const patch = calls.find((call) => call.url === "/api/users/2" && call.init?.method === "PATCH");
   expect(JSON.parse(String(patch?.init?.body))).toEqual({
     role: "admin",
@@ -293,8 +294,8 @@ test("shows Saving while an account patch is pending and keeps the alert when it
     expect(screen.queryByText("Saving")).toBeNull();
   });
   expect(role.value).toBe("viewer");
-  expect(reset.textContent).toBe("Reset password for Bea");
-  expect(remove.textContent).toBe("Delete Bea");
+  expect(reset.textContent).toBe("Reset password");
+  expect(remove.textContent).toBe("Delete");
 });
 
 test("turns share off with download and refuses share while download is off", async () => {
@@ -576,7 +577,7 @@ test("shows Ada before Zed when the API returns Zed first", async () => {
   const names = screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value")?.textContent);
   expect(names).toEqual(["Ada", "Zed"]);
 });
 
@@ -608,7 +609,7 @@ test("sorts loaded users by created time and keeps the choice in the address", a
   const names = screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+    .map((row) => within(row).getAllByRole("cell")[0]?.querySelector(".ui-data-value")?.textContent);
   expect(names).toEqual(["Ada", "Zed", "Mina"]);
   expect(window.location.search).toContain("usersSort=created");
   expect(window.location.search).toContain("keep=1");
@@ -762,7 +763,7 @@ test("shows Resetting password while reset is submitting, then Password reset", 
   );
   const deleteBea = screen.getByRole("button", { name: "Delete Bea" }) as HTMLButtonElement;
   expect(deleteBea.disabled).toBe(true);
-  expect(deleteBea.textContent).toBe("Delete Bea");
+  expect(deleteBea.textContent).toBe("Delete");
   expect(screen.queryByText("Password reset")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   release(new Response(null, { status: 204 }));
@@ -770,7 +771,7 @@ test("shows Resetting password while reset is submitting, then Password reset", 
   expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe("");
   const idle = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   expect(idle.disabled).toBe(true);
-  expect(idle.textContent).toBe("Reset password for Bea");
+  expect(idle.textContent).toBe("Reset password");
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
 });
 
@@ -813,7 +814,7 @@ test("keeps the typed password and alert when reset fails", async () => {
     name: "Reset password for Bea",
   })) as HTMLButtonElement;
   expect(idle.disabled).toBe(false);
-  expect(idle.textContent).toBe("Reset password for Bea");
+  expect(idle.textContent).toBe("Reset password");
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
 });
 
@@ -846,14 +847,14 @@ test("shows Deleting while delete is submitting and keeps the row when it fails"
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
   const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   expect(reset.disabled).toBe(true);
-  expect(reset.textContent).toBe("Reset password for Bea");
+  expect(reset.textContent).toBe("Reset password");
   expect(screen.queryByRole("dialog")).toBeNull();
   release(json({ message: "The user still owns a bucket" }, 409));
   expect((await screen.findByRole("alert")).textContent).toBe("The user still owns a bucket");
   expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
   const idle = (await screen.findByRole("button", { name: "Delete Bea" })) as HTMLButtonElement;
   expect(idle.disabled).toBe(false);
-  expect(idle.textContent).toBe("Delete Bea");
+  expect(idle.textContent).toBe("Delete");
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
@@ -939,7 +940,7 @@ test("opens user creation and password reset on demand while retaining reset dra
   fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
   expect(screen.getByLabelText("New password for Bea").closest("details")?.open).toBe(false);
-  const reset = screen.getByText("Reset password for Bea", { selector: "summary" });
+  const reset = screen.getByLabelText("Reset password for Bea", { selector: "summary" });
   fireEvent.click(reset);
   fireEvent.change(screen.getByLabelText("New password for Bea"), { target: { value: "retained-password" } });
   fireEvent.click(reset);
@@ -967,4 +968,34 @@ test("an empty later user page does not claim the repository is empty", async ()
   expect(await screen.findByText("No matches on this page.")).toBeTruthy();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+test("row actions contain the account editor and password reset controls", async () => {
+  installApi([ada, bea]);
+  renderUsers();
+  await shown(false);
+  const row = screen.getByRole("cell", { name: "Bea" }).closest("tr");
+  if (!row) throw new Error("Missing user row");
+  const actions = within(row).getByText("Actions", { selector: "summary" });
+  expect(actions.getAttribute("aria-label")).toBe("Actions: Bea");
+  expect(actions.closest("details")?.open).toBe(false);
+  fireEvent.click(actions);
+  expect(actions.closest("details")?.open).toBe(true);
+  expect(within(row).getByText("Edit", { selector: "summary" })).toBeTruthy();
+  expect(within(row).getByLabelText("Reset password for Bea", { selector: "summary" })).toBeTruthy();
+});
+
+test("canceling user creation clears credentials and closes its disclosure", async () => {
+  installApi([ada, bea]);
+  renderUsers();
+  await shown(false);
+  const form = screen.getByRole("form", { name: "Create user" });
+  fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "discarded" } });
+  fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "discarded-password" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+  expect(form.closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
+  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("");
 });

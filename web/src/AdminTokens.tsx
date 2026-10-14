@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
-import { InstantText, copy, translate } from "./i18n";
+import { ReadableInstantText, copy, translate } from "./i18n";
 import { isGarageDown } from "./garageDown";
+
+import { DataCell, SettingsSection } from "./ui";
 
 type AdminToken = {
   id: string | null;
@@ -372,7 +374,7 @@ function ScopePicker({
   return (
     <fieldset className="grid gap-2">
       <legend className="text-sm">{copy("ui.scope")}</legend>
-      <label className="text-sm">
+      <label className="ui-checkbox-field">
         <input
           className="mr-2"
           type="checkbox"
@@ -386,7 +388,7 @@ function ScopePicker({
         const groupChecked = group.endpoints.every((id) => chosen.has(id));
         return (
           <div key={group.name} className="grid gap-1">
-            <label className="text-sm">
+            <label className="ui-checkbox-field">
               <input
                 className="mr-2"
                 type="checkbox"
@@ -398,7 +400,7 @@ function ScopePicker({
               {group.name}
             </label>
             {group.endpoints.map((id) => (
-              <label key={id} className="ml-4 text-sm">
+              <label key={id} className="ui-checkbox-field ml-4">
                 <input
                   className="mr-2"
                   type="checkbox"
@@ -527,7 +529,7 @@ function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void
   );
 }
 
-function CreateTokenForm() {
+function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [pending, setPending] = useState<TokenDraft | null>(null);
@@ -557,7 +559,7 @@ function CreateTokenForm() {
   return (
     <>
       <form
-        className="ui-form max-w-xl"
+        className="ui-form ui-settings"
         onSubmit={(event) => {
           event.preventDefault();
           if (draft.name.trim().length === 0 || create.isPending) {
@@ -567,6 +569,7 @@ function CreateTokenForm() {
           setPending(draft);
         }}
       >
+        <SettingsSection title={copy("ux.general")}>
         <label className="ui-field">
           {copy("ui.name")}<input
             className="ui-input"
@@ -586,7 +589,7 @@ function CreateTokenForm() {
             }}
           />
         </label>
-        <label className="text-sm">
+        <label className="ui-checkbox-field">
           <input
             className="mr-2"
             type="checkbox"
@@ -596,12 +599,15 @@ function CreateTokenForm() {
             }}
           />
           {copy("ui.never.expires")}</label>
+        </SettingsSection>
+        <SettingsSection title={copy("tab.permissions")}>
         <ScopePicker
           selected={draft.scope}
           onChange={(scope) => {
             setDraft({ ...draft, scope });
           }}
         />
+        </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
         <button
           className="ui-button ui-button-primary"
@@ -609,6 +615,7 @@ function CreateTokenForm() {
           disabled={create.isPending}
         >
           {copy("ui.create.token")}</button>
+        <button className="ui-button" type="button" disabled={create.isPending} onClick={() => { setDraft(EMPTY_DRAFT); create.reset(); onCancel(); }}>{copy("ui.cancel")}</button>
       </form>
       {pending !== null ? (
         <ConfirmDialog
@@ -672,7 +679,7 @@ function EditTokenForm({
   return (
     <>
       <form
-        className="ui-form max-w-xl"
+        className="ui-form ui-settings"
         onSubmit={(event) => {
           event.preventDefault();
           if (draft.name.trim().length === 0 || update.isPending) {
@@ -682,6 +689,7 @@ function EditTokenForm({
           setPending(draft);
         }}
       >
+        <SettingsSection title={copy("ux.general")}>
         <label className="ui-field">
           {copy("ui.name")}<input
             className="ui-input"
@@ -701,7 +709,7 @@ function EditTokenForm({
             }}
           />
         </label>
-        <label className="text-sm">
+        <label className="ui-checkbox-field">
           <input
             className="mr-2"
             type="checkbox"
@@ -711,12 +719,15 @@ function EditTokenForm({
             }}
           />
           {copy("ui.never.expires")}</label>
+        </SettingsSection>
+        <SettingsSection title={copy("tab.permissions")}>
         <ScopePicker
           selected={draft.scope}
           onChange={(scope) => {
             setDraft({ ...draft, scope });
           }}
         />
+        </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
         <button
           className="ui-button ui-button-primary"
@@ -770,34 +781,32 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
   return (
     <>
       <div className="ui-table-container" role="region" aria-label={translate("Admin token list")} tabIndex={0}>
-        <table className="ui-table">
-          <thead>
-            <tr>
+        <table className="ui-table ui-table-records" role="table">
+          <thead role="rowgroup">
+            <tr role="row">
               <th scope="col">
                 {copy("ui.name")}</th>
               <th scope="col">
                 {copy("ui.scope")}</th>
-              <th scope="col">
-                {copy("ui.expiration")}</th>
-              <th scope="col">
-                {copy("ui.expired")}</th>
+              <th scope="col">{copy("ui.expired")}</th>
+              <th scope="col">{copy("ui.expiration")}</th>
               <th scope="col">
                 {copy("ui.source")}</th>
               <th scope="col">{copy("ui.actions")}</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             {rows.map((token, index) => (
-              <tr key={`${token.name}-${token.created}-${index}`}>
-                <td>{token.name}</td>
-                <td className="ui-identifier">{token.scope.join(", ")}</td>
-                <td>
-                  <InstantText value={token.expiration} />
-                </td>
-                <td>{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</td>
-                <td>{sourceLabel(token)}</td>
-                <td>
-                  <div className="ui-actions">{issuedTokenId(token) !== null ? (
+              <tr role="row" key={`${token.name}-${token.created}-${index}`}>
+                <DataCell label={copy("ui.name")} kind="identity"><strong>{token.name}</strong></DataCell>
+                <DataCell label={copy("ui.scope")} className="ui-identifier">{token.scope.join(", ")}</DataCell>
+                <DataCell label={copy("ui.expired")}>{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
+                <DataCell label={copy("ui.expiration")}><ReadableInstantText value={token.expiration} /></DataCell>
+                <DataCell label={copy("ui.source")}>{sourceLabel(token)}</DataCell>
+                <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide">
+                  {issuedTokenId(token) !== null ? <details className="ui-disclosure">
+                    <summary aria-label={`${copy("ui.actions")}: ${token.name}`}>{copy("ui.actions")}</summary>
+                    <div className="ui-actions">
                     <>
                       <button
                         className="ui-button"
@@ -816,8 +825,9 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
                       >
                         {copy("ui.delete.2")}</button>
                     </>
-                  ) : null}</div>
-                </td>
+                    </div>
+                  </details> : null}
+                </DataCell>
               </tr>
             ))}
           </tbody>
@@ -876,7 +886,7 @@ function CurrentToken({ token }: { token: AdminToken }) {
         <div>
           <dt>{copy("ui.expiration")}</dt>
           <dd>
-            <InstantText value={token.expiration} />
+            <ReadableInstantText value={token.expiration} />
           </dd>
         </div>
         <div>
@@ -893,6 +903,7 @@ function CurrentToken({ token }: { token: AdminToken }) {
 }
 
 export function AdminTokens() {
+  const createDisclosure = useRef<HTMLDetailsElement>(null);
   const [offset, setOffset] = useState(readTokenOffset);
   const list = useQuery({
     queryKey: ["admin-tokens", "list", offset],
@@ -924,10 +935,10 @@ export function AdminTokens() {
       aria-label={copy("nav.tokens")}
       aria-busy={list.isPending || current.isPending}
     >
-      <h2>{copy("nav.tokens")}</h2>
-      <details className="ui-disclosure">
-        <summary>{copy("ui.create.token")}</summary>
-        <CreateTokenForm />
+      <div className="ui-page-header"><h2>{copy("nav.tokens")}</h2></div>
+      <details className="ui-disclosure" ref={createDisclosure}>
+        <summary className="ui-button ui-button-primary">{copy("ui.create.token")}</summary>
+        <CreateTokenForm onCancel={() => { if (createDisclosure.current) createDisclosure.current.open = false; }} />
       </details>
       <div className="ui-toolbar">
         <label className="ui-field">

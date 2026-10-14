@@ -315,6 +315,7 @@ test("an admin updates an issued token and the response secret stays off the pag
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   expect(window.location.href).not.toContain(issuedId);
 
+  fireEvent.click(within(issued).getByText("Actions", { selector: "summary" }));
   fireEvent.click(within(issued).getByRole("button", { name: "Edit" }));
   const update = screen.getByRole("button", { name: "Update token" });
   const form = update.closest("form");
@@ -434,12 +435,13 @@ test("an admin deletes an issued token and the response secret stays off the pag
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   expect(window.location.href).not.toContain(issuedId);
 
+  fireEvent.click(within(issued).getByText("Actions", { selector: "summary" }));
   fireEvent.click(within(issued).getByRole("button", { name: "Delete" }));
   const dialog = screen.getByRole("dialog");
   expect(dialog.textContent).toContain("issued-reader");
   expect(dialog.textContent).toContain("This deletes the admin token.");
   expect(within(dialog).queryByRole("textbox")).toBeNull();
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -955,4 +957,19 @@ test("an empty later token page does not claim the repository is empty", async (
   expect(await screen.findByText("No matches on this page.")).toBeTruthy();
   expect(screen.queryByText("No admin tokens")).toBeNull();
   expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+test("canceling token creation clears the draft and closes its disclosure", async () => {
+  installApi();
+  renderTokens();
+  await screen.findByRole("cell", { name: "issued-reader" });
+  const create = screen.getByText("Create token", { selector: "summary" });
+  const form = screen.getByRole("button", { name: "Create token" }).closest("form");
+  if (!form) throw new Error("Missing token creation form");
+  fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "discarded" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+  expect(create.closest("details")?.open).toBe(false);
+  fireEvent.click(create);
+  expect((within(form).getByLabelText("Name") as HTMLInputElement).value).toBe("");
 });
