@@ -1239,7 +1239,7 @@ export function Objects({
       ) : null}
       {canWrite ? <UploadPanel bucketId={bucketId} existingKeys={visibleKeys} /> : null}
       {showRows && visible.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
@@ -1347,7 +1347,7 @@ export function Objects({
         <section aria-label={`Inspect ${inspected}`}>
           {inspect.data.versions.map((version) => (
             <div key={version.uuid}>
-              <p>{version.uuid}</p>
+              <p className="break-all">{version.uuid}</p>
               {INSPECT_FLAGS.map((flag) => (
                 <p key={flag}>
                   {flag} {yesNo(version[flag])}
