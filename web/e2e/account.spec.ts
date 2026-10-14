@@ -1,5 +1,5 @@
 import { assertAuthenticated, chooseTheme, openAccount, openRowActions } from "./interactions";
-import { expect, type Page, request, type Route, test } from "@playwright/test";
+import { expect, type Page, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
 
@@ -48,9 +48,9 @@ function isUserList(route: Route): boolean {
 
 test.describe.serial("accounts", () => {
   // Serial tests can skip the final UI restoration after a failure; teardown must still restore shared accounts.
-  test.afterAll(async (_, testInfo) => {
+  test.afterAll(async ({ playwright }, testInfo) => {
     test.setTimeout(120_000);
-    const cleanup = await request.newContext({ baseURL: testInfo.project.use.baseURL, timeout: 10_000 });
+    const cleanup = await playwright.request.newContext({ baseURL: testInfo.project.use.baseURL, timeout: 10_000 });
     try {
       let password = administrator.password;
       let login = await cleanup.post("/api/auth/login", { data: { username: administrator.username, password } });
