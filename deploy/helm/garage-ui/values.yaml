@@ -4,7 +4,7 @@
 
 image:
   repository: garage-ui
-  tag: "20261014.2"
+  tag: "20261015.1"
   pullPolicy: IfNotPresent
 
 # Garage admin API base URL. Leave empty until that URL is known.
