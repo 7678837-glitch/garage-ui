@@ -1,4 +1,4 @@
-import { assertAuthenticated, bucketIdFromRow, openAccount, openDisclosure, openNavigation, openRowActions } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openAccount, openNavigation, openRowActions, selectChoice } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { assertWidth } from "./layout";
@@ -83,7 +83,7 @@ test("lists thumbnails for bitmap keys and skips them without download permissio
     await expect(viewer.getByRole("button", { name: "pix/001.png", exact: true })).toBeVisible();
     await expect(viewer.getByRole("button", { name: "pix/100.png", exact: true })).toBeVisible();
     await expect(viewer.locator("img")).toHaveCount(0);
-    await viewer.getByRole("checkbox", { name: "Select pix/001.png", exact: true }).check();
+    await viewer.getByRole("checkbox", { name: "Select pix/001.png", exact: true }).click();
     await expect(viewer.getByRole("link", { name: "Download", exact: true })).toHaveCount(0);
     await expect(viewer.getByRole("link", { name: "Preview", exact: true })).toHaveCount(0);
     await page.waitForLoadState("networkidle");
@@ -157,6 +157,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
@@ -184,14 +185,16 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  await page.getByRole("menuitem", { name: `Permissions for ${bucketId}`, exact: true }).click();
+  await page.getByRole("button", { name: "Grant key", exact: true }).click();
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
-  await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
+  await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Write", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Owner", exact: true }).click();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
@@ -220,7 +223,7 @@ async function bindKey(objects: Locator, keyId: string): Promise<void> {
   const empty = objects.getByText("There are no objects. Upload the first object.", { exact: true });
   await expect(picker.or(empty)).toBeVisible({ timeout: 20_000 });
   if (await picker.isVisible()) {
-    await picker.selectOption(keyId);
+    await selectChoice(picker, keyId);
     await objects.getByRole("button", { name: "Use this key", exact: true }).click();
   }
   await expect(empty).toBeVisible({ timeout: 20_000 });

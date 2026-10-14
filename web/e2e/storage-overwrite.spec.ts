@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { administrator } from "./accounts";
-import { closeUpload, assertAuthenticated, openUpload } from "./interactions";
+import { closeUpload, assertAuthenticated, openUpload, selectChoice } from "./interactions";
 import { assertWidth, evidenceDir } from "./layout";
 
 test("confirms a hidden existing destination and refreshes an open preview after overwrite", async ({ page }) => {
@@ -38,7 +38,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
     expect((await page.request.post(`/api/buckets/${bucketId}/permissions`, { headers, data: { accessKeyId: keyId, permissions: { owner: true, read: true, write: true } } })).status()).toBe(200);
     await page.goto(`/#bucket/${bucketId}/objects`);
     const objects = page.locator('section[aria-label="Objects"]');
-    await objects.getByLabel("Bucket key").selectOption(keyId);
+    await selectChoice(objects.getByLabel("Bucket key"), keyId);
     await objects.getByRole("button", { name: "Use this key", exact: true }).click();
     await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible();
     const upload = objects.getByRole("region", { name: "Upload", exact: true });

@@ -1,4 +1,4 @@
-import { assertAuthenticated, bucketIdFromRow, openDisclosure, openNavigation, openRowActions } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openNavigation, openRowActions, selectChoice } from "./interactions";
 import { createHash, createHmac, type BinaryLike } from "node:crypto";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -32,28 +32,30 @@ test("cleans up incomplete uploads older than the threshold", async ({ page }) =
     const buckets = page.getByRole("region", { name: "Buckets" });
     await buckets.getByLabel("Filter buckets").fill(alias);
     const row = await revealRow(buckets, alias);
-    await openDisclosure(row.locator("summary[aria-label^=\"Edit \"]"));
-    await row.getByRole("button", { name: "Incomplete uploads", exact: true }).click();
-    await expect(row.getByText(objectKey, { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(row.getByText(uploadId, { exact: true })).toBeVisible();
+    await openRowActions(row);
+    await page.getByRole("menuitem", { name: `Edit ${bucketId}`, exact: true }).click();
+    const settings = page.getByRole("tabpanel");
+    await settings.getByRole("button", { name: "Incomplete uploads", exact: true }).click();
+    await expect(settings.getByText(objectKey, { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(settings.getByText(uploadId, { exact: true })).toBeVisible();
     await assertWidth(page, "cleanup-uploads", 1280);
     await assertWidth(page, "cleanup-uploads", 360);
 
     // A new upload is already older than zero seconds. The field accepts whole hours, so 0 removes it.
-    await row.getByLabel("Older than hours").fill("0");
-    await expect(row.getByRole("button", { name: "Clean up", exact: true })).toBeEnabled();
+    await settings.getByLabel("Older than hours").fill("0");
+    await expect(settings.getByRole("button", { name: "Clean up", exact: true })).toBeEnabled();
     const pending = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return response.request().method() === "POST" && url.pathname === `/api/buckets/${bucketId}/cleanup-uploads`;
     });
-    await row.getByRole("button", { name: "Clean up", exact: true }).click();
+    await settings.getByRole("button", { name: "Clean up", exact: true }).click();
     const response = await pending;
     expect(response.status()).toBe(200);
     const body = (await response.json()) as { uploadsDeleted?: unknown };
     expect(body.uploadsDeleted).toBe(1);
-    await expect(row.getByText(objectKey, { exact: true })).toHaveCount(0);
-    await expect(row.getByText(uploadId, { exact: true })).toHaveCount(0);
-    await expect(row.getByText(`Cleaned up ${body.uploadsDeleted}`, { exact: true })).toBeVisible();
+    await expect(settings.getByText(objectKey, { exact: true })).toHaveCount(0);
+    await expect(settings.getByText(uploadId, { exact: true })).toHaveCount(0);
+    await expect(settings.getByText(`Cleaned up ${body.uploadsDeleted}`, { exact: true })).toBeVisible();
     await assertWidth(page, "cleanup-uploads-after", 360);
     await assertWidth(page, "cleanup-uploads-after", 1280);
 
@@ -135,6 +137,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
@@ -164,14 +167,16 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  await page.getByRole("menuitem", { name: `Permissions for ${bucketId}`, exact: true }).click();
+  await page.getByRole("button", { name: "Grant key", exact: true }).click();
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
-  await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
+  await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Write", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Owner", exact: true }).click();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
@@ -186,8 +191,7 @@ async function openObjects(page: Page, bucketId: string): Promise<void> {
 async function bindKey(objects: Locator, keyId: string): Promise<void> {
   const picker = objects.getByLabel("Bucket key");
   await expect(picker).toBeVisible({ timeout: 20_000 });
-  await expect(picker.locator("option", { hasText: keyId })).toHaveCount(1, { timeout: 20_000 });
-  await picker.selectOption(keyId);
+  await selectChoice(picker, keyId);
   await objects.getByRole("button", { name: "Use this key", exact: true }).click();
   await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible({
     timeout: 20_000,
@@ -223,7 +227,7 @@ async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: s
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: `Delete bucket ${bucketId}` })).toBeVisible();
   await dialog.getByRole("button", { name: "Delete bucket", exact: true }).click();

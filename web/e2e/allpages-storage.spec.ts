@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { administrator } from "./accounts";
-import { assertAuthenticated, openNavigation, openDisclosure, openRowActions, bucketIdFromRow } from "./interactions";
+import { assertAuthenticated, openNavigation, openDisclosure, openRowActions, bucketIdFromRow, selectChoice } from "./interactions";
 
 const evidence = process.env.STORAGE_EVIDENCE_DIR ?? "/tmp/garage-ui-allpages-storage";
 mkdirSync(evidence, { recursive: true });
@@ -56,7 +56,7 @@ async function shot(page: Page, name: string, actions: string) {
       headings: [...document.querySelectorAll("main h2")].filter(visible).map(e => ({ text: e.textContent, ...rect(e) })),
       tabs: rect(document.querySelector('[role="tablist"]')),
       firstAction: rect([...document.querySelectorAll("main button, main input, main summary")].find(visible) ?? null),
-      controls: [...document.querySelectorAll("main input, main select, main textarea, main button, main summary, [role=tab]")].filter(visible).map(e => ({ label: e.getAttribute("aria-label") ?? e.closest("label")?.textContent?.trim() ?? e.textContent?.trim(), tag: e.tagName, type: e.getAttribute("type"), font: getComputedStyle(e).fontSize, ...rect(e) })) };
+      controls: [...document.querySelectorAll("main input, main textarea, main button, main summary, [role=tab], [role=dialog] input, [role=dialog] textarea, [role=dialog] button")].filter(visible).map(e => ({ label: e.getAttribute("aria-label") ?? e.closest("label")?.textContent?.trim() ?? e.textContent?.trim(), tag: e.tagName, role: e.getAttribute("role"), type: e.getAttribute("type"), font: getComputedStyle(e).fontSize, ...rect(e) })) };
   });
   const path = `${evidence}/${name}-${geometry.width}.png`;
   await page.screenshot({ path, fullPage: true, mask: [page.getByLabel("Secret access key")] });
@@ -71,7 +71,7 @@ async function shot(page: Page, name: string, actions: string) {
         expect.soft(parseFloat(control.font), `${name}: ${control.label} readable font`).toBeGreaterThanOrEqual(16);
         expect.soft(control.width, `${name}: ${control.label} usable width`).toBeGreaterThanOrEqual(180);
       }
-      if (["BUTTON", "SUMMARY", "A"].includes(control.tag)) expect.soft(control.height, `${name}: ${control.label} touch height`).toBeGreaterThanOrEqual(36);
+      if (["BUTTON", "SUMMARY", "A"].includes(control.tag) && !["checkbox", "radio"].includes(control.role ?? "")) expect.soft(control.height, `${name}: ${control.label} touch height`).toBeGreaterThanOrEqual(36);
     }
   }
 }
@@ -91,14 +91,14 @@ for (const width of [1280, 360]) {
       await expect(page.getByText("Bucket created", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByLabel("Filter buckets").fill(name);
-      await page.getByLabel("Sort buckets").selectOption("alias");
+      await selectChoice(page.getByLabel("Sort buckets"), "Alias");
       await openDisclosure(page.locator("summary", { hasText: "Only loaded rows" }));
       const row = page.locator("tbody tr", { hasText: name });
       await expect(row).toBeVisible();
       bucketId = await bucketIdFromRow(row);
       await shot(page, "buckets-list", "Created bucket; filtered and sorted alias");
       await openRowActions(row);
-      await row.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+      await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
       await shot(page, "bucket-delete-confirm", "Opened owned bucket deletion confirmation");
       await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(row).toBeVisible();
@@ -119,14 +119,12 @@ for (const width of [1280, 360]) {
       await expect(dialog.getByText(/Copied|Select the secret and copy it/)).toBeVisible();
       await dialog.getByRole("button", { name: "I have saved it", exact: true }).click();
       await expect(secret).toHaveCount(0);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByLabel("Filter keys").fill(name);
-      await page.getByLabel("Sort keys").selectOption("name");
+      await selectChoice(page.getByLabel("Sort keys"), "Name");
       await openDisclosure(page.locator("summary", { hasText: "Only loaded rows" }));
       const keyRow = page.locator("tbody tr", { hasText: name });
       await expect(keyRow).toBeVisible();
       await shot(page, "keys-list", "Created key; revealed/copied/closed secret; filtered/sorted name");
-      await openRowActions(keyRow);
       await keyRow.getByRole("button", { name: `Delete ${keyId}`, exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(keyRow).toBeVisible();
@@ -138,7 +136,7 @@ for (const width of [1280, 360]) {
       await page.getByLabel("Filter buckets").fill(name);
       const deleteRow = page.locator("tbody tr", { hasText: name });
       await openRowActions(deleteRow);
-      await deleteRow.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+      await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Delete bucket", exact: true }).click();
       await expect(page.getByText("Bucket deleted", { exact: true })).toBeVisible();
       bucketId = "";
@@ -164,7 +162,7 @@ for (const width of [1280, 360]) {
       const objectResponse = await listing;
       expect(objectResponse.status(), "New bucket requires explicit credential selection").toBe(412);
       await expect(page.getByRole("combobox", { name: "Bucket key", exact: true })).toBeVisible({ timeout: 15000 });
-      await page.getByRole("combobox", { name: "Bucket key", exact: true }).selectOption(fixture.keyId);
+      await selectChoice(page.getByRole("combobox", { name: "Bucket key", exact: true }), fixture.keyId);
       await shot(page, "bucket-objects-select-key", "Observed real no-usable-key response; selected owned Bucket key");
       const selectedListing = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/buckets/${fixture.bucketId}/objects`, { timeout: 30000 });
       await page.getByRole("button", { name: "Use this key", exact: true }).click();
@@ -175,19 +173,25 @@ for (const width of [1280, 360]) {
       await expect(page.getByText("There are no objects.", { exact: true })).toBeVisible({ timeout: 15000 });
       await shot(page, "bucket-objects", "Opened Objects tab; owned bucket is genuinely empty");
       await tab(page, "Settings");
-      await expect(page.getByLabel(`Global alias for ${fixture.bucketId}`)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Add alias", exact: true })).toBeVisible();
       await shot(page, "bucket-settings", "Opened all settings sections");
       const extra = `${fixture.name}-alias`;
+      await page.getByRole("button", { name: "Add alias", exact: true }).click();
       await page.getByLabel(`Global alias for ${fixture.bucketId}`).fill(extra);
       await page.getByRole("button", { name: `Add alias to ${fixture.bucketId}`, exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Add alias", exact: true }).getByText("Alias added", { exact: true })).toBeVisible();
+      await page.getByRole("dialog", { name: "Add alias", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true })).toBeVisible();
       await page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true }).click();
       await expect(page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true })).toHaveCount(0);
-      await page.getByLabel(`Local for ${fixture.bucketId}`, { exact: true }).check();
+      await page.getByRole("button", { name: "Add alias", exact: true }).click();
+      await page.getByRole("radio", { name: `Local for ${fixture.bucketId}`, exact: true }).click();
       await page.getByLabel(`Local alias for ${fixture.bucketId}`).fill(extra);
       await page.getByLabel(`Access key for ${fixture.bucketId}`).fill(fixture.keyId);
       await shot(page, "bucket-local-alias", "Switched global to local; filled owned key alias");
       await page.getByRole("button", { name: `Add alias to ${fixture.bucketId}`, exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Add alias", exact: true }).getByText("Alias added", { exact: true })).toBeVisible();
+      await page.getByRole("dialog", { name: "Add alias", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: new RegExp(`Remove local alias ${extra}`) })).toBeVisible();
       await page.getByRole("button", { name: new RegExp(`Remove local alias ${extra}`) }).click();
       const size = page.getByLabel(`Max size for ${fixture.bucketId}`); const objects = page.getByLabel(`Max objects for ${fixture.bucketId}`);
@@ -212,14 +216,16 @@ for (const width of [1280, 360]) {
     try {
       await nav(page, "Buckets"); await page.getByLabel("Filter buckets").fill(fixture.name);
       await page.locator("tbody tr", { hasText: fixture.name }).getByRole("link").click();
-      await tab(page, "Permissions"); await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+      await tab(page, "Permissions"); await page.getByRole("button", { name: "Grant key", exact: true }).click();
       const grant = page.getByRole("form", { name: `Grant permissions on ${fixture.bucketId}` });
       await expect(grant.getByRole("button", { name: "Grant", exact: true })).toBeDisabled();
       await grant.getByLabel("Access key").fill(fixture.keyId);
-      await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
-      await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
+      await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
+      await grant.getByRole("checkbox", { name: "Write", exact: true }).click();
       await shot(page, "bucket-grant", "Opened grant form; disabled empty grant; selected read/write");
       await grant.getByRole("button", { name: "Grant", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+      await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByText("read yes", { exact: true })).toBeVisible();
       await shot(page, "bucket-permissions", "Granted read/write and saw persisted row");
       await page.getByRole("button", { name: `Revoke ${fixture.keyId}`, exact: true }).click();
@@ -231,11 +237,14 @@ for (const width of [1280, 360]) {
       await shot(page, "key-overview", "Opened owned key via list identity; expanded/copy full ID");
       await tab(page, "Buckets"); await expect(page.getByText("read yes", { exact: true })).toBeVisible();
       await shot(page, "key-buckets", "Read assigned bucket and read/write grant");
-      await tab(page, "Settings"); const rename = page.getByLabel(`Name for ${fixture.keyId}`);
+      await tab(page, "Settings");
+      await page.getByRole("button", { name: `Actions (${fixture.keyId})`, exact: true }).click();
+      const rename = page.getByLabel(`Name for ${fixture.keyId}`);
       await rename.fill(`${fixture.name}-long-readable-name-for-storage-administration`);
       await shot(page, "key-settings", "Opened settings; filled long readable name");
       await page.getByRole("button", { name: `Save name (${fixture.keyId})`, exact: true }).click();
       await expect(page.getByText("Key renamed", { exact: true })).toBeVisible();
+      await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
       const allow = page.getByRole("checkbox", { name: `Allow bucket creation (${fixture.keyId})`, exact: true });
       await allow.click(); await expect(allow).toBeChecked();
       await page.getByRole("button", { name: `View secret for ${fixture.keyId}`, exact: true }).click();

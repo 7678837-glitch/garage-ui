@@ -1,7 +1,7 @@
 import { expect, request, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
-import { assertAuthenticated, chooseTheme, openUpload, closeUpload, openNavigation, openAccount, openDisclosure } from "./interactions";
+import { assertAuthenticated, chooseTheme, openUpload, closeUpload, openNavigation, openAccount, openDisclosure, selectChoice } from "./interactions";
 
 const evidence = process.env.GARAGE_UI_E2E_EVIDENCE_DIR ?? "/tmp/garage-ui-mobile-browser";
 const png = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,2,0,0,0,144,119,83,222,0,0,0,12,73,68,65,84,120,156,99,248,207,192,0,0,3,1,1,0,201,254,146,239,0,0,0,0,73,69,78,68,174,66,96,130]);
@@ -43,7 +43,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       expect((await page.request.post(`/api/buckets/${bucketId}/permissions`, { headers, data: { accessKeyId: keyId, permissions: { owner: true, read: true, write: true } } })).status()).toBe(200);
       await page.goto(`/#bucket/${bucketId}/objects`);
       const objects = page.locator('section[aria-label="Objects"]');
-      await objects.getByLabel("Bucket key").selectOption(keyId);
+      await selectChoice(objects.getByLabel("Bucket key"), keyId);
       await objects.getByRole("button", { name: "Use this key", exact: true }).click();
       await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible();
       for (const file of files) expect((await page.request.put(`/api/buckets/${bucketId}/objects/${file.key}`, { headers: { ...headers, "content-type": file.type, "content-length": String(file.body.length) }, data: file.body })).status()).toBe(201);
@@ -91,8 +91,8 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       await expect(inspector.getByText(`Size ${files[0].body.length}`, { exact: true })).toBeVisible();
       await openDisclosure(inspector.locator("summary").filter({ hasText: "Exact timestamp" }));
       await expect(inspector.locator("code")).toContainText("Z");
-      await objects.getByRole("checkbox", { name: "Select notes.txt", exact: true }).check();
-      await objects.getByRole("checkbox", { name: "Select photo.png", exact: true }).check();
+      await objects.getByRole("checkbox", { name: "Select notes.txt", exact: true }).click();
+      await objects.getByRole("checkbox", { name: "Select photo.png", exact: true }).click();
       const bulk = objects.locator(".ui-objects-bulk");
       await expect(bulk.getByText("2 objects", { exact: true })).toBeVisible();
       await expect(bulk.getByRole("button", { name: "Download ZIP", exact: true })).toBeEnabled();
@@ -154,7 +154,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       await management(page, bucketId, keyId, width, theme);
       if (width === 390) {
         await navigate(page, "Settings");
-        await page.getByLabel("Language").selectOption("zh-CN");
+        await selectChoice(page.getByLabel("Language"), "Chinese");
         await page.goto(`/#bucket/${bucketId}/objects`);
         const chinese = page.locator('section[aria-label="对象"]');
         await expect(chinese.getByRole("button", { name: "notes.txt", exact: true })).toBeVisible();
@@ -202,9 +202,9 @@ async function phoneShell(page: Page) {
   const header = page.getByRole("banner");
   const menu = header.getByRole("button", { name: "Menu", exact: true });
   const parent = header.getByRole("link", { name: "← Buckets", exact: true });
-  const summary = header.locator("summary");
-  for (const control of [menu, parent, summary]) await touchTarget(control, page.viewportSize()?.width ?? 0);
-  const boxes = await Promise.all([bounds(menu), bounds(parent), bounds(summary)]);
+  const account = header.locator(".console-account-trigger");
+  for (const control of [menu, parent, account]) await touchTarget(control, page.viewportSize()?.width ?? 0);
+  const boxes = await Promise.all([bounds(menu), bounds(parent), bounds(account)]);
   const centers = boxes.map((box) => box.y + box.height / 2);
   expect(Math.max(...centers) - Math.min(...centers), "Appbar controls must share one row").toBeLessThanOrEqual(8);
   for (let index = 1; index < boxes.length; index++) expect(boxes[index].x).toBeGreaterThanOrEqual(boxes[index - 1].x + boxes[index - 1].width);
@@ -215,7 +215,7 @@ async function phoneShell(page: Page) {
   await expect(menu).toBeFocused();
   await openAccount(page);
   await expect(page.getByRole("button", { name: "Log out", exact: true })).toBeEnabled();
-  await summary.click();
+  await account.click();
 }
 
 async function navigate(page: Page, name: string) {
@@ -241,20 +241,18 @@ async function management(page: Page, bucketId: string, keyId: string, width: nu
   const key = page.locator("tbody tr").filter({ has: page.locator(`a[href="#key/${keyId}/overview"]`) });
   await expect(key).toBeVisible();
   rows.Keys = (await bounds(key)).height;
-  await openDisclosure(key.locator("summary"));
-  await expect(key.getByLabel(`Name for ${keyId}`, { exact: true })).toBeVisible();
+  await key.getByRole("button", { name: `Actions (${keyId})`, exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Name", exact: true }).getByLabel(`Name for ${keyId}`, { exact: true })).toBeVisible();
+  await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
   await expect(key.getByRole("button", { name: `Delete ${keyId}`, exact: true })).toBeVisible();
-  await key.locator("summary").click();
   await page.screenshot({ path: `${evidence}/keys-${width}-${theme.toLowerCase()}.png`, fullPage: false });
   await navigate(page, "Users");
   const user = page.locator("tbody tr").first();
   await expect(user).toBeVisible();
   rows.Users = (await bounds(user)).height;
-  await openDisclosure(user.locator("summary").filter({ hasText: /^Actions$/ }));
-  await openDisclosure(user.locator("summary").filter({ hasText: /^Edit$/ }));
-  await expect(user.getByRole("combobox")).toBeVisible();
-  await user.locator("summary").filter({ hasText: /^Edit$/ }).click();
-  await user.locator("summary").filter({ hasText: /^Actions$/ }).click();
+  await user.getByRole("button", { name: /^Actions: / }).click();
+  await expect(page.getByRole("dialog").getByRole("combobox")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await page.screenshot({ path: `${evidence}/users-${width}-${theme.toLowerCase()}.png`, fullPage: false });
   writeFileSync(`${evidence}/management-${width}-${theme.toLowerCase()}.json`, JSON.stringify(rows, null, 2));

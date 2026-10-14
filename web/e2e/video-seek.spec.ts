@@ -1,4 +1,4 @@
-import { assertAuthenticated, bucketIdFromRow, openDisclosure, openNavigation, openRowActions, openUpload } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, openNavigation, openRowActions, openUpload, selectChoice } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -88,7 +88,7 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
     await expect(upload.getByRole("listitem").filter({ hasText: "clip.mp4" }).getByText("Done", { exact: true })).toBeVisible();
     expect(objectPuts).toBe(1);
 
-    await objects.getByRole("checkbox", { name: "Select clip.mp4" }).check();
+    await objects.getByRole("checkbox", { name: "Select clip.mp4" }).click();
     const details = objects.getByRole("region", { name: "Object details" });
     await expect(details).toContainText(`Size ${clipSize}`);
     await expect(details).toContainText("video/mp4");
@@ -431,6 +431,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(async () => {
     const buckets = page.getByRole("region", { name: "Buckets" });
     if (!(await buckets.getByLabel("Filter buckets").isVisible())) {
@@ -482,14 +483,16 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  await page.getByRole("menuitem", { name: `Permissions for ${bucketId}`, exact: true }).click();
+  await page.getByRole("button", { name: "Grant key", exact: true }).click();
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
-  await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
+  await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Write", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Owner", exact: true }).click();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
@@ -506,7 +509,7 @@ async function bindKey(objects: Locator, keyId: string): Promise<void> {
   const empty = objects.getByText("There are no objects. Upload the first object.", { exact: true });
   await expect(picker.or(empty)).toBeVisible({ timeout: 20_000 });
   if (await picker.isVisible()) {
-    await picker.selectOption(keyId);
+    await selectChoice(picker, keyId);
     await objects.getByRole("button", { name: "Use this key", exact: true }).click();
   }
   await expect(empty).toBeVisible({ timeout: 20_000 });

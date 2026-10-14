@@ -1,4 +1,4 @@
-import { assertAuthenticated, bucketIdFromRow, chooseTheme, openDisclosure, openNavigation, openRowActions, openUpload } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, chooseTheme, openNavigation, openRowActions, openUpload, selectChoice } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { closeSync, createReadStream, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -62,7 +62,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await objects.getByRole("button", { name: "notes/", exact: true }).click();
       const prefixNav = objects.getByRole("navigation", { name: "Prefix" });
       await expect(prefixNav.getByRole("button", { name: "notes (notes/)", exact: true })).toBeVisible();
-      await objects.getByRole("checkbox", { name: "Select notes/a.txt" }).check();
+      await objects.getByRole("checkbox", { name: "Select notes/a.txt" }).click();
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toBeVisible();
       const details = objects.getByRole("region", { name: "Object details" });
       await expect(details).toContainText("text/plain");
@@ -84,7 +84,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
         timeout: 30_000,
       });
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toHaveCount(0);
-      await objects.getByRole("checkbox", { name: "Select blocked.html" }).check();
+      await objects.getByRole("checkbox", { name: "Select blocked.html" }).click();
       const href = await objects.getByRole("link", { name: "Download", exact: true }).getAttribute("href");
       expect(href).toContain("blocked.html");
       expect(href).toContain("download=1");
@@ -92,7 +92,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(details).toContainText("text/html");
       await expect(details.locator("pre, img, video, audio, iframe")).toHaveCount(0);
       await expect(details).not.toContainText(blockedBody);
-      await objects.getByRole("checkbox", { name: "Select blocked.html" }).uncheck();
+      await objects.getByRole("checkbox", { name: "Select blocked.html" }).click();
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toHaveCount(0);
     });
 
@@ -156,7 +156,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(uploadRow(upload, "once.txt").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
-      await objects.getByRole("checkbox", { name: "Select once.txt" }).check();
+      await objects.getByRole("checkbox", { name: "Select once.txt" }).click();
       await objects.getByRole("button", { name: "Delete", exact: true }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog.getByRole("heading", { name: "Confirm once.txt" })).toBeVisible();
@@ -178,8 +178,8 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(uploadRow(upload, "batch-b.txt").getByText("Done", { exact: true })).toBeVisible();
       await clearSelection(objects);
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toHaveCount(0);
-      await objects.getByRole("checkbox", { name: "Select batch-a.txt" }).check();
-      await objects.getByRole("checkbox", { name: "Select batch-b.txt" }).check();
+      await objects.getByRole("checkbox", { name: "Select batch-a.txt" }).click();
+      await objects.getByRole("checkbox", { name: "Select batch-b.txt" }).click();
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toBeVisible();
       await objects.getByRole("button", { name: "Delete", exact: true }).click();
       const dialog = page.getByRole("dialog");
@@ -205,7 +205,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
         timeout: 20_000,
       });
       await openRowActions(folder);
-      await folder.getByRole("button", { name: "Delete folder (gone/)", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Delete folder (gone/)", exact: true }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog.getByRole("heading", { name: "Confirm gone/" })).toBeVisible();
       const confirm = dialog.getByRole("button", { name: "Confirm", exact: true });
@@ -256,7 +256,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       expect(await multipartKeys(page, bucketId)).not.toContain("wide.bin");
       const wideRow = objects.locator("tbody tr", { hasText: "wide.bin" });
       await expect(wideRow).toContainText(String(wideSize), { timeout: 20_000 });
-      await wideRow.getByRole("checkbox", { name: "Select wide.bin" }).check();
+      await wideRow.getByRole("checkbox", { name: "Select wide.bin" }).click();
       await objects.getByRole("button", { name: "Delete", exact: true }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog.getByRole("heading", { name: "Confirm wide.bin" })).toBeVisible();
@@ -341,10 +341,10 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("filter and sort stay after refresh", async () => {
-      await expect(objects.getByLabel("Sort")).toHaveValue("key");
+      await expect(objects.getByLabel("Sort")).toHaveText("Key");
       let order = await listedKeys(objects);
       expect(order.indexOf("aa-large.txt")).toBeLessThan(order.indexOf("zz-small.txt"));
-      await objects.getByLabel("Sort").selectOption("size");
+      await selectChoice(objects.getByLabel("Sort"), "Size");
       await expect(objects.getByText("Only this page", { exact: true })).toBeVisible();
       order = await listedKeys(objects);
       expect(order.indexOf("zz-small.txt")).toBeLessThan(order.indexOf("aa-large.txt"));
@@ -358,7 +358,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(page).toHaveURL(/objectsSort=size/);
       await page.reload();
       await expect(objects.getByLabel("Search")).toHaveValue("zz-small");
-      await expect(objects.getByLabel("Sort")).toHaveValue("size");
+      await expect(objects.getByLabel("Sort")).toHaveText("Size");
       await expect(objects.getByText("Only this page", { exact: true })).toBeVisible();
       await expect(objects.getByRole("button", { name: "zz-small.txt", exact: true })).toBeVisible({
         timeout: 20_000,
@@ -371,7 +371,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await objects.getByLabel("Choose files").setInputFiles({ name: "zz-small-new.txt", mimeType: "text/plain", buffer: Buffer.from("new search match") });
       await expect(objects.getByRole("button", { name: "zz-small-new.txt", exact: true })).toBeVisible();
       await expect(objects.getByLabel("Search")).toHaveValue("zz-small");
-      await objects.getByRole("checkbox", { name: "Select zz-small-new.txt", exact: true }).check();
+      await objects.getByRole("checkbox", { name: "Select zz-small-new.txt", exact: true }).click();
       await objects.getByRole("button", { name: "Delete", exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -419,14 +419,14 @@ function encodeKey(key: string): string {
 
 async function listedKeys(objects: Locator): Promise<string[]> {
   return objects.locator("tbody tr").evaluateAll((rows) =>
-    rows.map((row) => row.querySelector("button")?.textContent ?? ""),
+    rows.map((row) => row.querySelector("button.ui-object-name")?.textContent ?? ""),
   );
 }
 
 async function clearSelection(objects: Locator): Promise<void> {
   const checked = objects.getByRole("checkbox", { checked: true });
   while ((await checked.count()) > 0) {
-    await checked.first().uncheck();
+    await checked.first().click();
   }
 }
 
@@ -520,6 +520,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
@@ -547,14 +548,16 @@ async function grantKey(page: Page, alias: string, bucketId: string, keyId: stri
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  await page.getByRole("menuitem", { name: `Permissions for ${bucketId}`, exact: true }).click();
+  await page.getByRole("button", { name: "Grant key", exact: true }).click();
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
-  await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Write", exact: true }).check();
-  await grant.getByRole("checkbox", { name: "Owner", exact: true }).check();
+  await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Write", exact: true }).click();
+  await grant.getByRole("checkbox", { name: "Owner", exact: true }).click();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("region", { name: `Permissions for ${bucketId}` }).getByText("write yes", { exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
@@ -571,7 +574,7 @@ async function bindKey(objects: Locator, keyId: string): Promise<void> {
   const empty = objects.getByText("There are no objects. Upload the first object.", { exact: true });
   await expect(picker.or(empty)).toBeVisible({ timeout: 20_000 });
   if (await picker.isVisible()) {
-    await picker.selectOption(keyId);
+    await selectChoice(picker, keyId);
     await objects.getByRole("button", { name: "Use this key", exact: true }).click();
   }
   await expect(empty).toBeVisible({ timeout: 20_000 });
@@ -609,7 +612,7 @@ async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: s
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: `Delete bucket ${bucketId}` })).toBeVisible();
   await dialog.getByRole("button", { name: "Delete bucket", exact: true }).click();

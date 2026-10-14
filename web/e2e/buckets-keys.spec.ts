@@ -1,4 +1,4 @@
-import { assertAuthenticated, bucketIdFromRow, chooseTheme, openDisclosure, openRowActions } from "./interactions";
+import { assertAuthenticated, bucketIdFromRow, chooseTheme, openDisclosure, openRowActions, selectChoice } from "./interactions";
 import { expect, type Locator, type Page, type Request, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
@@ -35,34 +35,39 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await page.screenshot({ path: `${evidenceDir}/buckets-list-dark.png`, fullPage: true });
 
     const bucketId = await bucketIdFromRow(alphaRow);
-    await openDisclosure(alphaRow.locator(`summary[aria-label="Edit ${bucketId}"]`));
-    await alphaRow.getByLabel(`Global alias for ${bucketId}`).fill(extra);
-    await alphaRow.getByRole("button", { name: `Add alias to ${bucketId}`, exact: true }).click();
-    await expect(alphaRow.getByText(extra, { exact: true })).toBeVisible({ timeout: 20_000 });
-    await alphaRow.getByRole("button", { name: `Remove global alias ${extra}`, exact: true }).click();
-    await expect(alphaRow.getByText(extra, { exact: true })).toHaveCount(0);
-    await expect(alphaRow.getByText(alpha, { exact: true })).toBeVisible();
+    await openRowActions(alphaRow);
+    await page.getByRole("menuitem", { name: `Edit ${bucketId}`, exact: true }).click();
+    const settings = page.getByRole("tabpanel");
+    await settings.getByRole("button", { name: "Add alias", exact: true }).click();
+    await page.getByLabel(`Global alias for ${bucketId}`).fill(extra);
+    await page.getByRole("button", { name: `Add alias to ${bucketId}`, exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Add alias", exact: true }).getByText("Alias added", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("dialog", { name: "Add alias", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(settings.getByText(extra, { exact: true })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true }).click();
+    await expect(page.getByText(extra, { exact: true })).toHaveCount(0);
+    await expect(settings.getByRole("region", { name: "Aliases", exact: true }).getByText(alpha, { exact: true })).toBeVisible();
 
-    const objects = alphaRow.getByLabel(`Max objects for ${bucketId}`);
-    const size = alphaRow.getByLabel(`Max size for ${bucketId}`);
+    const objects = page.getByLabel(`Max objects for ${bucketId}`);
+    const size = page.getByLabel(`Max size for ${bucketId}`);
     const firstQuota = page.waitForRequest(isQuotaPut);
     await objects.fill("17");
-    await alphaRow.getByRole("button", { name: `Save quotas for ${bucketId}`, exact: true }).click();
+    await page.getByRole("button", { name: `Save quotas for ${bucketId}`, exact: true }).click();
     const firstBody = (await firstQuota).postData() ?? "";
     expect(firstBody).toContain('"maxObjects":17');
-    await expect(alphaRow.getByText(/Object quota 17|of 17 objects/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Object quota 17|of 17 objects/)).toBeVisible({ timeout: 20_000 });
     await expect(objects).toHaveValue("17");
     await size.fill("2048");
     await expect(size).toHaveValue("2048");
     const secondQuota = page.waitForRequest(isQuotaPut);
-    await alphaRow.getByRole("button", { name: `Save quotas for ${bucketId}`, exact: true }).click();
+    await page.getByRole("button", { name: `Save quotas for ${bucketId}`, exact: true }).click();
     const secondBody = (await secondQuota).postData() ?? "";
     expect(secondBody).toContain('"maxSize":2048');
     expect(secondBody).toContain('"maxObjects":17');
     await expect(objects).toHaveValue("17", { timeout: 20_000 });
     await expect(size).toHaveValue("2048");
-    await expect(alphaRow.getByText(/Object quota 17|of 17 objects/)).toBeVisible();
-    const sizeQuota = alphaRow.locator("dl > div").filter({ has: page.getByText("Max size", { exact: true }) });
+    await expect(page.getByText(/Object quota 17|of 17 objects/)).toBeVisible();
+    const sizeQuota = settings.locator("dl > div").filter({ has: page.getByText("Max size", { exact: true }) });
     await expect(sizeQuota).toContainText("2.05 KB");
     await openDisclosure(sizeQuota.locator("summary").filter({ hasText: "Exact bytes" }));
     await expect(sizeQuota.locator("code")).toHaveText("2048 B");
@@ -76,14 +81,14 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     const bucketFilter = stamp;
     const bucketList = page.getByRole("region", { name: "Buckets" });
     await bucketList.getByLabel("Filter buckets").fill(bucketFilter);
-    await bucketList.getByLabel("Sort buckets").selectOption("alias");
+    await selectChoice(bucketList.getByLabel("Sort buckets"), "Alias");
     await expect(page).toHaveURL(new RegExp(`buckets=${bucketFilter}`));
     await expect(page).toHaveURL(/bucketsSort=alias/);
     await expect(bucketList.locator("tbody tr").nth(0)).toContainText(alpha);
     await expect(bucketList.locator("tbody tr").nth(1)).toContainText(zeta);
     await page.reload();
     await expect(bucketList.getByLabel("Filter buckets")).toHaveValue(bucketFilter);
-    await expect(bucketList.getByLabel("Sort buckets")).toHaveValue("alias");
+    await expect(bucketList.getByLabel("Sort buckets")).toHaveText("Alias");
     await expect(bucketList.locator("tbody tr").nth(0)).toContainText(alpha, { timeout: 20_000 });
     await expect(bucketList.locator("tbody tr").nth(1)).toContainText(zeta, { timeout: 20_000 });
 
@@ -92,7 +97,7 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await expect(bucketList.locator("tbody tr")).toHaveCount(0);
     await page.reload();
     await expect(bucketList.getByLabel("Filter buckets")).toHaveValue(miss);
-    await expect(bucketList.getByLabel("Sort buckets")).toHaveValue("alias");
+    await expect(bucketList.getByLabel("Sort buckets")).toHaveText("Alias");
     await expect(bucketList.locator("tbody tr")).toHaveCount(0);
     await recordLayout(page, "buckets-filtered");
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -132,25 +137,27 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await openList(page, "Keys");
     const keys = page.getByRole("region", { name: "Keys" });
     const keyRow = await revealRow(keys, keyId);
-    await openDisclosure(keyRow.locator(`summary[aria-label="Actions (${keyId})"]`));
-    await keyRow.getByLabel(`Name for ${keyId}`).fill(renamed);
-    await keyRow.getByRole("button", { name: `Save name (${keyId})`, exact: true }).click();
-    await expect(keys.getByText("Key renamed", { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(keys.getByText(renamed, { exact: true })).toBeVisible();
-    const allow = keys.getByRole("checkbox", { name: `Allow bucket creation (${keyId})` });
+    await keyRow.getByRole("button", { name: `Actions (${keyId})`, exact: true }).click();
+    await page.getByRole("dialog", { name: "Name", exact: true }).getByLabel(`Name for ${keyId}`).fill(renamed);
+    await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: `Save name (${keyId})`, exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Name", exact: true }).getByText("Key renamed", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(keyRow.getByText(renamed, { exact: true })).toBeVisible();
+    const allow = page.getByRole("checkbox", { name: `Allow bucket creation (${keyId})` });
     await allow.click();
     await expect(allow).toBeChecked({ timeout: 20_000 });
+    await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
 
     await keys.getByLabel("Filter keys").fill(renamed);
-    await keys.getByLabel("Sort keys").selectOption("name");
+    await selectChoice(keys.getByLabel("Sort keys"), "Name");
     await expect(page).toHaveURL(new RegExp(`keys=${renamed}`));
     await expect(page).toHaveURL(/keysSort=name/);
     await page.reload();
     await expect(keys.getByLabel("Filter keys")).toHaveValue(renamed);
-    await expect(keys.getByLabel("Sort keys")).toHaveValue("name");
+    await expect(keys.getByLabel("Sort keys")).toHaveText("Name");
     await expect(keys.getByText(renamed, { exact: true })).toBeVisible();
-    await openDisclosure(keys.locator(`summary[aria-label="Actions (${keyId})"]`));
-    await expect(keys.getByRole("checkbox", { name: `Allow bucket creation (${keyId})` })).toBeChecked();
+    await keys.getByRole("button", { name: `Actions (${keyId})`, exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Name", exact: true }).getByRole("checkbox", { name: `Allow bucket creation (${keyId})` })).toBeChecked();
+    await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
     await recordLayout(page, "keys-list");
     await page.setViewportSize({ width: 1280, height: 800 });
 
@@ -162,7 +169,7 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await expect(keys.locator("tbody tr")).toHaveCount(0);
     await page.reload();
     await expect(keys.getByLabel("Filter keys")).toHaveValue(keyMiss);
-    await expect(keys.getByLabel("Sort keys")).toHaveValue("name");
+    await expect(keys.getByLabel("Sort keys")).toHaveText("Name");
     await expect(keys.locator("tbody tr")).toHaveCount(0);
     await recordLayout(page, "keys-filtered");
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -230,10 +237,13 @@ async function createBucket(page: Page, alias: string): Promise<void> {
   await page.getByLabel("Global alias", { exact: true }).fill(alias);
   await page.getByRole("button", { name: "Create bucket", exact: true }).click();
   await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
 }
 
 async function revealRow(scope: Locator, text: string): Promise<Locator> {
-  const row = scope.locator("tbody tr", { hasText: text });
+  const row = scope.locator("tbody tr", { hasText: text }).or(
+    scope.locator("tbody tr").filter({ has: scope.page().locator(`a[href="#key/${encodeURIComponent(text)}/overview"]`) }),
+  );
   await expect(async () => {
     if ((await row.count()) > 0) {
       return;
@@ -250,12 +260,14 @@ async function revealRow(scope: Locator, text: string): Promise<Locator> {
 
 async function grantThenRevoke(page: Page, row: Locator, bucketId: string, keyId: string): Promise<void> {
   await openRowActions(row);
-  await row.getByRole("button", { name: `Permissions for ${bucketId}`, exact: true }).click();
-  await openDisclosure(page.locator("summary", { hasText: "Grant key" }));
+  await page.getByRole("menuitem", { name: `Permissions for ${bucketId}`, exact: true }).click();
+  await page.getByRole("button", { name: "Grant key", exact: true }).click();
   const grant = page.getByRole("form", { name: `Grant permissions on ${bucketId}` });
   await grant.getByLabel("Access key").fill(keyId);
-  await grant.getByRole("checkbox", { name: "Read", exact: true }).check();
+  await grant.getByRole("checkbox", { name: "Read", exact: true }).click();
   await grant.getByRole("button", { name: "Grant", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Grant key", exact: true }).getByText("Permissions granted", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("dialog", { name: "Grant key", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
   const perms = page.getByRole("region", { name: `Permissions for ${bucketId}` });
   await expect(perms.getByText("read yes", { exact: true })).toBeVisible({ timeout: 20_000 });
   await perms.getByRole("button", { name: `Revoke ${keyId}`, exact: true }).click();
@@ -276,7 +288,7 @@ async function deleteBucket(page: Page, alias: string): Promise<void> {
   const row = await revealRow(buckets, alias);
   const bucketId = await bucketIdFromRow(row);
   await openRowActions(row);
-  await row.getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: `Delete bucket ${bucketId}` })).toBeVisible();
   await dialog.getByRole("button", { name: "Delete bucket", exact: true }).click();
@@ -359,13 +371,12 @@ async function deleteKey(page: Page, keyId: string): Promise<void> {
   const keys = page.getByRole("region", { name: "Keys" });
   await keys.getByLabel("Filter keys").fill(keyId);
   const row = await revealRow(keys, keyId);
-  await openRowActions(row);
   await row.getByRole("button", { name: `Delete ${keyId}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: `Confirm ${keyId}` })).toBeVisible();
   await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.getByText("Key deleted", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(keys.getByRole("cell", { name: keyId, exact: true })).toHaveCount(0);
+  await expect(keys.locator(`a[href="#key/${encodeURIComponent(keyId)}/overview"]`)).toHaveCount(0);
 }
 
 async function installListRoute(
@@ -425,7 +436,7 @@ async function cleanup(page: Page, aliases: string[], keyId: string): Promise<vo
     }
     const bucketId = await bucketIdFromRow(row.first());
     await openRowActions(row.first());
-    await row.first().getByRole("button", { name: `Delete ${bucketId}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: `Delete ${bucketId}`, exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "Delete bucket", exact: true }).click();
     await expect(row).toHaveCount(0, { timeout: 20_000 });
@@ -437,11 +448,10 @@ async function cleanup(page: Page, aliases: string[], keyId: string): Promise<vo
   const keys = page.getByRole("region", { name: "Keys" });
   await expect(keys.getByRole("heading", { name: "Keys" })).toBeVisible({ timeout: 20_000 });
   await keys.getByLabel("Filter keys").fill(keyId);
-  const keyRow = keys.locator("tbody tr", { hasText: keyId });
+  const keyRow = keys.locator("tbody tr").filter({ has: page.locator(`a[href="#key/${encodeURIComponent(keyId)}/overview"]`) });
   if ((await keyRow.count()) === 0) {
     return;
   }
-  await openRowActions(keyRow.first());
   await keyRow.first().getByRole("button", { name: `Delete ${keyId}`, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(keyRow).toHaveCount(0, { timeout: 20_000 });
