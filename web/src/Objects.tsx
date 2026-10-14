@@ -738,6 +738,7 @@ export function Objects({
   const [activeUploads, setActiveUploads] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
   const uploadDisclosure = useRef<HTMLDetailsElement>(null);
+  const uploadTrigger = useRef<HTMLButtonElement>(null);
   const uploadId = useId();
   const [draft, setDraft] = useState(() => readObjectQuery().filter);
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
@@ -1130,12 +1131,12 @@ export function Objects({
         ))}
       </nav>
       <div className="ui-toolbar ui-objects-tools items-end">
-      {canWrite ? <button className="ui-button ui-button-primary ui-objects-upload" type="button" aria-controls={uploadId} aria-expanded={uploadOpen} onClick={() => {
+      {canWrite ? <button ref={uploadTrigger} className="ui-button ui-button-primary ui-objects-upload" type="button" aria-controls={uploadId} aria-expanded={uploadOpen} onClick={() => {
         const panel = uploadDisclosure.current;
         if (panel === null) return;
         panel.open = true;
         panel.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
-      }}>{copy("ui.upload")}{activeUploads > 0 ? <span aria-label={copy("ui.uploading")}> · {activeUploads}</span> : null}</button> : null}
+      }}>{copy("ui.upload")}{activeUploads > 0 ? <span> · {activeUploads}</span> : null}</button> : null}
       <form
         className="ui-actions ui-objects-search items-end"
         onSubmit={(event) => {
@@ -1193,7 +1194,11 @@ export function Objects({
       </div>
       {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
       {canWrite ? (
-        <details ref={uploadDisclosure} id={uploadId} className="ui-disclosure ui-objects-upload-panel" onToggle={(event) => setUploadOpen(event.currentTarget.open)}>
+        <details ref={uploadDisclosure} id={uploadId} className="ui-disclosure ui-objects-upload-panel" onToggle={(event) => {
+          const open = event.currentTarget.open;
+          if (!open && uploadOpen) uploadTrigger.current?.focus();
+          setUploadOpen(open);
+        }}>
           <summary>
             {copy("ui.close.upload")}
             {activeUploads > 0 ? <span className="ui-status ml-3">{copy("ui.uploading")} · {activeUploads}</span> : null}

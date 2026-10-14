@@ -214,6 +214,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
     throw new Error("missing upload row photos/");
   }
   await waitFor(() => expect(prefixFile.textContent).toContain("Uploading"));
+  expect(screen.getByRole("button", { name: "Upload · 2" })).toBeTruthy();
   expect(within(prefixFile).queryByRole("button", { name: "Overwrite" })).toBeNull();
   fireEvent.click(summary);
   expect(disclosure?.open).toBe(false);
@@ -2174,4 +2175,28 @@ test("clearing the visible selection restores unchecked rows and removes bulk ac
   expect(checkbox).toHaveProperty("checked", false);
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Clear selection" })).toBeNull();
+});
+
+
+test("closing upload restores focus to its visible trigger without stealing initial focus", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json(page([photo]))));
+  renderObjects();
+  await screen.findByRole("button", { name: "photos/a.txt" });
+  const trigger = screen.getByRole("button", { name: "Upload" });
+  const summary = screen.getByText("Close upload", { selector: "summary" });
+  const disclosure = summary.closest("details");
+  if (!disclosure) throw new Error("missing upload disclosure");
+  const search = screen.getByLabelText("Search");
+  search.focus();
+  fireEvent(disclosure, new Event("toggle"));
+  expect(document.activeElement).toBe(search);
+  fireEvent.click(trigger);
+  await waitFor(() => expect(trigger.getAttribute("aria-expanded")).toBe("true"));
+  const upload = screen.getByRole("region", { name: "Upload" });
+  summary.focus();
+  fireEvent.click(summary);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(disclosure.open).toBe(false);
+  fireEvent.click(trigger);
+  expect(screen.getByRole("region", { name: "Upload" })).toBe(upload);
 });
