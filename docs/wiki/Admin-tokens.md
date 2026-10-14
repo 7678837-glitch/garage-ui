@@ -16,12 +16,14 @@ Open **Admin tokens** and inspect **This server**. The panel shows the current t
 
 The newly issued secret is available once. Closing the dialog removes it from the page, and it cannot be retrieved later. If it is lost, create a replacement token and revoke the unusable one.
 
+Use **Filter scope** to match group names or endpoint names without regard to case. Scroll within the compact scope list to reach more endpoints. The selected count includes scopes hidden by the filter; filtering does not clear selections. A group checkbox selects or clears the complete group, and **All** selects or clears every endpoint, regardless of the filter.
+
 Choosing **All** or every endpoint produces full administrative access and displays a warning. Token-management endpoints can themselves confer powerful access; choose them only when the consumer needs to administer tokens.
 
 ## Update or delete a token
 
 Find the token using **Filter admin tokens** and **Sort**. Filtering and sorting apply to the current page; use **Previous** and **Next** for additional pages.
 
-Open its **Actions** and choose **Edit**. Change name, expiration, and scope, then choose **Update token** and review the replacement confirmation. This updates those fields; it does not display a new secret.
+Open its **Actions** and choose **Edit**. The editor brings **Name** into view and focuses it. Change name, expiration, and scope, then choose **Update token** and review the replacement confirmation. This updates those fields; it does not display a new secret. Choose **Cancel** to close the editor and return focus to that token's **Edit** action.
 
 Use **Actions → Delete** and confirm to revoke a token. Before removing or restricting the token used by this UI server, provision its replacement and update the server's configuration. Otherwise later Garage admin operations can fail. Configuration-sourced tokens are identified in the list; Garage determines which token mutations are allowed.
