@@ -1170,6 +1170,18 @@ async fn preview_download_and_zip_follow_the_download_bit() {
     .await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
     assert!(!denied.body.contains("SECRET-BYTES"));
+    let thumbnail_denied = exchange(
+        &app,
+        request(
+            "GET",
+            "/api/buckets/bkt-1/objects/page.html/thumbnail",
+            None,
+            Some(&vera),
+        ),
+    )
+    .await;
+    assert_eq!(thumbnail_denied.status, StatusCode::FORBIDDEN);
+    assert!(!thumbnail_denied.body.contains("SECRET-BYTES"));
 
     let html = exchange(
         &app,
@@ -1222,7 +1234,7 @@ async fn preview_download_and_zip_follow_the_download_bit() {
     )
     .await;
     assert_eq!(grant.status, StatusCode::OK, "{}", grant.body);
-    let allowed = exchange(
+    let retired = exchange(
         &app,
         request(
             "GET",
@@ -1232,11 +1244,24 @@ async fn preview_download_and_zip_follow_the_download_bit() {
         ),
     )
     .await;
-    assert_eq!(allowed.status, StatusCode::OK);
-    assert_eq!(
-        header(&allowed.headers, "cache-control"),
-        "private, no-store"
+    assert_ne!(retired.body, "SECRET-BYTES");
+    assert_ne!(
+        header(&retired.headers, "content-type"),
+        "application/octet-stream"
     );
+    let bounded = exchange(
+        &app,
+        request(
+            "GET",
+            "/api/buckets/bkt-1/objects/page.html/thumbnail",
+            None,
+            Some(&vera),
+        ),
+    )
+    .await;
+    assert_eq!(bounded.status, StatusCode::BAD_GATEWAY);
+    assert_eq!(code_of(&bounded.body), "garage_unavailable");
+    assert!(!bounded.body.contains("SECRET-BYTES"));
 
     let zip = exchange(
         &app,

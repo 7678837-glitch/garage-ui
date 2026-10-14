@@ -57,14 +57,6 @@ pub(crate) async fn download_object(
     object_body(&app, &current, &query.name, ObjectBody::Download).await
 }
 
-pub(crate) async fn thumbnail_object(
-    State(app): State<App>,
-    Authed(current): Authed,
-    Query(query): Query<NameQuery>,
-) -> Result<Response, ApiError> {
-    object_body(&app, &current, &query.name, ObjectBody::Preview).await
-}
-
 enum ObjectBody {
     Preview,
     Download,
@@ -1115,7 +1107,6 @@ pub(crate) fn routes() -> Router<App> {
         .route("/api/buckets/{id}/inspect/{*key}", get(inspect_object))
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
-        .route("/api/objects/thumbnail", get(thumbnail_object))
         .route(
             "/api/buckets/{id}/archive-token",
             post(create_archive_token),
