@@ -41,10 +41,10 @@ test("an administrator inspects one uploaded object", async ({ page }) => {
     const inspected = objects.getByRole("region", { name: `Inspect ${objectKey}`, exact: true });
     await expect(inspected).toBeVisible();
     await expect(inspected.getByText(/^encrypted (yes|no)$/)).toBeVisible();
-    const lines = (await inspected.locator("p").allInnerTexts()).map((line) => line.trim());
-    const versions = lines.filter((line) => !flags.some((flag) => line.startsWith(`${flag} `)));
-    expect(versions).toHaveLength(1);
-    expect(versions[0]?.length).toBeGreaterThan(0);
+    const versions = inspected.locator("p.ui-identifier");
+    await expect(versions).toHaveCount(1);
+    await expect(versions.first()).toHaveText(/^[a-f0-9]{64}$/);
+    const lines = (await versions.first().locator("..").locator("p").allInnerTexts()).map((line) => line.trim());
     for (const flag of flags) {
       expect(lines.filter((line) => new RegExp(`^${flag} (yes|no)$`).test(line))).toHaveLength(1);
     }

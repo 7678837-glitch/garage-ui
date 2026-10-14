@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { administrator } from "./accounts";
+import { assertRenderedLayout } from "./layout";
 import { assertAuthenticated, openNavigation, openDisclosure, openRowActions, bucketIdFromRow, selectChoice } from "./interactions";
 
 const evidence = process.env.STORAGE_EVIDENCE_DIR ?? "/tmp/garage-ui-allpages-storage";
@@ -48,6 +49,7 @@ async function cleanup(page: Page, fixture: { name: string; bucketId: string; ke
 }
 async function shot(page: Page, name: string, actions: string) {
   await page.evaluate(() => window.scrollTo(0, 0));
+  await assertRenderedLayout(page, name);
   const geometry = await page.evaluate(() => {
     const visible = (e: Element) => { const r = e.getBoundingClientRect(); return e.checkVisibility() && r.width > 0 && r.height > 0; };
     const rect = (e: Element | null) => { if (!e) return null; const r = e.getBoundingClientRect(); return { top: r.top, width: r.width, height: r.height, bottom: r.bottom }; };
@@ -175,13 +177,15 @@ for (const width of [1280, 360]) {
       await tab(page, "Settings");
       await expect(page.getByRole("button", { name: "Add alias", exact: true })).toBeVisible();
       await shot(page, "bucket-settings", "Opened all settings sections");
-      const extra = `${fixture.name}-alias`;
+      const extra = `${fixture.name}-alias-`.padEnd(63, "a");
       await page.getByRole("button", { name: "Add alias", exact: true }).click();
       await page.getByLabel(`Global alias for ${fixture.bucketId}`).fill(extra);
       await page.getByRole("button", { name: `Add alias to ${fixture.bucketId}`, exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Add alias", exact: true }).getByText("Alias added", { exact: true })).toBeVisible();
       await page.getByRole("dialog", { name: "Add alias", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true })).toBeVisible();
+      await expect(page.getByText(extra, { exact: true })).toBeVisible();
+      await shot(page, "bucket-long-global-alias", "Added long global alias; full identity and removal action remain visible");
       await page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true }).click();
       await expect(page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: "Add alias", exact: true }).click();
@@ -193,6 +197,8 @@ for (const width of [1280, 360]) {
       await expect(page.getByRole("dialog", { name: "Add alias", exact: true }).getByText("Alias added", { exact: true })).toBeVisible();
       await page.getByRole("dialog", { name: "Add alias", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: new RegExp(`Remove local alias ${extra}`) })).toBeVisible();
+      await expect(page.getByText(extra, { exact: true })).toBeVisible();
+      await shot(page, "bucket-long-local-alias", "Added long local alias; full identity and key-specific removal action remain visible");
       await page.getByRole("button", { name: new RegExp(`Remove local alias ${extra}`) }).click();
       const size = page.getByLabel(`Max size for ${fixture.bucketId}`); const objects = page.getByLabel(`Max objects for ${fixture.bucketId}`);
       await objects.fill("-1"); await page.getByRole("button", { name: `Save quotas for ${fixture.bucketId}`, exact: true }).click();

@@ -223,7 +223,10 @@ async function deleteBucketThroughThePage(page: Page, alias: string, bucketId: s
   if (!alias.startsWith("e2e-277-") || bucketId.length === 0) {
     throw new Error("refusing to delete a bucket outside the e2e-277 prefix");
   }
+  await openNavigation(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
   const buckets = page.getByRole("region", { name: "Buckets" });
+  await expect(buckets.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
   await buckets.getByLabel("Filter buckets").fill(alias);
   const row = await revealRow(buckets, alias);
   await openRowActions(row);

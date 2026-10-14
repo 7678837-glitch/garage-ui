@@ -1355,7 +1355,7 @@ function IncompleteUploadsPanel({ bucketId }: { bucketId: string }) {
   return (
     <div className="ui-form">
       {uploadsFrom(query.data).map((upload) => (
-        <p key={`${upload.key}:${upload.uploadId}`}>
+        <p className={`${wrap} grid gap-1`} key={`${upload.key}:${upload.uploadId}`}>
           <span>{upload.key}</span>
           <span>{upload.uploadId}</span>
           <span>{upload.initiated}</span>
@@ -1547,6 +1547,7 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
     <>
       <Button size="2" color="gray" variant="soft"
         className={wrap}
+        style={{ whiteSpace: "normal", height: "auto", minHeight: "var(--control-height)", paddingBlock: "var(--space-small)" }}
         type="button"
         disabled={remove.isPending}
         onClick={() => {
@@ -1811,7 +1812,7 @@ export function Buckets({
             </SettingsSection>
             <SettingsSection title={copy("ui.aliases")}>
               {openedBucket.aliases.map((alias, index) => <div className="ui-actions" key={index}>
-                <span>{alias.name}</span>
+                <span className={wrap}>{alias.name}</span>
                 {canManage ? <RemoveAliasButton bucketId={openedBucket.id} alias={alias} /> : null}
               </div>)}
               {canManage ? <AliasControls bucketId={openedBucket.id} /> : null}

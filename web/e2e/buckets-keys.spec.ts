@@ -141,11 +141,12 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await page.getByRole("dialog", { name: "Name", exact: true }).getByLabel(`Name for ${keyId}`).fill(renamed);
     await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: `Save name (${keyId})`, exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Name", exact: true }).getByText("Key renamed", { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(keyRow.getByText(renamed, { exact: true })).toBeVisible();
     const allow = page.getByRole("checkbox", { name: `Allow bucket creation (${keyId})` });
     await allow.click();
     await expect(allow).toBeChecked({ timeout: 20_000 });
     await page.getByRole("dialog", { name: "Name", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Name", exact: true })).toHaveCount(0);
+    await expect(keyRow.getByText(renamed, { exact: true })).toBeVisible();
 
     await keys.getByLabel("Filter keys").fill(renamed);
     await selectChoice(keys.getByLabel("Sort keys"), "Name");
@@ -199,7 +200,7 @@ test("administers buckets and keys from the pages", async ({ page }) => {
     await expect(keys.getByText("keys_unavailable", { exact: true })).toHaveCount(0);
     await expect(keys.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
   } finally {
-    await cleanup(page, [alpha, zeta, extra], keyId).catch(() => undefined);
+    await cleanup(page, [alpha, zeta, extra], keyId);
   }
 });
 
@@ -232,12 +233,13 @@ function listedWithLimit(request: Request, pathname: string): boolean {
 }
 
 async function createBucket(page: Page, alias: string): Promise<void> {
-  const toggle = page.getByRole("button", { name: "Create", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  await page.getByLabel("Global alias", { exact: true }).fill(alias);
-  await page.getByRole("button", { name: "Create bucket", exact: true }).click();
-  await expect(page.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("dialog", { name: "Create bucket", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Create bucket", exact: true });
+  await dialog.getByLabel("Global alias", { exact: true }).fill(alias);
+  await dialog.getByRole("button", { name: "Create bucket", exact: true }).click();
+  await expect(dialog.getByText("Bucket created", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 }
 
 async function revealRow(scope: Locator, text: string): Promise<Locator> {
@@ -413,7 +415,12 @@ async function cleanup(page: Page, aliases: string[], keyId: string): Promise<vo
     return;
   }
   await page.unrouteAll({ behavior: "ignoreErrors" });
-  await page.keyboard.press("Escape").catch(() => undefined);
+  const dialog = page.getByRole("dialog");
+  if (await dialog.isVisible()) {
+    await dialog.getByRole("button", { name: /^(Close|Cancel|I have saved it)$/ }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  await page.keyboard.press("Escape");
   const bucketsLink = page.getByRole("navigation", { name: "Sections" }).getByRole("link", {
     name: "Buckets",
     exact: true,
