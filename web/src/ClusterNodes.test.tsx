@@ -175,7 +175,8 @@ test("shows an up node with a hostname and a down draining node", async () => {
   expect(up?.textContent).toContain("v2.4.1");
   expect(up?.textContent).toContain("Up");
   expect(up?.querySelector("form")?.getAttribute("aria-label")).toBe("Node capacity");
-  expect(down?.textContent).toContain("node-downDownDraining");
+  expect(down?.textContent).toContain("node-down");
+  expect(down?.textContent).toContain("DownDraining");
   const page = document.body.textContent ?? "";
   expect(page).toContain("9007199254740993");
   expect(page).not.toContain("9007199254740992");
@@ -473,9 +474,12 @@ function nodeCard(id: string, body: string): string {
 
 function nodeCardText(): string[] {
   return [...document.querySelectorAll("table tbody tr")].map(item => {
-    const cells = item.querySelectorAll("td");
-    const id = cells[1]?.querySelector("p")?.textContent ?? "";
-    return id + (cells[0]?.textContent === "—" ? "" : cells[0]?.textContent ?? "") + (cells[1]?.textContent ?? "").slice(id.length) + (cells[2]?.textContent ?? "");
+    const identity = item.querySelector('[data-kind="identity"] .ui-data-value');
+    const id = identity?.querySelector("code, p.ui-identifier")?.textContent ?? "";
+    const hostname = identity?.querySelector("a")?.textContent ?? "";
+    const metadata = [...(identity?.querySelectorAll("p.ui-muted") ?? [])].map(field => field.textContent).join("");
+    const status = item.querySelector('[data-kind="metadata"] .ui-data-value')?.textContent ?? "";
+    return id + (hostname === "—" ? "" : hostname) + metadata + status;
   });
 }
 
@@ -1189,10 +1193,38 @@ test.each(["stage", "revert", "skip", "snapshot", "purge"] as const)("%s reports
   else fireEvent.click(button());
   await screen.findByText(operation === "snapshot" ? "Metadata snapshot started" : "Saved");
   expect(attempts).toBe(2);
-  expect(await screen.findByText("2000000000000", {selector:"td"})).toBeTruthy();
+  expect(await screen.findByText("2000000000000 B", {selector:"code"})).toBeTruthy();
   if (operation === "stage" || operation === "skip" || operation === "revert") {
     expect(screen.getByText("Current 2")).toBeTruthy();
     expect((screen.getByRole("button", {name:"Apply layout"}) as HTMLButtonElement).disabled).toBe(false);
     expect(calls.filter(url => url === "/api/layout/preview")).toHaveLength(1);
   }
+});
+
+
+test("node detail has one hostname heading and exposes exact capacity and full identity", async () => {
+  const id = "n".repeat(64);
+  window.location.hash = `#node/${id}/information`;
+  installFetch("admin", () => textResponse(`{"nodes":[{"id":"${id}","hostname":"storage-alpha","addr":"10.0.0.1:3901","garageVersion":"v2.4.1","isUp":true,"draining":false,"role":{"capacity":9007199254740993}}]}`));
+  renderApp();
+  expect(await screen.findByRole("heading", { name: "storage-alpha" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
+  const exact = screen.getByText("9007199254740993 B", { selector: "code" });
+  expect(exact.closest("details")?.querySelector("summary")?.textContent).toBe("Exact bytes");
+  expect(screen.getByText(id, { selector: "code" }).closest("details")).toBeTruthy();
+  expect(screen.getByText("10.0.0.1:3901").closest("dd")).toBeTruthy();
+});
+
+test("node records retain capacity editing and maintenance in the same semantic row", async () => {
+  installFetch("admin", () => textResponse(listed));
+  renderApp();
+  const identity = await screen.findByText("node-up");
+  const row = identity.closest("tr");
+  expect(row?.closest("table")?.classList.contains("ui-table-records")).toBe(true);
+  const disclosure = row?.querySelector('[data-kind="actions"] details') as HTMLDetailsElement;
+  expect(disclosure.querySelector("summary")?.textContent).toBe("Maintenance");
+  disclosure.open = true;
+  expect(row?.querySelector('form[aria-label="Node capacity"]')).toBeTruthy();
+  expect(row?.querySelector('[aria-label="Purge blocks on node-up"]')).toBeTruthy();
+  expect(row?.querySelector('code')?.textContent).toBe("9007199254740993 B");
 });

@@ -7,7 +7,8 @@ import { DetailTabs } from "./DetailTabs";
 import { isGarageDown } from "./garageDown";
 import { detailAddressFromHash, hashForDetail, nodeTabs, useLocationHash } from "./Nav";
 import { releaseHash } from "./unsaved";
-import { copy, fill, translate } from "./i18n";
+import { DataCell, ResourceIdentity } from "./ui";
+import { CompactCapacityText, copy, fill, translate } from "./i18n";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -534,8 +535,9 @@ function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (ha
   return (
     <>
       <label className="block break-all">
-        <span className="text-sm">{fill(copy("ui.block.hash.for"), { id: id })}</span>
+        <span className="text-sm">{copy("ui.block.hash")}</span>
         <input
+          aria-label={fill(copy("ui.block.hash.for"), { id })}
           className="ui-input"
           value={hash}
           onChange={(event) => {
@@ -545,6 +547,7 @@ function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (ha
       </label>
       <button
         className="ui-button ui-button-danger max-w-full break-all"
+        aria-label={fill(copy("ui.purge.blocks.on"), { id })}
         disabled={pending}
         type="button"
         onClick={() => {
@@ -555,7 +558,7 @@ function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (ha
           onAsk(next);
         }}
       >
-        {fill(copy("ui.purge.blocks.on"), { id: id })}</button>
+        {copy("ui.purge")}</button>
     </>
   );
 }
@@ -712,7 +715,7 @@ export function OperationNodeSelection({ route, all = false }: {
         {all ? <a className="ui-button" href="#workers/*" onClick={(event) => navigate(event, "#workers/*")}>{translate("All nodes")}</a> : null}
         {nodes.data?.nodes.map(node => {
           const next = `#${route}/${encodeURIComponent(node.id)}`;
-          return <a className="ui-button" key={node.id} href={next} title={node.id} onClick={(event) => navigate(event, next)}>{node.hostname ?? node.id}</a>;
+          return <a className="ui-button" key={node.id} href={next} aria-label={node.hostname ?? fill(copy("ui.node"), { id: node.id })} onClick={(event) => navigate(event, next)}>{node.hostname ?? (node.id.length > 15 ? `${node.id.slice(0, 8)}…${node.id.slice(-6)}` : node.id)}</a>;
         })}
       </div>
       {nodes.isSuccess && nodes.data.nodes.length === 0 ? <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p> : null}
@@ -829,10 +832,10 @@ export function ClusterNodes() {
       : (rows.find((node) => node.id === nodeDetail.id) ?? null);
   return (
     <section className="ui-page min-w-0" aria-label={copy("ui.cluster.nodes")}>
-      <header className="ui-page-header">
+      {nodeDetail === null ? <header className="ui-page-header">
         <h2>{copy("ui.nodes")}</h2>
         {layoutVersion !== null ? <p className="ui-muted">{translate("Layout version")}: <span className="ui-identifier">{layoutVersion}</span></p> : null}
-      </header>
+      </header> : null}
       <div aria-live="polite">
         {writing ? <p role="status">{copy("ui.working")}</p> : null}
         {writes.map((mutation, index) => mutation.error instanceof Error && !isGarageDown(mutation.error) ? <p key={index} role="alert">{mutation.error.message}</p> : null)}
@@ -841,6 +844,8 @@ export function ClusterNodes() {
       {nodeDetail ? (
         <DetailTabs
           label={fill(copy("ui.node"), { id: nodeDetail.id })}
+          title={openedNode?.hostname ?? copy("ui.nodes")}
+          identity={<ResourceIdentity id={nodeDetail.id} />}
           tabs={nodeTabs()}
           selected={nodeDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "node", id: nodeDetail.id, tab })}
@@ -848,15 +853,15 @@ export function ClusterNodes() {
             goHash(hashForDetail({ resource: "node", id: nodeDetail.id, tab }));
           }}
         >
-          <p className="ui-identifier">{nodeDetail.id}</p>
           <div className="ui-actions"><a className="ui-button" href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a><a className="ui-button" href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></div>
           {openedNode && nodeDetail.tab === "information" ? (
             <>
-              {openedNode.hostname !== null ? <p>{openedNode.hostname}</p> : null}
-              {openedNode.addr !== null ? <p>{openedNode.addr}</p> : null}
-              {openedNode.garageVersion !== null ? <p>{openedNode.garageVersion}</p> : null}
-              <p>{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</p>
-              {openedNode.draining ? <p>{copy("ui.draining")}</p> : null}
+              <dl className="ui-panel grid gap-4 sm:grid-cols-2">
+                <div><dt>{copy("ui.node.address")}</dt><dd className="ui-identifier">{openedNode.addr ?? "—"}</dd></div>
+                <div><dt>{copy("ui.version")}</dt><dd>{openedNode.garageVersion ?? "—"}</dd></div>
+                <div><dt>{copy("ui.status")}</dt><dd><span className="ui-status">{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</span>{openedNode.draining ? <p>{copy("ui.draining")}</p> : null}</dd></div>
+                <div><dt>{copy("ui.capacity")}</dt><dd>{openedNode.capacity !== null ? <CompactCapacityText digits={openedNode.capacity} /> : "—"}</dd></div>
+              </dl>
               <button
                 className="ui-button"
                 disabled={snapshot.isPending}
@@ -872,7 +877,7 @@ export function ClusterNodes() {
             </>
           ) : null}
           {openedNode && nodeDetail.tab === "statistics" && openedNode.capacity !== null ? (
-            <p>{openedNode.capacity}</p>
+            <dl><dt>{copy("ui.capacity")}</dt><dd><CompactCapacityText digits={openedNode.capacity} /></dd></dl>
           ) : null}
           {openedNode && nodeDetail.tab === "maintenance" ? (
             <div className="ui-panel ui-page">
@@ -944,59 +949,6 @@ export function ClusterNodes() {
       ) : null}
       {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
         <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p>
-      ) : null}
-      {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
-        <div className="ui-table-container" role="region" aria-label={translate("Node list")} tabIndex={0}>
-          <table className="ui-table">
-            <thead><tr>
-              <th scope="col">{copy("ui.hostname")}</th>
-              <th scope="col">Id</th>
-              <th scope="col">{copy("ui.status")}</th>
-              <th scope="col">{copy("ui.capacity")}</th>
-              <th scope="col">{copy("tab.maintenance")}</th>
-            </tr></thead>
-            <tbody>
-          {shown.map((node) => (
-            <tr key={node.id}>
-              <td><a aria-label={`${node.hostname ?? "—"} · ${fill(copy("ui.node"), { id: node.id })}`} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a></td>
-              <td>
-                <p className="ui-identifier ui-identifier-truncated" title={node.id}>{node.id}</p>
-                {node.addr !== null ? <p className="ui-muted ui-identifier">{node.addr}</p> : null}
-                {node.garageVersion !== null ? <p className="ui-muted">{node.garageVersion}</p> : null}
-              </td>
-              <td>
-                <p className="ui-status">{node.isUp ? copy("ui.up") : copy("ui.down")}</p>
-                {node.draining ? <p>{copy("ui.draining")}</p> : null}
-              </td>
-              <td className="ui-identifier">{node.capacity ?? "—"}</td>
-              <td><details className="ui-disclosure">
-                <summary>{copy("tab.maintenance")}</summary>
-                <div className="ui-actions">
-                  <a className="ui-button" href={`#workers/${encodeURIComponent(node.id)}`}>{copy("nav.workers")}</a>
-                  <a className="ui-button" href={`#block-errors/${encodeURIComponent(node.id)}`}>{copy("nav.blockErrors")}</a>
-                </div>
-              {node.capacity !== null ? (
-                <CapacityField
-                  pending={layoutWriting}
-                  bytes={node.capacity}
-                  submit={(capacity) => {
-                    if (!layoutWriting) stage.mutate({ id: node.id, capacity });
-                  }}
-                />
-              ) : null}
-              <NodeBlockPurge
-                pending={purge.isPending}
-                id={node.id}
-                onAsk={(hash) => {
-                  setPurgeTarget({ id: node.id, hash });
-                }}
-              />
-              </details></td>
-            </tr>
-          ))}
-            </tbody>
-          </table>
-        </div>
       ) : null}
       {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>      <div className="grid gap-2">
         <button
@@ -1126,6 +1078,57 @@ export function ClusterNodes() {
         </ul>
       ) : null}
 </details> : null}
+      {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
+        <div className="ui-table-container" role="region" aria-label={translate("Node list")} tabIndex={0}>
+          <table className="ui-table ui-table-records" role="table">
+            <thead><tr role="row">
+              <th scope="col">{copy("ui.hostname")}</th>
+              <th scope="col">{copy("ui.status")}</th>
+              <th scope="col">{copy("ui.capacity")}</th>
+              <th scope="col">{copy("tab.maintenance")}</th>
+            </tr></thead>
+            <tbody role="rowgroup">
+          {shown.map((node) => (
+            <tr key={node.id} role="row">
+              <DataCell label={copy("ui.hostname")} kind="identity"><a aria-label={`${node.hostname ?? "—"} · ${fill(copy("ui.node"), { id: node.id })}`} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a>
+                {node.id.length > 15 ? <details className="ui-identity-details"><summary className="ui-identifier">{node.id.slice(0, 8)}…{node.id.slice(-6)} <span className="ui-muted">{copy("common.fullId")}</span></summary><code className="ui-identifier">{node.id}</code></details> : <p className="ui-identifier">{node.id}</p>}
+                {node.addr !== null ? <p className="ui-muted ui-identifier">{node.addr}</p> : null}
+                {node.garageVersion !== null ? <p className="ui-muted">{node.garageVersion}</p> : null}
+              </DataCell>
+              <DataCell label={copy("ui.status")}>
+                <p className="ui-status">{node.isUp ? copy("ui.up") : copy("ui.down")}</p>
+                {node.draining ? <p>{copy("ui.draining")}</p> : null}
+              </DataCell>
+              <DataCell label={copy("ui.capacity")}>{node.capacity !== null ? <CompactCapacityText digits={node.capacity} /> : "—"}</DataCell>
+              <DataCell label={copy("tab.maintenance")} kind="actions" className="ui-record-actions-wide"><details className="ui-disclosure">
+                <summary>{copy("tab.maintenance")}</summary>
+                <div className="ui-actions">
+                  <a className="ui-button" href={`#workers/${encodeURIComponent(node.id)}`}>{copy("nav.workers")}</a>
+                  <a className="ui-button" href={`#block-errors/${encodeURIComponent(node.id)}`}>{copy("nav.blockErrors")}</a>
+                </div>
+              {node.capacity !== null ? (
+                <CapacityField
+                  pending={layoutWriting}
+                  bytes={node.capacity}
+                  submit={(capacity) => {
+                    if (!layoutWriting) stage.mutate({ id: node.id, capacity });
+                  }}
+                />
+              ) : null}
+              <NodeBlockPurge
+                pending={purge.isPending}
+                id={node.id}
+                onAsk={(hash) => {
+                  setPurgeTarget({ id: node.id, hash });
+                }}
+              />
+              </details></DataCell>
+            </tr>
+          ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
       {purgeTarget !== null ? (
         <ConfirmDialog
           pending={purge.isPending}

@@ -47,7 +47,7 @@ function valueOf(label: string): string {
   expect(term.tagName).toBe("DT");
   const value = term.nextElementSibling;
   expect(value?.tagName).toBe("DD");
-  return value?.textContent ?? "";
+  return value?.querySelector(".ui-value-text > span")?.textContent ?? value?.textContent ?? "";
 }
 
 const report = {
@@ -156,8 +156,8 @@ test("shows the status word and the seven cluster health counts to an admin", as
   expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
   expect(valueOf("Buckets")).toBe("2");
   expect(valueOf("Objects")).toBe("8");
-  expect(valueOf("Object bytes")).toBe("1.00 KB");
-  expect(valueOf("Data available")).toBe("3.00 KB");
+  expect(valueOf("Object bytes")).toBe("1 KB");
+  expect(valueOf("Data available")).toBe("3 KB");
   expect(valueOf("Metadata available")).toBe("4 B");
   expect(document.body.textContent).not.toContain(disconnected);
   expect(document.body.textContent).not.toContain("keep \"bucketCount\": 999");
@@ -191,7 +191,7 @@ test("shows the Garage banner for a down health query and keeps the version aler
   expect(screen.queryByText("Known nodes")).toBeNull();
   expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
   expect(valueOf("Buckets")).toBe("2");
-  expect(valueOf("Object bytes")).toBe("1.00 KB");
+  expect(valueOf("Object bytes")).toBe("1 KB");
   expect(document.body.textContent).not.toContain(disconnected);
   const alerts = screen.getAllByRole("alert");
   expect(alerts).toHaveLength(2);
@@ -229,9 +229,9 @@ test("shows a byte count past 2^53 from the response text and says a null field 
   expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
   expect(valueOf("Buckets")).toBe("9007199254740993");
   expect(valueOf("Objects")).toBe("42");
-  expect(valueOf("Object bytes")).toBe("9.007199254740993 PB");
+  expect(valueOf("Object bytes")).toBe("≈ 9.01 PB");
   expect(valueOf("Data available")).toBe("Data available is not set");
-  expect(valueOf("Metadata available")).toBe("1.00 KB");
+  expect(valueOf("Metadata available")).toBe("1 KB");
   expect(document.body.textContent).not.toContain("9007199254740992");
   expect(document.body.textContent).not.toContain("9.007199254740992 PB");
   expect(document.body.textContent).not.toContain(disconnected);
@@ -257,7 +257,7 @@ test("shows the disconnected-node sentence only when incompleteAvailInfo is true
   expect(valueOf("Buckets")).toBe("Bucket count is not set");
   expect(valueOf("Objects")).toBe("7");
   expect(valueOf("Object bytes")).toBe("10 B");
-  expect(valueOf("Data available")).toBe("1.00 KB");
+  expect(valueOf("Data available")).toBe("1 KB");
   expect(valueOf("Metadata available")).toBe("Metadata available is not set");
   expect(document.body.textContent).not.toContain('keep "bucketCount": 999');
   expect(screen.queryAllByRole("alert")).toHaveLength(0);
@@ -320,7 +320,7 @@ test("shows the health code and loads health again from Retry health", async () 
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("Garage admin API is not reachable")).toBeNull();
   expect(valueOf("Buckets")).toBe("2");
-  expect(valueOf("Object bytes")).toBe("1.00 KB");
+  expect(valueOf("Object bytes")).toBe("1 KB");
   expect(screen.queryByText("Known nodes")).toBeNull();
   const healthSeen = healthCalls;
   const statisticsSeen = statisticsCalls;
@@ -389,7 +389,7 @@ test("shows the statistics code and loads statistics again from Retry statistics
   fireEvent.click(screen.getByRole("button", { name: "Retry statistics" }));
   expect(await screen.findByText("Buckets", { selector: "dt" })).toBeTruthy();
   expect(valueOf("Buckets")).toBe("2");
-  expect(valueOf("Object bytes")).toBe("1.00 KB");
+  expect(valueOf("Object bytes")).toBe("1 KB");
   expect(valueOf("Status")).toBe("degraded");
   expect(valueOf("Known nodes")).toBe("5");
   expect(screen.queryByText("Statistics: Cluster statistics could not be read")).toBeNull();
@@ -418,8 +418,8 @@ test("shows the four Garage metrics counts on cluster health", async () => {
   expect(await screen.findByText("S3 requests", { selector: "dt" })).toBeTruthy();
   expect(valueOf("S3 requests")).toBe("29");
   expect(valueOf("S3 errors")).toBe("17");
-  expect(valueOf("Block read bytes")).toBe("5");
-  expect(valueOf("Block write bytes")).toBe("81");
+  expect(valueOf("Block read bytes")).toBe("5 B");
+  expect(valueOf("Block write bytes")).toBe("81 B");
   expect(screen.queryByText(metricsNotice)).toBeNull();
   expect(valueOf("Status")).toBe("degraded");
   expect(valueOf("Known nodes")).toBe("5");
@@ -441,8 +441,8 @@ test("shows the metrics notice when no token can be used", async () => {
   expect(note.getAttribute("role")).toBeNull();
   expect(valueOf("S3 requests")).toBe("0");
   expect(valueOf("S3 errors")).toBe("0");
-  expect(valueOf("Block read bytes")).toBe("0");
-  expect(valueOf("Block write bytes")).toBe("0");
+  expect(valueOf("Block read bytes")).toBe("0 B");
+  expect(valueOf("Block write bytes")).toBe("0 B");
   expect(valueOf("Status")).toBe("degraded");
 });
 
@@ -456,4 +456,16 @@ test("shows a statistics failure without an empty code line", async () => {
   expect(valueOf("Known nodes")).toBe("5");
   expect(screen.queryByText("Buckets", { selector: "dt" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+
+test("health sections distinguish state capacity and activity while retaining exact bytes", async () => {
+  stubFetch(json(statistics));
+  renderApp();
+  await screen.findByText("degraded");
+  expect(screen.getByRole("heading", { name: "Health status" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Capacity" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Activity" })).toBeTruthy();
+  const bytes = screen.getByText("1000 B", { selector: "code" });
+  expect(bytes.closest("details")?.querySelector("summary")?.textContent).toBe("Exact bytes");
 });

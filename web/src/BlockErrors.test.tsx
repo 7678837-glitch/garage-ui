@@ -190,7 +190,7 @@ test("clicking Info aa11 shows version v1 for that node", async () => {
   expect(
     screen
       .getAllByRole("cell")
-      .map((cell) => cell.textContent)
+      .map((cell) => cell.querySelector(".ui-data-value")?.textContent ?? cell.textContent)
       .filter((text) => text === "v1" || text === "no" || text === "yes"),
   ).toEqual(["v1", "no", "no", "yes"]);
   expect(infoGets()).toEqual(["/api/nodes/n1/blocks/aa11"]);
@@ -408,4 +408,19 @@ test("purge failure keeps the typed hash and success refreshes the visible error
   await screen.findByText("There are no block errors.");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(attempts).toBe(2);
+});
+
+
+test("block records keep every diagnostic field and concise actions within one semantic row", async () => {
+  window.location.hash = "#block-errors/n1";
+  stubAdminBlockErrors();
+  renderApp();
+  const row = (await screen.findByText("aa11")).closest("tr");
+  expect(row?.closest("table")?.classList.contains("ui-table-records")).toBe(true);
+  expect(row?.querySelectorAll('[data-kind="metadata"]')).toHaveLength(4);
+  const retry = screen.getByRole("button", { name: "Retry aa11" });
+  expect(retry.textContent).toBe("Retry");
+  expect(row?.contains(retry)).toBe(true);
+  expect(row?.contains(screen.getByRole("button", { name: "Purge aa11" }))).toBe(true);
+  expect(row?.contains(screen.getByRole("button", { name: "Info aa11" }))).toBe(true);
 });

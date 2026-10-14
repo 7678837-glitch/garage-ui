@@ -5,6 +5,7 @@ import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
+import { DataCell, ResourceIdentity } from "./ui";
 import { copy, fill, translate } from "./i18n";
 
 function unavailableMessage(): string {
@@ -144,10 +145,14 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
     <>
       {info.isError && !isGarageDown(info.error) ? <p>{message}</p> : null}
       {info.data ? (
-        <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Block error list")}>
-          <table className="ui-table" aria-label={copy("ui.block.information")}>
+        <div className="ui-page">
+          <h3>{copy("ui.block.information")}</h3>
+          <ResourceIdentity id={info.data.blockHash} />
+          <dl><dt>{copy("ui.refcount")}</dt><dd>{info.data.refcount}</dd></dl>
+        <div className="ui-table-container" role="region" tabIndex={0} aria-label={copy("ui.block.information")}>
+          <table className="ui-table ui-table-records" role="table" aria-label={copy("ui.block.information")}>
             <thead>
-              <tr>
+              <tr role="row">
                 <th className="py-2 pr-3 font-medium" scope="col">
                   {copy("ui.version")}</th>
                 <th className="py-2 pr-3 font-medium" scope="col">
@@ -158,17 +163,18 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
                   {copy("ui.garbage.collected")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {info.data.versions.map((version) => (
-                <tr key={version.versionId}>
-                  <td className="py-2 pr-3">{version.versionId}</td>
-                  <td className="py-2 pr-3">{yesNo(version.refDeleted)}</td>
-                  <td className="py-2 pr-3">{yesNo(version.versionDeleted)}</td>
-                  <td className="py-2">{yesNo(version.garbageCollected)}</td>
+                <tr key={version.versionId} role="row">
+                  <DataCell label={copy("ui.version")} kind="identity">{version.versionId}</DataCell>
+                  <DataCell label={copy("ui.ref.deleted")}>{yesNo(version.refDeleted)}</DataCell>
+                  <DataCell label={copy("ui.version.deleted")}>{yesNo(version.versionDeleted)}</DataCell>
+                  <DataCell label={copy("ui.garbage.collected")}>{yesNo(version.garbageCollected)}</DataCell>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       ) : null}
     </>
@@ -211,7 +217,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
 
   return (
     <section className="ui-page" aria-label={copy("nav.blockErrors")} aria-busy={view.busy}>
-      <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
+      <header className="ui-page-header"><div><h2>{copy("nav.blockErrors")}</h2><ResourceIdentity id={nodeId} /></div></header>
       {view.busy ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.block.errors")}>{copy("ui.loading.block.errors")}</div>
       ) : null}
@@ -249,9 +255,9 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
           >
             {copy("ui.retry.all")}</button>
           <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Block error list")}>
-            <table className="ui-table">
+            <table className="ui-table ui-table-records" role="table">
               <thead>
-                <tr>
+                <tr role="row">
                   <th className="py-2 pr-3 font-medium" scope="col">
                     {copy("ui.block.hash")}</th>
                   <th className="py-2 pr-3 font-medium" scope="col">
@@ -270,25 +276,25 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                     {copy("ui.info")}</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {rows.map((row) => (
-                  <tr key={row.blockHash}>
-                    <td className="py-2 pr-3">{row.blockHash}</td>
-                    <td className="py-2 pr-3">{row.refcount}</td>
-                    <td className="py-2 pr-3">{row.errorCount}</td>
-                    <td className="py-2 pr-3">{row.lastTrySecsAgo}</td>
-                    <td className="py-2 pr-3">{row.nextTryInSecs}</td>
-                    <td className="py-2 pr-3">
-                      <button
+                  <tr key={row.blockHash} role="row">
+                    <DataCell label={copy("ui.block.hash")} kind="identity">{row.blockHash}</DataCell>
+                    <DataCell label={copy("ui.refcount")}>{row.refcount}</DataCell>
+                    <DataCell label={copy("ui.error.count")}>{row.errorCount}</DataCell>
+                    <DataCell label={copy("ui.last.try.seconds.ago")}>{row.lastTrySecsAgo}</DataCell>
+                    <DataCell label={copy("ui.next.try.in.seconds")}>{row.nextTryInSecs}</DataCell>
+                    <DataCell label={copy("ui.retry")} kind="actions">
+                      <button aria-label={fill(copy("ui.retry.2"), { blockHash: row.blockHash })}
                         className="ui-button"
                         type="button"
                         disabled={retry.isPending}
             onClick={() => retry.mutate({ blockHashes: [row.blockHash] })}
                       >
-                        {fill(copy("ui.retry.2"), { blockHash: row.blockHash })}</button>
-                    </td>
-                    <td className="py-2">
-                      <button
+                        {copy("ui.retry")}</button>
+                    </DataCell>
+                    <DataCell label={copy("ui.purge")} kind="actions">
+                      <button aria-label={fill(copy("ui.purge.2"), { blockHash: row.blockHash })}
                         className="ui-button ui-button-danger"
                         type="button"
                         disabled={purge.isPending}
@@ -296,18 +302,18 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                           setPurgeHash(row.blockHash);
                         }}
                       >
-                        {fill(copy("ui.purge.2"), { blockHash: row.blockHash })}</button>
-                    </td>
-                    <td className="py-2 pl-3">
-                      <button
+                        {copy("ui.purge")}</button>
+                    </DataCell>
+                    <DataCell label={copy("ui.info")} kind="actions">
+                      <button aria-label={fill(copy("ui.info.2"), { blockHash: row.blockHash })}
                         className="ui-button"
                         type="button"
                         onClick={() => {
                           setInfoHash(row.blockHash);
                         }}
                       >
-                        {fill(copy("ui.info.2"), { blockHash: row.blockHash })}</button>
-                    </td>
+                        {copy("ui.info")}</button>
+                    </DataCell>
                   </tr>
                 ))}
               </tbody>

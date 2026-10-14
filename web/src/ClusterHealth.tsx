@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
-import { formatCapacity, useI18n, type Language, copy, fill, translate, phrase } from "./i18n";
+import { CompactCapacityText, useI18n, type Language, copy, fill, translate, phrase } from "./i18n";
 
 const COUNTS = [
   ["knownNodes", "Known nodes"],
@@ -173,12 +173,12 @@ function shownStatistic(
   display: StatisticDisplay,
   unset: string,
   language: Language,
-): string {
+) {
   if (field.kind === "unset") {
     return phrase(language, unset);
   }
   if (display === "bytes") {
-    return formatCapacity(field.text, language);
+    return <CompactCapacityText digits={field.text} />;
   }
   return field.text;
 }
@@ -350,6 +350,7 @@ export function ClusterHealth() {
   return (
     <section className="ui-page" aria-label={copy("ui.cluster.health")}>
       <h2 className="text-lg font-semibold">{copy("ui.cluster.health")}</h2>
+      <h3>{copy("ui.health.status")}</h3>
       {health.isPending ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.cluster.health")}>{copy("ui.loading.cluster.health")}</div>
       ) : null}
@@ -381,6 +382,7 @@ export function ClusterHealth() {
           ))}
         </dl>
       ) : null}
+      <h3>{copy("ui.capacity")}</h3>
       {statistics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {statistics.isError && !isGarageDown(statistics.error) ? (
         <>
@@ -411,6 +413,7 @@ export function ClusterHealth() {
           ) : null}
         </>
       ) : null}
+      <h3>{translate("Activity")}</h3>
       {metrics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {metrics.isError && !isGarageDown(metrics.error) ? <div className="ui-alert"><p role="alert">{metrics.error instanceof Error ? metrics.error.message : copy("ui.cluster.metrics.are.unavailable")}</p><button className="ui-button" onClick={() => { void metrics.refetch(); }}>{copy("ui.retry")}</button></div> : null}
       {metrics.isSuccess ? (
@@ -419,7 +422,7 @@ export function ClusterHealth() {
             {METRICS.map(([key, label]) => (
               <div key={key}>
                 <dt className="font-medium">{translate(label)}</dt>
-                <dd className="mt-1 text-lg font-semibold">{metrics.data[key]}</dd>
+                <dd className="mt-1 text-lg font-semibold">{key === "blockReadBytes" || key === "blockWriteBytes" ? <CompactCapacityText digits={String(metrics.data[key])} /> : metrics.data[key]}</dd>
               </div>
             ))}
           </dl>
