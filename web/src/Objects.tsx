@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { encodeObjectKey } from "./App";
-import { CompactCapacityText, ReadableInstantText, copy, fill, translate } from "./i18n";
+import { CapacityText, CompactCapacityText, ReadableInstantText, copy, fill, translate, useI18n } from "./i18n";
 import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
@@ -693,6 +693,18 @@ async function copyText(value: string): Promise<"copied" | "manual"> {
   }
 }
 
+function ObjectRowSummary({ entry }: { entry: ObjectEntry }) {
+  const { language } = useI18n();
+  const date = new Date(entry.lastModified);
+  const readable = Number.isNaN(date.getTime()) ? entry.lastModified : new Intl.DateTimeFormat(language, {
+    dateStyle: "medium", timeZone: "UTC",
+  }).format(date);
+  return <span className="ui-objects-summary">
+    <small><CapacityText digits={String(entry.size)} /></small>
+    <time dateTime={entry.lastModified}>{readable}</time>
+  </span>;
+}
+
 export function Objects({
   bucketId,
   onBack,
@@ -899,6 +911,7 @@ export function Objects({
   const page = list.data ?? (kept !== null && kept.prefix === prefix ? kept.page : null);
   const entries = searching ? matchesAsEntries(found.data?.matches ?? []) : (page?.entries ?? []);
   const visible = sortLoaded(entries, browse.sort);
+  const inspectedEntry = visible.find((entry): entry is ObjectEntry => entry.kind === "object" && entry.key === inspected);
   const visibleKeys = objectKeys(visible);
   const shownPicked = pickedOnPage(picked, visibleKeys);
   const pathText = visibleKeys.filter((key) => shownPicked.includes(key)).join("\n");
@@ -1080,7 +1093,7 @@ export function Objects({
   }
 
   return (
-    <section className="ui-page" aria-label={copy("nav.objects")} aria-busy={loading}>
+    <section className="ui-page ui-objects" aria-label={copy("nav.objects")} aria-busy={loading}>
       {!embedded ? <header className="ui-page-header">
       <h2>{copy("nav.objects")}</h2>
       <button
@@ -1122,7 +1135,7 @@ export function Objects({
         if (panel === null) return;
         panel.open = true;
         panel.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
-      }}>{copy("ui.upload")}</button> : null}
+      }}>{copy("ui.upload")}{activeUploads > 0 ? <span aria-label={copy("ui.uploading")}> · {activeUploads}</span> : null}</button> : null}
       <form
         className="ui-actions ui-objects-search items-end"
         onSubmit={(event) => {
@@ -1180,9 +1193,9 @@ export function Objects({
       </div>
       {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
       {canWrite ? (
-        <details ref={uploadDisclosure} id={uploadId} className="ui-disclosure" onToggle={(event) => setUploadOpen(event.currentTarget.open)}>
+        <details ref={uploadDisclosure} id={uploadId} className="ui-disclosure ui-objects-upload-panel" onToggle={(event) => setUploadOpen(event.currentTarget.open)}>
           <summary>
-            {copy("ui.upload")}
+            {copy("ui.close.upload")}
             {activeUploads > 0 ? <span className="ui-status ml-3">{copy("ui.uploading")} · {activeUploads}</span> : null}
           </summary>
           <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} onActiveChange={setActiveUploads} />
@@ -1247,8 +1260,13 @@ export function Objects({
       ) : null}
       {searching && found.data?.truncated && found.data.reason ? <p>{found.data.reason}</p> : null}
       {shownPicked.length > 0 ? (
-        <div className="ui-panel ui-actions">
+        <div className="ui-panel ui-actions ui-objects-bulk">
           <span className="ui-status">{fill(copy("ui.objects"), { used: shownPicked.length })}</span>
+          <button className="ui-button ui-button-quiet" type="button" onClick={() => {
+            setCopyNote(null);
+            setFeedback(null);
+            setBrowse((current) => ({ ...current, picked: [], anchor: null }));
+          }}>{copy("ui.clear.selection")}</button>
           <button
             className="ui-button"
             type="button"
@@ -1345,7 +1363,7 @@ export function Objects({
       ) : null}
       {showRows && visible.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.objects")} tabIndex={0}>
-          <div className="ui-objects-list-actions"><button className="ui-button ui-button-quiet" type="button" onClick={selectPage}>{copy("ui.select.page")}</button></div>
+          <div className="ui-objects-list-actions"><span className="ui-muted">{copy("nav.objects")}</span><button className="ui-button ui-button-quiet" type="button" onClick={selectPage}>{copy("ui.select.page")}</button></div>
           <table className="ui-table ui-table-records ui-objects-table" role="table">
             <thead><tr role="row">
               <th scope="col" aria-label={copy("ui.select.page")} />
@@ -1359,7 +1377,7 @@ export function Objects({
                 <tr key={`prefix:${entry.prefix}`} role="row" className="ui-objects-folder">
                   <DataCell label={copy("ui.select.page")} kind="selection" />
                   <DataCell label={copy("ui.name")} kind="identity">
-                    <button className="ui-button ui-button-quiet ui-object-name" type="button" onClick={() => openPrefix(entry.prefix)}>{entry.prefix}</button>
+                    <button className="ui-button ui-button-quiet ui-object-name" type="button" aria-label={entry.prefix} onClick={() => openPrefix(entry.prefix)}><span className="ui-objects-folder-icon" aria-hidden="true" /><span>{entry.prefix}</span><span className="ui-objects-chevron" aria-hidden="true" /></button>
                   </DataCell>
                   <DataCell label={copy("ui.size")} className="ui-objects-empty" />
                   <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-empty" />
@@ -1383,12 +1401,13 @@ export function Objects({
                   </DataCell>
                   <DataCell label={copy("ui.name")} kind="identity">
                     <div className="ui-actions ui-objects-name">
-                      {canTransfer && bitmapKey(entry.key) ? <ObjectThumb src={thumbnailPath(bucketId, entry.key)} /> : null}
+                      {canTransfer && bitmapKey(entry.key) ? <ObjectThumb src={thumbnailPath(bucketId, entry.key)} /> : <span className="ui-objects-file-icon" aria-hidden="true" />}
                       <button className="ui-button ui-button-quiet ui-object-name" type="button" onClick={() => {
                         setBrowse((current) => ({ ...current, selected: entry.key }));
                         setFeedback({ kind: "preview", key: entry.key });
                       }}>{entry.key}</button>
                     </div>
+                    <ObjectRowSummary entry={entry} />
                   </DataCell>
                   <DataCell label={copy("ui.size")} className="ui-objects-size"><CompactCapacityText digits={String(entry.size)} /></DataCell>
                   <DataCell label={`${copy("ui.time")} (UTC)`} className="ui-objects-time"><ReadableInstantText value={entry.lastModified} /></DataCell>
@@ -1455,6 +1474,10 @@ export function Objects({
       ) : null}
       {inspected !== null ? (
         <section ref={inspectPanel} tabIndex={-1} className="ui-panel" aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
+          {inspectedEntry ? <div className="ui-form">
+            <p>{fill(copy("ui.size.2"), { size: inspectedEntry.size })}</p>
+            <p>{copy("ui.last.modified")} <ReadableInstantText value={inspectedEntry.lastModified} /></p>
+          </div> : null}
           {inspect.isPending ? <p role="status">{copy("ui.working")}</p> : null}
           {inspectFailure ? <><p>{inspectFailure.message}</p>{inspectFailure.code ? <p>{inspectFailure.code}</p> : null}<button className="ui-button" onClick={() => { void inspect.refetch(); }}>{copy("ui.retry")}</button></> : null}
           {inspect.data && inspect.data.key === inspected ? <>

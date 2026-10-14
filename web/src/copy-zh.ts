@@ -534,4 +534,6 @@ export const zh = {
   "ui.checking.destination": "正在检查目标对象",
   "ui.failed": "失败",
   "ui.cancelled": "已取消",
+  "ui.close.upload": "收起上传",
+  "ui.clear.selection": "清除选择",
 } as const satisfies Record<CopyKey, string>;

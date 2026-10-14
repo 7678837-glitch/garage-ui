@@ -612,10 +612,10 @@ test("successful upload refreshes rendered search results while collapsed jobs r
   fireEvent.change(screen.getByLabelText("Search"), { target: { value: "new" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByText("There are no objects.");
-  const disclosure = screen.getByText("Upload", { selector: "summary" }).closest("details");
+  const disclosure = screen.getByText("Close upload", { selector: "summary" }).closest("details");
   if (!disclosure) throw new Error("missing upload disclosure");
   expect(disclosure.open).toBe(false);
-  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   choose(["new.txt"]);
   await act(async () => {});
   const summary = disclosure.querySelector("summary");
@@ -685,7 +685,7 @@ test("staying during prefix navigation retains page, selection and active upload
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   await screen.findByRole("button", { name: "second.txt" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Select second.txt" }));
-  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   choose(["active.txt"]);
   await act(async () => {});
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -713,7 +713,7 @@ test("staying during breadcrumb navigation retains search and selection during a
   fireEvent.change(screen.getByLabelText("Search"), { target: { value: "search" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select search.txt" }));
-  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   let deliver: ((entries: DropEntry[]) => void) | undefined;
   dropEntries([{ isFile: false, isDirectory: true, name: "docs", createReader: () => ({ readEntries(done) { deliver = done; } }) }]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

@@ -180,7 +180,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
   expect(screen.queryByRole("region", { name: "Upload" })).toBeNull();
   fireEvent.click(await screen.findByRole("button", { name: "Open objects (bkt-1)" }));
   const objectButton = await screen.findByRole("button", { name: "photos/a.txt" });
-  const summary = screen.getByText("Upload", { selector: "summary" });
+  const summary = screen.getByText("Close upload", { selector: "summary" });
   const disclosure = summary.closest("details");
   expect(disclosure?.open).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Upload" }));
@@ -471,7 +471,7 @@ test("says there are no objects after the list loads", async () => {
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   release(json(page([])));
   expect(await screen.findByText("There are no objects. Upload the first object.")).toBeTruthy();
-  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
   expect(screen.queryByLabelText("Loading objects")).toBeNull();
   expect(screen.queryByText("Loading objects")).toBeNull();
@@ -509,7 +509,7 @@ test("keeps the short empty sentence when a search has no matches", async () => 
   expect(await screen.findByText("There are no objects.")).toBeTruthy();
   expect(screen.queryByText("There are no objects. Upload the first object.")).toBeNull();
   expect(screen.queryByRole("button", { name: "listed.txt" })).toBeNull();
-  fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Upload" }));
   expect(screen.getAllByRole("region", { name: "Upload" })).toHaveLength(1);
 });
 
@@ -1736,6 +1736,9 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   fireEvent.click(inspect);
   expect((await screen.findByText("u1")).textContent).toBe("u1");
+  const inspector = screen.getByRole("region", { name: "Inspect photos/cat.jpg" });
+  expect(within(inspector).getByText("Size 1")).toBeTruthy();
+  expect(within(inspector).getByText("2026-10-11T00:00:00Z")).toBeTruthy();
   expect(screen.getByText("encrypted no").textContent).toBe("encrypted no");
   expect(screen.getByText("uploading no").textContent).toBe("uploading no");
   expect(screen.getByText("aborted no").textContent).toBe("aborted no");
@@ -2157,5 +2160,18 @@ test("embedded objects keeps prefix browsing and uploads under the parent's sing
   expect(screen.queryByRole("heading", { name: "Objects" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Back to buckets" })).toBeNull();
   expect(screen.getByRole("button", { name: "Root (bkt-1)" })).toBeTruthy();
-  expect(screen.getByText("Upload", { selector: "summary" })).toBeTruthy();
+  expect(screen.getByText("Close upload", { selector: "summary" })).toBeTruthy();
+});
+
+
+test("clearing the visible selection restores unchecked rows and removes bulk actions", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json(page([photo]))));
+  renderObjects();
+  const checkbox = await screen.findByRole("checkbox", { name: "Select photos/a.txt" });
+  fireEvent.click(checkbox);
+  expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(checkbox).toHaveProperty("checked", false);
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Clear selection" })).toBeNull();
 });
