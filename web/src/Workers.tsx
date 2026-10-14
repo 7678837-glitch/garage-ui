@@ -97,8 +97,12 @@ function workersFrom(body: unknown): WorkerRow[] {
   return body.map(workerRow);
 }
 
-function lastErrorMessage(body: unknown): string {
-  if (!isRecord(body) || !isRecord(body.lastError)) {
+function lastErrorMessage(body: unknown): string | null {
+  if (!isRecord(body)) {
+    throw new Error(unavailableMessage());
+  }
+  if (body.lastError === null) return null;
+  if (!isRecord(body.lastError)) {
     throw new Error(unavailableMessage());
   }
   const message = body.lastError.message;
@@ -108,7 +112,7 @@ function lastErrorMessage(body: unknown): string {
   return message;
 }
 
-async function loadWorkerMessage(nodeId: string, workerId: number): Promise<string> {
+async function loadWorkerMessage(nodeId: string, workerId: number): Promise<string | null> {
   const body = await api<unknown>(
     `/api/nodes/${encodeURIComponent(nodeId)}/workers/${workerId}`,
   );
@@ -390,14 +394,14 @@ function WorkerDetail({ nodeId, worker, request, focusedRequest }: {
     if (focusedRequest.current === request) return;
     focusedRequest.current = request;
     panel.current?.focus();
-    panel.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    panel.current?.scrollIntoView?.({ block: "nearest", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [request, focusedRequest]);
   return (
     <div ref={panel} role="region" aria-label={label} tabIndex={-1} className="ui-worker-detail">
       <p className="font-medium">{label}</p>
       {detail.isPending ? <p role="status">{translate("Loading worker details")}</p> : null}
       {detail.isFetching && !detail.isPending ? <p role="status">{translate("Refreshing worker details")}</p> : null}
-      {detail.data !== undefined ? <p>{detail.data}</p> : null}
+      {detail.data !== undefined ? <p role="status">{detail.data === null ? translate("No error reported") : detail.data}</p> : null}
       {failure ? <>
         <p role="alert">{failure.message}{failure.code ? ` ${failure.code}` : ""}</p>
         <button className="ui-button" type="button" disabled={detail.isFetching} onClick={() => { void detail.refetch(); }}>
@@ -430,7 +434,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
       <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
       <p className="ui-muted ui-identifier">{nodeId === "*" ? copy("operations.allNodes") : nodeId}</p>
       <div className="ui-toolbar text-sm">
-        <label className="flex items-center gap-2">
+        <label className="ui-checkbox-field">
           <input
             type="checkbox"
             checked={filter.busyOnly}
@@ -439,7 +443,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
             }}
           />
           {copy("ui.busy.only")}</label>
-        <label className="flex items-center gap-2">
+        <label className="ui-checkbox-field">
           <input
             type="checkbox"
             checked={filter.errorOnly}
@@ -505,7 +509,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                       </DataCell>
                       <DataCell label={copy("ui.state")} className="ui-worker-state"><span className="ui-status">{worker.state}</span></DataCell>
                       <DataCell label={copy("ui.errors")} className="ui-worker-errors">{worker.errors}</DataCell>
-                      <DataCell label={copy("ui.progress")} className="ui-worker-progress">{worker.progress}</DataCell>
+                      <DataCell label={copy("ui.progress")} className={`ui-worker-progress${worker.progress.length === 0 ? " ui-worker-progress-empty" : ""}`}>{worker.progress}</DataCell>
                       <DataCell label={copy("ui.details")} kind="actions">
                         <button
                           className="ui-button ui-button-quiet"
@@ -516,7 +520,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                             setSelected((current) => ({ nodeId: group.nodeId, workerId: worker.id, request: (current?.request ?? 0) + 1 }));
                           }}
                         >
-                          {fill(copy("ui.details.2"), { id: worker.id })}
+                          {copy("ui.details")}
                         </button>
                         {selected?.nodeId === group.nodeId && selected.workerId === worker.id ? (
                           <WorkerDetail key={selected.request} nodeId={group.nodeId} worker={worker} request={selected.request} focusedRequest={focusedRequest} />

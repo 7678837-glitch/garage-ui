@@ -824,7 +824,7 @@ test("worker details focus the originating row panel while loading and keep focu
   const filter = screen.getByRole("checkbox", { name: "Busy only" });
   filter.focus();
   const refresh = client.refetchQueries({ queryKey: ["nodes", "n1", "worker", 7] });
-  await waitFor(() => expect(within(panel).getByRole("status").textContent).toBe("Refreshing worker details"));
+  await waitFor(() => expect(within(panel).getByText("Refreshing worker details").getAttribute("role")).toBe("status"));
   release(json({ lastError: { message: "updated timeout" } }));
   await refresh;
   expect(await within(panel).findByText("updated timeout")).toBeTruthy();
@@ -857,4 +857,32 @@ test("worker detail failure stays associated with its row and retries the same w
   fireEvent.click(within(panel).getByRole("button", { name: "Retry" }));
   expect(await within(panel).findByText("rpc timeout")).toBeTruthy();
   expect(requests).toBe(2);
+});
+
+
+test("a worker with a null last error reports that no error was reported", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/workers/7")) {
+      return json({ ...workerRow, errors: 0, consecutiveErrors: 0, freeform: [], lastError: null, persistentErrors: null, progress: null, queueLength: 0, tranquility: null });
+    }
+    return json([workerRow]);
+  }));
+  renderWorkers();
+  fireEvent.click(await screen.findByRole("button", { name: /Details 7/ }));
+  const panel = await screen.findByRole("region", { name: "Details 7: block_resync" });
+  expect((await within(panel).findByText("No error reported")).getAttribute("role")).toBe("status");
+  expect(within(panel).queryByRole("alert")).toBeNull();
+  expect(within(panel).queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
+test.each([undefined, {}, { message: 4 }])("missing or malformed worker last error remains a failure: %j", async (lastError) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+    String(input).endsWith("/workers/7") ? json({ lastError }) : json([workerRow]),
+  ));
+  renderWorkers();
+  fireEvent.click(await screen.findByRole("button", { name: /Details 7/ }));
+  const panel = await screen.findByRole("region", { name: "Details 7: block_resync" });
+  expect(await within(panel).findByRole("alert")).toHaveProperty("textContent", "Workers are unavailable");
+  expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
+  expect(within(panel).queryByText("No error reported")).toBeNull();
 });

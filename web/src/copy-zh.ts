@@ -9,6 +9,7 @@ export const zh = {
   "ux.saved.automatically": "自动保存",
   "ux.delete.key": "删除密钥",
   "ux.worker.id": "工作线程 ID",
+  "ux.worker.no.error": "未报告错误",
   "ux.loading.worker.details": "正在加载工作线程详情",
   "ux.refreshing.worker.details": "正在刷新工作线程详情",
 

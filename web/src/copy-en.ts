@@ -7,6 +7,7 @@ export const en = {
   "ux.saved.automatically": "Saved automatically",
   "ux.delete.key": "Delete key",
   "ux.worker.id": "Worker ID",
+  "ux.worker.no.error": "No error reported",
   "ux.loading.worker.details": "Loading worker details",
   "ux.refreshing.worker.details": "Refreshing worker details",
 
