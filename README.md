@@ -1,91 +1,115 @@
-# garage-ui
+<p align="center">
+  <img src="web/public/brand/garage-ui.svg" width="80" alt="Garage UI logo">
+</p>
 
-garage-ui is an unofficial web admin UI for Garage, the S3-compatible object store from Deuxfleurs. The program is one static Rust binary.
+# Garage UI
 
-The current development version is 20261014.2 (DRAFT, not published). The minimum supported Garage version is v2.3.0; compatibility has been tested with v2.3.0 and v2.4.1.
+**Your Garage cluster, buckets, and files in one browser.**
 
-## Current behavior
+Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. A Rust server serves the bundled frontend and connects to your Garage Admin and S3 APIs.
 
-- Set up the first administrator, log in and out, and change your password. Administrators manage users, reset passwords, and grant viewers separate download and share permissions.
-- Read cluster health, status, capacity statistics, and a Prometheus metrics summary of S3 requests, errors, and block traffic. A notice identifies unavailable metrics or disabled TLS verification.
-- List, filter, and sort nodes; connect a node; stage capacity changes; preview and apply a layout at the next version; revert staged changes; view layout history and sync trackers; and skip dead nodes with explicit data-loss confirmation when missing data is allowed.
-- Inspect node workers and their variables, change a worker variable, and launch repair tasks, including scrub start, pause, resume, and cancel. Inspect block errors and block information, retry resync, purge blocks with confirmation, and request metadata snapshots for one node or every node. These operations require an administrator.
-- List, filter, sort, create, and delete buckets. Manage global and local aliases, quotas and usage, key permissions, CORS rules, and lifecycle rules. Inspect and abort incomplete multipart uploads, or clean up uploads older than a chosen age and see the removed count.
-- List, filter, sort, create, delete, and rename access keys. Allow bucket creation, inspect each key's bucket grants, and reveal a key secret after confirmation. Manage Garage admin tokens, their expiration and scopes; a newly created token secret is shown once, and full-admin scopes carry a warning.
-- Browse objects by prefix with pagination and breadcrumbs, search within a prefix, and sort the loaded page by size or time. Inspect metadata and administrator-only version diagnostics. Preview allowlisted text, images, audio, and video; use Left and Right to move between objects in the loaded directory. Bitmap list thumbnails require download permission.
-- Upload files and folders with an upload queue, progress, cancellation, retry, overwrite confirmation, and multipart upload for large files. Download objects, stream selected objects or a prefix as a ZIP, and create expiring share links when permitted. Delete an object, a counted selection, or a prefix recursively after confirmation.
-- Filter audit events and export CSV as an administrator. Use English or Simplified Chinese, localized timestamps and capacity units, light/dark/system themes, visible keyboard focus, loading/error/retry states, and the About page. Main pages and destructive-action dialogs accommodate narrow viewports.
+![Garage UI object browser](docs/images/objects-desktop.png)
 
-## Writes stop below Garage v2.3.0
+<details>
+<summary>On a smaller screen</summary>
 
-When Garage reports a release older than v2.3.0, the UI refuses writes.
+<img src="docs/images/objects-mobile.png" width="240" alt="Garage UI object browser on a narrow screen">
+
+</details>
+
+## What you can do
+
+- **Work with files:** browse folders, preview media and text, upload files or folders, download selections as ZIPs, and create expiring share links.
+- **Organize storage:** create buckets, manage aliases and quotas, configure CORS and lifecycle rules, and clean up incomplete uploads.
+- **Control access:** manage Garage keys and admin tokens, give UI users administrator or viewer access, and grant viewers download and share permissions separately.
+- **See what needs attention:** check cluster health and capacity, manage nodes and layout, inspect workers and block errors, and run repair tasks.
+- **Keep daily work comfortable:** use light or dark mode, English or Simplified Chinese, and layouts that adapt to desktop and narrow screens.
+
+Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. Versions older than v2.3.0 cannot perform writes through the UI. The current version, **20261014.2**, is an unpublished development draft; build from source to try it. Published container images are not available for this draft.
 
 ## Build and run
 
-The repository pins Rust 1.99.0 in `rust-toolchain.toml` and Bun 1.4.2 in `web/package.json`.
+Both Compose paths below build the UI from source. The first build downloads pinned toolchains and dependencies, so allow time for it to finish. Start with the current development branch:
 
-From the repository root, build the frontend and the binary.
+```sh
+git clone --branch dev https://github.com/xjoker/garage-ui.git
+cd garage-ui
+```
+
+### Connect to your existing Garage
+
+You need Docker with buildx, a running Garage v2.3.0 or v2.4.1 cluster, its Admin API token, and its S3 endpoint and region. All endpoint addresses must be reachable from the UI container; `127.0.0.1` inside that container refers to the container itself.
+
+Create a private local configuration file:
+
+```sh
+cp .env.example .env
+chmod 600 .env
+```
+
+Edit `.env` and fill all four settings with your cluster's actual values before starting the UI. Keep it out of version control.
+
+| Setting | Value to supply |
+|---|---|
+| `GARAGE_ADMIN_URL` | Garage Admin API URL, usually on port 3903 |
+| `GARAGE_ADMIN_TOKEN` | Garage Admin API token |
+| `S3_ENDPOINT_URL` | Garage S3 API URL, usually on port 3900 |
+| `S3_REGION` | Region configured in Garage |
+
+From the repository root, start the [existing-cluster Compose service](deploy/compose.external.yaml):
+
+```sh
+COOKIE_SECURE=false docker compose --env-file .env \
+  -f deploy/compose.external.yaml up -d --build
+```
+
+Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. `COOKIE_SECURE=false` is for this local HTTP address; use HTTPS and the default secure cookies when serving the UI remotely.
+
+For file-backed secrets, private certificates, reverse proxies, and browser-reachable share URLs, see the [operator guide](docs/wiki/Home.md).
+
+### Try a local Garage
+
+The [Compose example](deploy/compose.yaml) runs the UI alongside a separate single-node Garage v2.4.1 instance. It is for local evaluation; it stores data in Docker volumes.
+
+```sh
+docker compose -f deploy/compose.yaml up -d --build
+```
+
+Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. Garage initializes its single-node layout automatically, so you can create a bucket and upload files after setup. See the [operator guide](docs/wiki/Home.md) for troubleshooting.
+
+### Run the binary directly
+
+Install the pinned Rust toolchain and Bun version, then build from the repository root:
 
 ```sh
 scripts/build.sh
 ```
 
-With no arguments, `scripts/build.sh` runs `bun install --frozen-lockfile`, then `bun run build`, then `cargo build --release -p garage-ui --bin garage-ui` for the host.
-
-To build and load both Linux images locally:
+Set the Garage connection variables in `.env`, plus `COOKIE_SECURE=false` for local HTTP, and run:
 
 ```sh
-scripts/build.sh --images
+./target/release/garage-ui
 ```
 
-Use `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64` for one architecture. Image builds use Docker buildx with `--no-cache` and load local tags `garage-ui:<VERSION>-amd64` and `garage-ui:<VERSION>-arm64`.
+The binary listens on `127.0.0.1:3909` by default. Toolchain details and development checks are in [Contributing](CONTRIBUTING.md).
 
-To call a Garage cluster, set the admin API address and the admin token before you start the binary. Do not commit the token. The example Garage config in `deploy/garage-entrypoint.sh` binds the admin API on port 3903, so a local address is `http://127.0.0.1:3903`.
+To build and load local Linux images separately, run `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64`. With no architecture argument, it builds both. Tags are `garage-ui:<VERSION>-amd64` and `garage-ui:<VERSION>-arm64`; the script does not publish images.
 
-1. Export `GARAGE_ADMIN_URL` to that admin API address.
-2. Export `GARAGE_ADMIN_TOKEN` to the admin token from the Garage configuration.
-3. Export `S3_ENDPOINT_URL` to the Garage S3 API address (for the example config, `http://127.0.0.1:3900`) and `S3_REGION` to the region in the Garage configuration. Garage v2.3.0 and v2.4.1 do not provide the main-v2 endpoint-discovery fields.
-4. Run `./target/release/garage-ui`.
-5. Open http://127.0.0.1:3909. The first visit is setup.
+## Keep your data and credentials safe
 
-For explicitly local cleartext development, set `COOKIE_SECURE=false`; the default is `true`. Keep the default for HTTPS deployments. The Compose example currently starts both services but does not pass the Garage address, token, or S3 endpoint to the UI; configure those in the UI service before using it for Garage operations.
+The first visit creates an administrator; authentication stays enabled. The Garage admin token stays on the server, and browser sessions use an HttpOnly cookie. Keep the UI private or behind an HTTPS reverse proxy, and use a Garage token with only the scopes you need.
 
-## Environment variables
+Persist and back up `/data` in containers, or `DATA_DIR` when running the binary (default: `./data`). It contains UI accounts, sessions, audit records, bucket-to-key mappings, and the generated session key. Stop the UI before copying this directory for a consistent backup. Garage stores the actual objects and cluster state: back up its data and configuration separately. Removing Docker volumes deletes their persisted data.
 
-You can start the process with the variables below unset. Set an admin URL and an admin token when the UI should call Garage.
+## Documentation and contributing
 
-`API_BASE_URL` is the Garage admin API base URL. `GARAGE_ADMIN_URL` is an alias. When both are set, the process uses `API_BASE_URL`.
+- [Operator guide and reference](docs/wiki/Home.md): deployment, configuration, storage, permissions, cluster operations, and troubleshooting.
+- [Contributing](CONTRIBUTING.md): local development, focused verification, and AI-assisted contributions.
+- [Requirements](docs/README.md): the working specification and acceptance targets. Requirements are not a record of completed verification.
+- [Roadmap](docs/roadmap.md): planned work.
 
-`API_ADMIN_KEY_FILE` is a path to a file that contains the admin token. `GARAGE_ADMIN_TOKEN` is the token itself. When the file path is non-empty, the process reads the file and ignores `GARAGE_ADMIN_TOKEN`.
-
-`S3_ENDPOINT_URL` is the server-reachable S3 API address, separate from the admin API address. `S3_REGION` must match the Garage S3 region. `S3_PUBLIC_ENDPOINT_URL` optionally selects a browser-reachable S3 address for presigned share links.
-
-`DATA_DIR` is the directory for the SQLite database and the generated session key. The default is `./data`. The process creates the directory when it is missing.
-
-The process reads `.env` from the working directory. A variable in the process environment replaces the same name from that file. `.env.example` does not assign any variables.
-
-## Authentication stays on
-
-The process exits at startup if the environment contains `AUTH_DISABLED`, `DISABLE_AUTH`, or `GARAGE_UI_NO_AUTH`.
-
-The browser does not hold the Garage admin token. The token stays in the server process. The browser keeps an HttpOnly session cookie named `garage_session`.
-
-When you run the binary directly, it listens on 127.0.0.1 port 3909. Keep it on that address.
-
-## Version numbers use YYYYMMDD.N
-
-The first release on a calendar day is `.1`. A later release on the same day increments `N`. The next day starts again at `.1`. The `VERSION` file at the repository root is the only source.
-
-## Planned work
-
-Later work is listed in the [roadmap](docs/roadmap.md).
-
-## Documentation
-
-Start with the [docs index](docs/README.md) for requirements, or [Contributing](CONTRIBUTING.md) for local development, verification, and AI-assisted contributions. Requirements describe acceptance targets; they are not evidence that every target is implemented or verified. GitHub Actions are disabled during development.
-
-The current development work and the unpublished release draft may refer to different commits. Check the source commit and its own verification results when evaluating a change; the draft version number alone does not establish that later development changes were tested.
+Garage UI is under active development. GitHub Actions are disabled during development; an unpublished release draft and later source commits can have different verification results.
 
 ## License
 
-The license is MIT. The terms are in [LICENSE](LICENSE).
+[MIT](LICENSE).
