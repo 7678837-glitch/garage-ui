@@ -1,4 +1,4 @@
-import { assertAuthenticated, openAccount, openNavigation } from "./interactions";
+import { assertAuthenticated, openAccount, openNavigation, selectChoice } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { recordLayout } from "./layout";
@@ -29,7 +29,7 @@ test("chinese pages stay inside the viewport", async ({ page }) => {
   await assertAuthenticated(page);
 
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Language").selectOption("zh-CN");
+  await selectChoice(page.getByLabel("Language"), "Chinese");
   await expect(page.getByLabel("语言")).toBeVisible();
 
   for (const [name, shot] of pages) {

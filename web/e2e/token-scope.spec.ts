@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure } from "./interactions";
+import { assertAuthenticated } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -25,18 +25,19 @@ test("shows the full-admin warning for CreateAdminToken and stays within the vie
   const tokens = page.getByRole("region", { name: "Admin tokens" });
   await expect(tokens.getByRole("heading", { name: "Admin tokens" })).toBeVisible();
 
-  await openDisclosure(tokens.locator("summary", { hasText: "Create token" }));
-  const createAdmin = tokens.getByRole("checkbox", { name: "CreateAdminToken", exact: true });
+  await tokens.getByRole("button", { name: "Create token", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Create token", exact: true });
+  const createAdmin = form.getByRole("checkbox", { name: "CreateAdminToken", exact: true });
   await expect(createAdmin).toBeVisible();
-  await expect(tokens.getByText(fullAdminWarning, { exact: true })).toHaveCount(0);
+  await expect(form.getByText(fullAdminWarning, { exact: true })).toHaveCount(0);
 
   await createAdmin.check();
   await expect(createAdmin).toBeChecked();
-  await expect(tokens.getByText(fullAdminWarning, { exact: true })).toBeVisible();
+  await expect(form.getByText(fullAdminWarning, { exact: true })).toBeVisible();
 
   await createAdmin.uncheck();
   await expect(createAdmin).not.toBeChecked();
-  await expect(tokens.getByText(fullAdminWarning, { exact: true })).toHaveCount(0);
+  await expect(form.getByText(fullAdminWarning, { exact: true })).toHaveCount(0);
 
   await assertWidth(page, "token-scope", 1280);
   await assertWidth(page, "token-scope", 360);

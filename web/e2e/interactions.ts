@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 export async function openDisclosure(summary: Locator): Promise<void> {
   await expect(summary).toHaveCount(1);
+  await expect(summary).toHaveJSProperty("tagName", "SUMMARY");
   const ancestors = summary.locator("xpath=ancestor::details");
   for (let index = 0; index < await ancestors.count(); index += 1) {
     const details = ancestors.nth(index);
@@ -10,7 +11,14 @@ export async function openDisclosure(summary: Locator): Promise<void> {
 }
 
 export async function openRowActions(row: Locator): Promise<void> {
-  await openDisclosure(row.locator("details > summary").filter({ hasText: /^Actions$/ }));
+  await row.getByRole("button", { name: /^Actions(?:$|:|\s|\()/ }).click();
+}
+
+export async function selectChoice(control: Locator, label: string): Promise<void> {
+  await expect(control).toHaveAttribute("role", "combobox");
+  await control.click();
+  await control.page().getByRole("option", { name: label, exact: true }).click();
+  await expect(control).toHaveAttribute("aria-expanded", "false");
 }
 
 export async function bucketIdFromRow(row: Locator): Promise<string> {
@@ -45,17 +53,17 @@ export async function openUpload(scope: Locator): Promise<void> {
 }
 
 export async function openAccount(page: Page): Promise<void> {
-  const logout = page.getByRole("button", { name: /^(Log out|退出)$/, includeHidden: true });
-  const account = page.locator("details").filter({ has: logout });
+  const account = page.locator(".console-account-trigger");
   await expect(account).toHaveCount(1);
-  await openDisclosure(account.locator("summary"));
-  await expect(logout).toBeVisible();
+  if (await account.getAttribute("aria-expanded") !== "true") await account.click();
+  await expect(page.getByRole("button", { name: /^(Log out|退出)$/ })).toBeVisible();
 }
 
 export async function assertAuthenticated(page: Page): Promise<void> {
   await openAccount(page);
   await expect(page.getByRole("button", { name: /^(Log out|退出)$/ })).toBeEnabled();
-  await page.locator("details").filter({ has: page.getByRole("button", { name: /^(Log out|退出)$/, includeHidden: true }) }).locator("summary").click();
+  await page.locator(".console-account-trigger").click();
+  await expect(page.locator(".console-account-trigger")).toHaveAttribute("aria-expanded", "false");
 }
 
 export async function closeUpload(scope: Locator): Promise<void> {

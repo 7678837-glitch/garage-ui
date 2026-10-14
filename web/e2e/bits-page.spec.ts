@@ -1,4 +1,4 @@
-import { assertAuthenticated, openDisclosure } from "./interactions";
+import { assertAuthenticated, openRowActions, selectChoice } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth } from "./layout";
@@ -39,7 +39,7 @@ async function openUsers(page: Page): Promise<Locator> {
 async function revealDownload(page: Page, name: string): Promise<Locator> {
   const users = usersRegion(page);
   await users.getByLabel("Filter users").fill(name);
-  const download = users.getByRole("checkbox", {
+  const download = page.getByRole("dialog", { name, exact: true }).getByRole("checkbox", {
     name: `Download for ${name}`,
     exact: true,
   });
@@ -47,7 +47,7 @@ async function revealDownload(page: Page, name: string): Promise<Locator> {
   for (let step = 0; step < 20; step += 1) {
     await expect(users.getByLabel("Loading users")).toHaveCount(0);
     const row = users.locator("tbody tr", { hasText: name });
-    if (await row.count() === 1) await openDisclosure(row.locator("summary", { hasText: "Edit" }));
+    if (await row.count() === 1) await openRowActions(row);
     if (await download.isVisible().catch(() => false)) {
       return download;
     }
@@ -68,13 +68,18 @@ test.afterEach(async ({ page }) => {
   if (!(await users.isVisible().catch(() => false))) {
     await openUsers(page);
   }
+  const openEditor = page.getByRole("dialog", { name: username, exact: true });
+  if (await openEditor.isVisible()) await openEditor.getByRole("button", { name: "Close", exact: true }).click();
   await users.getByLabel("Filter users").fill(username);
-  const remove = users.getByRole("button", { name: `Delete ${username}`, exact: true });
+  const remove = page.getByRole("dialog", { name: username, exact: true }).getByRole("button", { name: `Delete ${username}`, exact: true });
   const ownedRow = users.locator("tbody tr").filter({ has: page.getByText(username, { exact: true }) });
   const next = users.getByRole("button", { name: "Next", exact: true });
   for (let step = 0; step < 20; step += 1) {
     await expect(users.getByLabel("Loading users")).toHaveCount(0);
-    if (await ownedRow.count() === 1) await openDisclosure(ownedRow.locator("summary").filter({ hasText: /^Actions$/ }));
+    if (await ownedRow.count() === 1) {
+      const editor = page.getByRole("dialog", { name: username, exact: true });
+      if (!(await editor.isVisible())) await openRowActions(ownedRow);
+    }
     if (await remove.isVisible().catch(() => false)) {
       break;
     }
@@ -95,11 +100,11 @@ test("keeps download unchecked for a viewer after revoke and reload", async ({ p
   username = `e2e-298-${Date.now().toString(36)}`;
   await logIn(page);
   const users = await openUsers(page);
-  await openDisclosure(users.locator("summary", { hasText: "Create user" }));
-  const form = users.getByRole("form", { name: "Create user" });
+  await users.getByRole("button", { name: "Create user", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Create user", exact: true }).getByRole("form", { name: "Create user" });
   await form.getByLabel("Username").fill(username);
   await form.getByLabel("Password").fill(password);
-  await form.getByLabel("Role").selectOption("viewer");
+  await selectChoice(form.getByLabel("Role"), "viewer");
   const formDownload = form.getByRole("checkbox", { name: "Download", exact: true });
   const formShare = form.getByRole("checkbox", { name: "Share", exact: true });
   await formDownload.check();
@@ -121,8 +126,9 @@ test("keeps download unchecked for a viewer after revoke and reload", async ({ p
     can_share: false,
   });
 
+  await form.getByRole("button", { name: "Cancel", exact: true }).click();
   const download = await revealDownload(page, username);
-  const share = users.getByRole("checkbox", { name: `Share for ${username}`, exact: true });
+  const share = page.getByRole("dialog", { name: username, exact: true }).getByRole("checkbox", { name: `Share for ${username}`, exact: true });
   await expect(download).toBeChecked();
   await expect(share).not.toBeChecked();
 
@@ -143,7 +149,7 @@ test("keeps download unchecked for a viewer after revoke and reload", async ({ p
   const persisted = await revealDownload(page, username);
   await expect(persisted).not.toBeChecked();
   await expect(
-    usersRegion(page).getByRole("checkbox", { name: `Share for ${username}`, exact: true }),
+    page.getByRole("dialog", { name: username, exact: true }).getByRole("checkbox", { name: `Share for ${username}`, exact: true }),
   ).not.toBeChecked();
 
   await assertWidth(page, "users-bits", 1280);

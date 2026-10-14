@@ -1,4 +1,4 @@
-import { assertAuthenticated, chooseTheme, openAccount, openDisclosure } from "./interactions";
+import { assertAuthenticated, chooseTheme, openAccount, openRowActions } from "./interactions";
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
@@ -94,7 +94,7 @@ test.describe.serial("accounts", () => {
 
     await nav.getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
-    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
+    await openRowActions(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }));
     const download = page.getByRole("checkbox", {
       name: `Download for ${readOnlyUser.username}`,
     });
@@ -105,6 +105,7 @@ test.describe.serial("accounts", () => {
     await share.click();
     await expect(share).toBeChecked();
 
+    await page.getByRole("dialog", { name: readOnlyUser.username, exact: true }).getByRole("button", { name: "Close", exact: true }).click();
     await logOut(page);
     await logIn(page, readOnlyUser.username, readOnlyUser.password);
     const viewerNav = sections(page);
@@ -122,15 +123,16 @@ test.describe.serial("accounts", () => {
     await sections(page).getByRole("link", { name: "Users", exact: true }).click();
     const users = page.getByRole("region", { name: "Users" });
     await expect(users.getByRole("heading", { name: "Users" })).toBeVisible();
-    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
+    await openRowActions(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }));
     await expect(
-      users.getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` }),
+      page.getByRole("dialog", { name: readOnlyUser.username, exact: true }).getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` }),
     ).toBeChecked();
     await expect(
-      users.getByRole("checkbox", { name: `Share for ${readOnlyUser.username}` }),
+      page.getByRole("dialog", { name: readOnlyUser.username, exact: true }).getByRole("checkbox", { name: `Share for ${readOnlyUser.username}` }),
     ).toBeChecked();
     await recordLayout(page, "account-users");
 
+    await page.getByRole("dialog", { name: readOnlyUser.username, exact: true }).getByRole("button", { name: "Close", exact: true }).click();
     await chooseTheme(page, "Light");
     await page.screenshot({ path: `${evidenceDir}/account-users-light.png`, fullPage: true });
     await chooseTheme(page, "Dark");
@@ -181,13 +183,14 @@ test.describe.serial("accounts", () => {
     test.setTimeout(120_000);
     await logIn(page, administrator.username, nextPassword);
     await sections(page).getByRole("link", { name: "Users", exact: true }).click();
-    await openDisclosure(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }).locator("summary", { hasText: "Edit" }));
+    await openRowActions(page.getByRole("region", { name: "Users" }).locator("tbody tr", { hasText: readOnlyUser.username }));
     const share = page.getByRole("checkbox", { name: `Share for ${readOnlyUser.username}` });
     const download = page.getByRole("checkbox", { name: `Download for ${readOnlyUser.username}` });
     await share.click();
     await expect(share).not.toBeChecked();
     await download.click();
     await expect(download).not.toBeChecked();
+    await page.getByRole("dialog", { name: readOnlyUser.username, exact: true }).getByRole("button", { name: "Close", exact: true }).click();
     await sections(page).getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
     await page.getByLabel("Current password").fill(nextPassword);

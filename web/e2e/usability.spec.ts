@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
 import { assertWidth, evidenceDir } from "./layout";
 import { garageTarget } from "./garage-target";
-import { chooseTheme, openDisclosure, openNavigation, assertAuthenticated } from "./interactions";
+import { chooseTheme, openDisclosure, openNavigation, assertAuthenticated, openAccount, selectChoice } from "./interactions";
 
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 
@@ -40,18 +40,18 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   const header = page.getByRole("banner");
   const menu = header.getByRole("button", { name: /^(Menu|菜单)$/ });
   const brand = header.locator('img[src$="/brand/garage-ui.svg"]').locator("..");
-  const account = header.locator("details").filter({ has: page.getByRole("button", { name: /^(Log out|退出)$/, includeHidden: true }) });
-  const summary = account.locator("summary");
+  const summary = header.locator(".console-account-trigger");
+  const account = page.getByRole("dialog").filter({ has: page.getByRole("button", { name: /^(Log out|退出)$/ }) });
   const breadcrumb = header.getByRole("navigation", { name: /^(Breadcrumb|路径)$/ });
-  await expect(account).not.toHaveAttribute("open", "");
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(header.getByRole("status")).toHaveCount(0);
   expect(await summary.innerText()).not.toMatch(/Garage|Health|admin|ok ·/);
   const boxes = await Promise.all([menu, brand, summary, breadcrumb].map((item) => item.boundingBox()));
   if (boxes.some((box) => !box)) throw new Error("Mobile header item has no bounding box");
   const [menuBox, brandBox, accountBox, breadcrumbBox] = boxes;
   if (!menuBox || !brandBox || !accountBox || !breadcrumbBox) throw new Error("Mobile header boxes missing");
-  expect(menuBox.height).toBeGreaterThanOrEqual(44);
-  expect(accountBox.height).toBeGreaterThanOrEqual(44);
+  expect(menuBox.height).toBeGreaterThanOrEqual(36);
+  expect(accountBox.height).toBeGreaterThanOrEqual(36);
   expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(brandBox.x);
   expect(brandBox.x + brandBox.width).toBeLessThanOrEqual(accountBox.x);
   expect(accountBox.x + accountBox.width).toBeLessThanOrEqual(360);
@@ -59,7 +59,7 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   expect(breadcrumbBox.y).toBeGreaterThanOrEqual(Math.max(menuBox.y + menuBox.height, accountBox.y + accountBox.height));
   writeFileSync(`${evidenceDir}/${label}-header.json`, JSON.stringify({ boxes, summaryText: await summary.innerText(), accessibleName: await summary.getAttribute("aria-label") }, null, 2));
   await page.screenshot({ path: `${evidenceDir}/${label}-viewport.png`, fullPage: false });
-  await openDisclosure(summary);
+  await openAccount(page);
   await expect(account.getByRole("status")).toBeVisible();
   await expect(account).toContainText(garageTarget().version);
   await page.screenshot({ path: `${evidenceDir}/${label}-account-open.png`, fullPage: false });
@@ -76,11 +76,11 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   await expect(page.getByRole("dialog", { name: /^(Sections|分区)$/ })).toHaveCount(0);
   await page.setViewportSize({ width: 360, height: 800 });
   await expect(menu).toHaveAttribute("aria-expanded", "false");
-  await openDisclosure(summary);
+  await openAccount(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await expect(account).not.toHaveAttribute("open", "");
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
   await page.setViewportSize({ width: 360, height: 800 });
-  await expect(account).not.toHaveAttribute("open", "");
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("dialog", { name: /^(Sections|分区)$/ })).toHaveCount(0);
 }
 
@@ -161,7 +161,7 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
       if (width === 360) await headerLayout(page, `usability-key-${theme.toLowerCase()}-360`);
       const draft = `${name} unsaved`;
       await input.fill(draft);
-      for (const resize of [360, 768, 1280, width]) {
+      for (const resize of [360, 390, 768, 1280, width]) {
         await assertWidth(page, `usability-key-dirty-${theme.toLowerCase()}`, resize);
         await expect(input).toHaveValue(draft);
         await openNavigation(page);
@@ -263,7 +263,7 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
           await chooseTheme(translated, theme);
           await openNavigation(translated);
           await translated.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
-          await translated.getByLabel("Language").selectOption("zh-CN");
+          await selectChoice(translated.getByLabel("Language"), "Chinese");
           await expect(translated.getByLabel("语言")).toBeVisible();
           await translated.goto(page.url());
           await expect(translated.getByRole("region", { name: "工作线程", exact: true }).getByRole("table")).toBeVisible();

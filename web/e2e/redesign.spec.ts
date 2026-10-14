@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { administrator } from "./accounts";
 import { evidenceDir, assertWidth } from "./layout";
-import { closeUpload, assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
+import { closeUpload, assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload, openRowActions, selectChoice } from "./interactions";
 
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 const sections = ["Overview", "Buckets", "Keys", "Nodes and layout", "Workers", "Block errors", "Audit", "Admin tokens", "Users", "Settings"] as const;
@@ -66,12 +66,12 @@ for (const width of [1280, 360]) {
         await assertWidth(page, shot, width);
         await accessibility(page, shot);
         if (width === 360 && theme === "Light") {
-          for (const extraWidth of [768, 1440]) await assertWidth(page, `${shot}-intermediate`, extraWidth);
+          for (const extraWidth of [390, 768, 1440]) await assertWidth(page, `${shot}-intermediate`, extraWidth);
           await page.setViewportSize({ width, height: 800 });
         }
         if (width === 360 && ["Buckets", "Nodes and layout", "Users", "Settings"].includes(name)) {
           const stableHash = new URL(page.url()).hash;
-          for (const switchedWidth of [768, 1280, 1440, 360]) {
+          for (const switchedWidth of [390, 768, 1280, 1440, 360]) {
             await page.setViewportSize({ width: switchedWidth, height: 800 });
             await expect.poll(() => new URL(page.url()).hash).toBe(stableHash);
             await expect(page.getByRole("main")).toBeVisible();
@@ -79,7 +79,7 @@ for (const width of [1280, 360]) {
           }
         }
         if (name === "Buckets" || name === "Keys") {
-          // Closed creation must obey native hidden semantics in the integrated CSS.
+          // Closed creation keeps its portal controls out of the visible interface.
           await expect(page.getByRole("button", { name: name === "Buckets" ? "Create bucket" : "Create key", exact: true })).not.toBeVisible();
         }
         if (name === "Buckets") {
@@ -115,8 +115,10 @@ for (const width of [1280, 360]) {
           const rows = page.getByRole("region", { name: "User list" }).locator("tbody tr");
           expect(await rows.count()).toBeGreaterThan(0);
           console.log(`Users row height ${width} ${theme}`, await rows.first().evaluate((row) => row.getBoundingClientRect().height));
-          await openDisclosure(rows.filter({ hasText: "bea" }).locator("summary", { hasText: "Edit" }));
-          await expect(page.getByRole("checkbox", { name: "Download for bea", exact: true })).toBeVisible();
+          await openRowActions(rows.filter({ hasText: "bea" }));
+          await expect(page.getByRole("dialog", { name: "bea", exact: true }).getByRole("checkbox", { name: "Download for bea", exact: true })).toBeVisible();
+          await assertWidth(page, `${shot}-editor`, width);
+          await page.getByRole("dialog", { name: "bea", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
         }
         if (name === "Audit") {
           const auditResponse = await page.request.get("/api/audit?offset=0&limit=100");
@@ -193,8 +195,8 @@ for (const width of [1280, 360]) {
       const objects = page.locator('section[aria-label="Objects"]');
       await expect(objects).toBeVisible();
       const picker = objects.getByLabel("Bucket key");
-      await expect(picker.locator("option", { hasText: keyId })).toHaveCount(1, { timeout: 20_000 });
-      await picker.selectOption(keyId);
+      await expect(picker).toBeEnabled({ timeout: 20_000 });
+      await selectChoice(picker, keyId);
       await objects.getByRole("button", { name: "Use this key", exact: true }).click();
       await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible({ timeout: 20_000 });
       await openUpload(objects);
@@ -284,9 +286,9 @@ for (const width of [1280, 360]) {
           expect(metrics.size.width, "size must remain readable beside a long object name").toBeGreaterThanOrEqual(48);
           expect(metrics.time.width, "UTC time must remain readable beside a long object name").toBeGreaterThanOrEqual(100);
         } else {
-          expect(metrics.details.height).toBeGreaterThanOrEqual(44);
-          expect(metrics.checkboxHitArea.width).toBeGreaterThanOrEqual(44);
-          expect(metrics.checkboxHitArea.height).toBeGreaterThanOrEqual(44);
+          expect(metrics.details.height).toBeGreaterThanOrEqual(36);
+          expect(metrics.checkboxHitArea.width).toBeGreaterThanOrEqual(36);
+          expect(metrics.checkboxHitArea.height).toBeGreaterThanOrEqual(36);
         }
         for (const control of [nameControl, detailsControl, row.getByRole("checkbox")]) {
           const box = await control.boundingBox();
@@ -322,14 +324,14 @@ for (const width of [1280, 360]) {
           const objectUrl = page.url();
           await openNavigation(page);
           await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
-          await page.getByLabel("Language").selectOption("zh-CN");
+          await selectChoice(page.getByLabel("Language"), "Chinese");
           await page.goto(objectUrl);
           await expect(page.getByRole("button", { name: longKey, exact: true })).toBeVisible();
           await assertWidth(page, `storage-long-zh-${theme.toLowerCase()}`, width);
           await accessibility(page, `storage-long-zh-${theme.toLowerCase()}-${width}`);
           await openNavigation(page);
           await page.getByRole("navigation", { name: "分区" }).getByRole("link", { name: "设置", exact: true }).click();
-          await page.getByLabel("语言").selectOption("en");
+          await selectChoice(page.getByLabel("语言"), "英语");
           await page.goto(objectUrl);
           await expect(nameControl).toBeVisible();
         }

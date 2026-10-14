@@ -1,7 +1,8 @@
+import { assertRenderedLayout } from "./layout";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
-import { assertAuthenticated, openNavigation, openDisclosure } from "./interactions";
+import { assertAuthenticated, openNavigation, openDisclosure, selectChoice } from "./interactions";
 
 const evidence = process.env.OPERATIONS_EVIDENCE ?? "/tmp/garage-ui-allpages-operations";
 mkdirSync(evidence, { recursive: true });
@@ -12,6 +13,7 @@ async function capture(page: Page, name: string, actions: string) {
   const width = viewport.width;
   const unique = name === "confirmation" ? `${name}-${test.info().title.replace(/[^a-zA-Z0-9]/g, "-")}-${matrix.length}` : name;
   const screenshot = `${evidence}/${unique}-${width}.png`;
+  await assertRenderedLayout(page, `${name} at ${width}`);
   await page.screenshot({ path: screenshot, fullPage: true });
   const previousScroll = await page.evaluate(() => scrollY);
   await page.evaluate(() => scrollTo(0, 0));
@@ -45,7 +47,7 @@ async function navigate(page: Page, name: string) {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true }).click();
 }
 async function cancel(page: Page, name: string) {
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog", { name: `Confirm ${name}`, exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Confirm", exact: true })).toBeDisabled();
   await dialog.getByRole("textbox").fill(name);
@@ -64,7 +66,7 @@ async function nodes(page: Page) {
   if (href === null) throw new Error("Node link has no detail address");
   return { region, link, id: decodeURIComponent(href.split("/")[1]) };
 }
-for (const width of [360, 1280]) {
+for (const width of [360, 390, 768, 1280]) {
   test.describe(`${width}px`, () => {
     test.use({ viewport: { width, height: 800 } });
     test.beforeEach(async ({ page }) => { await login(page); });
@@ -90,9 +92,9 @@ for (const width of [360, 1280]) {
       await expect(region.locator('tbody a[href^="#node/"]')).toHaveCount(0);
       await region.getByLabel("Filter nodes").fill(id.slice(0, 10));
       await expect(link).toBeVisible();
-      await region.getByLabel("Sort nodes").selectOption("hostname");
+      await selectChoice(region.getByLabel("Sort nodes"), "Hostname");
       await region.getByLabel("Filter nodes").fill("");
-      await region.getByLabel("Sort nodes").selectOption("id");
+      await selectChoice(region.getByLabel("Sort nodes"), "Id");
       const maintenance = region.locator(":scope > details > summary", { hasText: "Maintenance" });
       await openDisclosure(maintenance);
       await expect(region.getByRole("button", { name: "Apply layout", exact: true })).toBeDisabled();
@@ -136,7 +138,7 @@ for (const width of [360, 1280]) {
       await capture(page, "node-statistics", "Selected Statistics tab; capacity rendered");
       await page.getByRole("tab", { name: "Maintenance", exact: true }).click();
       const capacity = page.getByRole("form", { name: "Node capacity" });
-      await capacity.getByRole("combobox", { name: "Unit", exact: true }).selectOption("B");
+      await selectChoice(capacity.getByRole("combobox", { name: "Unit", exact: true }), "B");
       await capacity.getByLabel("Capacity", { exact: true }).fill("0.5");
       await capacity.getByRole("button", { name: "Save", exact: true }).click();
       await expect(capacity.getByRole("alert")).toHaveText("Enter a whole number of bytes");
@@ -176,18 +178,25 @@ for (const width of [360, 1280]) {
       await capture(page, "workers-single-top", "Selected one actual node; long node ID shown above the list");
       const id = new URL(page.url()).hash.split("/")[1];
       await openDisclosure(workers.locator(":scope > details > summary", { hasText: "Maintenance" }));
-      await openDisclosure(workers.locator("summary").filter({ hasText: /^Start repair$/ }));
-      await workers.getByRole("combobox", { name: "Repair type", exact: true }).selectOption("scrub:pause");
-      await capture(page, "workers-repair-form", "Selected one node, opened Maintenance and scrub pause repair type");
       await workers.getByRole("button", { name: "Start repair", exact: true }).click();
+      const repair = page.getByRole("dialog", { name: "Start repair", exact: true });
+      await selectChoice(repair.getByRole("combobox", { name: "Repair type", exact: true }), "scrub pause");
+      await capture(page, "workers-repair-form", "Selected one node, opened Maintenance and scrub pause repair type");
+      await repair.getByRole("button", { name: "Start repair", exact: true }).click();
       await cancel(page, decodeURIComponent(id));
-      await openDisclosure(workers.locator("summary").filter({ hasText: /^Variable$/ }));
-      await expect(workers.getByRole("button", { name: "Save variable", exact: true })).toBeDisabled();
-      await workers.getByLabel("Variable", { exact: true }).fill("allpages-inspect-only");
-      await workers.getByLabel("Value", { exact: true }).fill("1");
-      await capture(page, "workers-variable-form", "Expanded worker variable form and filled test-only proposal");
+      await expect(repair.getByRole("combobox", { name: "Repair type", exact: true })).toContainText("scrub pause");
+      await repair.getByRole("button", { name: "Cancel", exact: true }).click();
       await workers.getByRole("button", { name: "Save variable", exact: true }).click();
+      const variable = page.getByRole("dialog", { name: "Variable", exact: true });
+      await expect(variable.getByRole("button", { name: "Save variable", exact: true })).toBeDisabled();
+      await variable.getByLabel("Variable", { exact: true }).fill("allpages-inspect-only");
+      await variable.getByLabel("Value", { exact: true }).fill("1");
+      await capture(page, "workers-variable-form", "Expanded worker variable form and filled test-only proposal");
+      await variable.getByRole("button", { name: "Save variable", exact: true }).click();
       await cancel(page, "allpages-inspect-only");
+      await expect(variable.getByLabel("Variable", { exact: true })).toHaveValue("allpages-inspect-only");
+      await expect(variable.getByLabel("Value", { exact: true })).toHaveValue("1");
+      await variable.getByRole("button", { name: "Cancel", exact: true }).click();
       expect(mutations).toEqual([]);
     });
     test("Block errors node selection and native empty state", async ({ page }) => {
