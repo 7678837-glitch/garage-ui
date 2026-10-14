@@ -91,11 +91,20 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   await expect(account).toContainText(garageTarget().version);
   await page.screenshot({ path: `${evidenceDir}/${label}-account-open.png`, fullPage: false });
   await summary.click();
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
+  // Radix unregisters the closing popover layer and restores focus after unmount.
+  await expect(page.locator(".console-account-panel")).toHaveCount(0);
+  await expect(summary).toBeFocused();
   await menu.focus();
+  await expect(menu).toBeFocused();
   await page.keyboard.press("Enter");
-  const close = page.getByRole("button", { name: /^(Close navigation|关闭导航)$/ });
+  const drawer = page.getByRole("dialog", { name: /^(Sections|分区)$/ });
+  await expect(drawer).toBeVisible();
+  const close = drawer.getByRole("button", { name: /^(Close navigation|关闭导航)$/ });
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(menu).toHaveAttribute("aria-expanded", "false");
   await expect(menu).toBeFocused();
   await menu.click();
   await expect(close).toBeFocused();
