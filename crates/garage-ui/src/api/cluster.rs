@@ -519,10 +519,7 @@ async fn worker_node(app: &App, response: Response, id: &str) -> Result<Response
         .map_err(|_| ApiError::internal())?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| ApiError::internal())?;
     if id == "*" {
-        let Some(success) = value.get("success") else {
-            return Err(ApiError::internal());
-        };
-        return Ok(Json(success.clone()).into_response());
+        return super::workers::all_node_body(value);
     }
     if let Some(node) = value
         .get("success")

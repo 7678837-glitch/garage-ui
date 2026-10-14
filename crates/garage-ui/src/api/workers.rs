@@ -115,10 +115,7 @@ async fn node_body(app: &App, response: Response, id: &str) -> Result<Response, 
         .map_err(|_| ApiError::internal())?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| ApiError::internal())?;
     if id == "*" {
-        let Some(success) = value.get("success") else {
-            return Err(ApiError::internal());
-        };
-        return Ok(Json(success.clone()).into_response());
+        return all_node_body(value);
     }
     if let Some(node) = value
         .get("success")
@@ -140,6 +137,43 @@ async fn node_body(app: &App, response: Response, id: &str) -> Result<Response, 
             .into_response());
     }
     Err(ApiError::internal())
+}
+
+pub(super) fn all_node_body(value: Value) -> Result<Response, ApiError> {
+    let success = value
+        .get("success")
+        .and_then(Value::as_object)
+        .ok_or_else(ApiError::internal)?;
+    let errors = value
+        .get("error")
+        .and_then(Value::as_object)
+        .ok_or_else(ApiError::internal)?;
+    if errors.is_empty() {
+        return Ok(Json(value["success"].clone()).into_response());
+    }
+    let code = if success.is_empty() {
+        "garage_error"
+    } else {
+        "garage_partial_failure"
+    };
+    let succeeded = success.len();
+    let failed = errors.len();
+    let succeeded_noun = if succeeded == 1 { "node" } else { "nodes" };
+    let failed_noun = if failed == 1 { "node" } else { "nodes" };
+    let node_ids = errors.keys().cloned().collect::<Vec<_>>().join(", ");
+    let message = format!(
+        "{succeeded} {succeeded_noun} succeeded; {failed} {failed_noun} failed: {node_ids}. Successful nodes may have applied the operation. Check failed nodes before retrying. Do not automatically retry the whole operation."
+    );
+    Ok((
+        StatusCode::BAD_GATEWAY,
+        Json(json!({
+            "code": code,
+            "message": message,
+            "success": value["success"],
+            "error": value["error"],
+        })),
+    )
+        .into_response())
 }
 
 pub(crate) fn routes() -> Router<App> {

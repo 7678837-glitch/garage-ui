@@ -403,3 +403,66 @@
         }
         assert_eq!(mock.hits(), 0);
     }
+
+    #[tokio::test]
+    async fn all_node_workers_preserve_node_outcomes() {
+        for (success, error, code) in [
+            (json!({ "n1": [] }), json!({}), None),
+            (
+                json!({ "n1": [] }),
+                json!({ "n2": "rpc timeout" }),
+                Some("garage_partial_failure"),
+            ),
+            (
+                json!({}),
+                json!({ "n2": "rpc timeout", "n3": "unreachable" }),
+                Some("garage_error"),
+            ),
+        ] {
+            let mock = Upstream::start(UpstreamReply::Ok(
+                json!({ "success": success, "error": error }).to_string(),
+            ))
+            .await;
+            let dir = crate::util::temp_dir();
+            let app = app_for(&dir, &mock.url).await;
+            let (admin, _) = login(&app).await;
+            let request = request("GET", "/api/nodes/%2A/workers", None, Some(&admin));
+            let response = exchange(&app, request).await;
+            let received: Value = serde_json::from_str(&response.body).unwrap();
+            if let Some(code) = code {
+                assert_eq!(
+                    response.status,
+                    StatusCode::BAD_GATEWAY,
+                    "{}",
+                    response.body
+                );
+                assert_eq!(received["code"], code);
+                assert_eq!(received["success"], success);
+                assert_eq!(received["error"], error);
+                let message = received["message"].as_str().unwrap();
+                assert!(message.contains("n2"), "{message}");
+                assert!(
+                    message.contains("1 node failed") || message.contains("2 nodes failed"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("1 node succeeded") || message.contains("0 nodes succeeded"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("Successful nodes may have applied the operation"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("Do not automatically retry the whole operation"),
+                    "{message}"
+                );
+                if error.get("n3").is_some() {
+                    assert!(message.contains("n3"), "{message}");
+                }
+            } else {
+                assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+                assert_eq!(received, success);
+            }
+        }
+    }

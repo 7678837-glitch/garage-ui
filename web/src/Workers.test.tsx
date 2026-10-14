@@ -650,8 +650,8 @@ const workerRow = {
   progress: "1/4",
 };
 
-function renderWorkers() {
-  window.location.hash = "#workers/n1";
+function renderWorkers(nodeId = "n1") {
+  window.location.hash = `#workers/${nodeId}`;
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -954,4 +954,44 @@ test("a pending repair cannot be dismissed or submitted twice", async () => {
   release(json(null));
   await screen.findByText("Repair started.");
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+const partialNodeWarning = "1 node succeeded; 1 node failed: n2. Successful nodes may have applied the operation. Check failed nodes before retrying. Do not automatically retry the whole operation.";
+const partialNodeResponse = {
+  code: "garage_partial_failure",
+  message: partialNodeWarning,
+  success: { n1: null },
+  error: { n2: "rpc timeout" },
+};
+
+test("all-node list failure displays the partial warning instead of an empty healthy list", async () => {
+  const fetchMock = vi.fn(async () => json({ ...partialNodeResponse, success: { n1: [] } }, 502));
+  vi.stubGlobal("fetch", fetchMock);
+  renderWorkers("*");
+  expect(await screen.findByText(partialNodeWarning)).toBeTruthy();
+  expect(screen.getByText("garage_partial_failure")).toBeTruthy();
+  expect(screen.queryByText("There are no workers.")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("all-node repair partial failure keeps the confirmation open and never reports completion", async () => {
+  let repairs = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/repair")) {
+      repairs += 1;
+      return json(partialNodeResponse, 502);
+    }
+    return json({ n1: [workerRow] });
+  }));
+  renderWorkers("*");
+  await screen.findByText("block_resync");
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+  fireEvent.change(screen.getByLabelText("Type * to confirm"), { target: { value: "*" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  const confirmation = screen.getByRole("dialog", { name: "Confirm *" });
+  await waitFor(() => expect(confirmation.textContent).toContain(partialNodeWarning));
+  expect(screen.queryByText("Repair started.")).toBeNull();
+  expect(screen.getByRole("dialog", { name: "Confirm *" })).toBe(confirmation);
+  expect(repairs).toBe(1);
 });
