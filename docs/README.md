@@ -1,4 +1,10 @@
-# Working spec
+# Documentation
+
+## User guide
+
+Start with the [Garage UI user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior.
+
+## Working specifications
 
 This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. The original text stays. When the two sides conflict, this directory wins.
 
