@@ -27,3 +27,17 @@ export async function chooseTheme(page: Page, theme: "Light" | "Dark"): Promise<
 export async function openUpload(scope: Locator): Promise<void> {
   await openDisclosure(scope.locator("details > summary").filter({ hasText: /^Upload/ }));
 }
+
+export async function openAccount(page: Page): Promise<void> {
+  const logout = page.getByRole("button", { name: "Log out", exact: true, includeHidden: true });
+  const account = page.locator("details").filter({ has: logout });
+  await expect(account).toHaveCount(1);
+  await openDisclosure(account.locator("summary"));
+  await expect(logout).toBeVisible();
+}
+
+export async function assertAuthenticated(page: Page): Promise<void> {
+  await openAccount(page);
+  await expect(page.getByRole("button", { name: "Log out", exact: true })).toBeEnabled();
+  await page.locator("details").filter({ has: page.getByRole("button", { name: "Log out", exact: true, includeHidden: true }) }).locator("summary").click();
+}

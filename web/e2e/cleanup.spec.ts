@@ -1,4 +1,4 @@
-import { openDisclosure, openNavigation } from "./interactions";
+import { assertAuthenticated, openDisclosure, openNavigation } from "./interactions";
 import { createHash, createHmac, type BinaryLike } from "node:crypto";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
@@ -125,7 +125,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function createBucket(page: Page, alias: string): Promise<string> {

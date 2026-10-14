@@ -1,3 +1,4 @@
+import { assertAuthenticated, openAccount } from "./interactions";
 import { expect, type Page, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { assertWidth, recordLayout } from "./layout";
@@ -23,7 +24,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function expectSections(page: Page, visible: boolean): Promise<void> {
@@ -68,6 +69,7 @@ test("logs in, collapses the narrow menu, and opens objects", async ({ page }) =
   await recordLayout(page, "about");
 
   await sections(page).getByRole("link", { name: "Overview", exact: true }).click();
+  await openAccount(page);
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
   await recordLayout(page, "logged-out");

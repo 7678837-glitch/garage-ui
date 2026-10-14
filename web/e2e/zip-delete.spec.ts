@@ -1,4 +1,4 @@
-import { openNavigation, openDisclosure, openUpload } from "./interactions";
+import { assertAuthenticated, openDisclosure, openNavigation, openUpload } from "./interactions";
 import { execFileSync } from "node:child_process";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -169,7 +169,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function createKey(page: Page, name: string): Promise<string> {

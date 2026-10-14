@@ -1,4 +1,4 @@
-import { openDisclosure, openNavigation, openUpload } from "./interactions";
+import { assertAuthenticated, openDisclosure, openNavigation, openUpload } from "./interactions";
 import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -422,7 +422,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function createBucket(page: Page, alias: string): Promise<string> {
@@ -447,7 +447,7 @@ async function createBucket(page: Page, alias: string): Promise<string> {
       await more.click();
     } else {
       await page.reload();
-      await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+      await assertAuthenticated(page);
       await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Buckets", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
     }

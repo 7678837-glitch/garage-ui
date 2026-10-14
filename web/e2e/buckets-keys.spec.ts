@@ -1,4 +1,4 @@
-import { chooseTheme, openDisclosure } from "./interactions";
+import { assertAuthenticated, chooseTheme, openDisclosure } from "./interactions";
 import { expect, type Locator, type Page, type Request, test } from "@playwright/test";
 import { administrator } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
@@ -201,7 +201,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function openList(page: Page, name: "Buckets" | "Keys"): Promise<void> {

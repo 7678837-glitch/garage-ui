@@ -1,4 +1,4 @@
-import { chooseTheme, openDisclosure } from "./interactions";
+import { assertAuthenticated, chooseTheme, openAccount, openDisclosure } from "./interactions";
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { evidenceDir, recordLayout } from "./layout";
@@ -29,11 +29,12 @@ async function logIn(page: Page, username: string, password: string): Promise<vo
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function logOut(page: Page): Promise<void> {
   await sections(page).getByRole("link", { name: "Overview", exact: true }).click();
+  await openAccount(page);
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
 }

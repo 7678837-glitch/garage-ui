@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { administrator } from "./accounts";
 import { evidenceDir, assertWidth } from "./layout";
-import { chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
+import { assertAuthenticated, chooseTheme, openDisclosure, openNavigation, openUpload } from "./interactions";
 
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 const sections = ["Overview", "Buckets", "Keys", "Nodes and layout", "Workers", "Block errors", "Audit", "Admin tokens", "Users", "Settings"] as const;
@@ -38,7 +38,7 @@ for (const width of [1280, 360]) {
       await page.getByLabel("Username").fill(administrator.username);
       await page.getByLabel("Password").fill(administrator.password);
       await page.getByRole("button", { name: "Log in" }).click();
-      await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+      await assertAuthenticated(page);
       await chooseTheme(page, theme);
       mkdirSync(evidenceDir, { recursive: true });
       const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "garage_csrf")?.value ?? "";
@@ -246,11 +246,16 @@ for (const width of [1280, 360]) {
         for (const switchedWidth of [768, 1280, 1440]) {
           await page.setViewportSize({ width: switchedWidth, height: 800 });
           await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
-          await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toHaveCount(0);
+          if (switchedWidth < 900) await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toBeVisible();
+          else await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toHaveCount(0);
           await expect.poll(() => new URL(page.url()).hash).toBe(resizeHash);
           await assertWidth(page, `redesign-resize-open-${theme.toLowerCase()}`, switchedWidth);
         }
         await page.setViewportSize({ width: 360, height: 800 });
+        await expect(menu).toHaveAttribute("aria-expanded", "false");
+        await expect(page.getByRole("dialog", { name: "Sections", exact: true })).toHaveCount(0);
+        await menu.focus();
+        await page.keyboard.press("Enter");
         await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
         await expect(menu).toHaveAttribute("aria-expanded", "true");
         await page.keyboard.press("Escape");
@@ -301,7 +306,7 @@ test("creation stays collapsed and long object prefix remains usable", async ({ 
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
   await navigate(page, "Buckets");
   const create = page.getByRole("button", { name: "Create bucket", exact: true });
   await expect(create).not.toBeVisible();

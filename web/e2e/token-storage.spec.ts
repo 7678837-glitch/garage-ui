@@ -1,3 +1,4 @@
+import { assertAuthenticated, openAccount } from "./interactions";
 import { expect, type Page, type Response, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -80,6 +81,7 @@ test("checks storage and response bodies for the admin token and the session id"
   await page.setViewportSize({ width: 1280, height: 800 });
   await sections(page).getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Cluster health" })).toBeVisible();
+  await openAccount(page);
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
   await settle(pending);
@@ -136,7 +138,7 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel("Username").fill(administrator.username);
   await page.getByLabel("Password").fill(administrator.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
   await expect(page.getByRole("heading", { name: "Cluster health" })).toBeVisible();
   await expect(page.getByText("Known nodes", { exact: true })).toBeVisible();
 }

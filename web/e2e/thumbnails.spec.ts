@@ -1,4 +1,4 @@
-import { openDisclosure, openNavigation } from "./interactions";
+import { assertAuthenticated, openAccount, openDisclosure, openNavigation } from "./interactions";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { administrator, readOnlyUser } from "./accounts";
 import { assertWidth } from "./layout";
@@ -140,11 +140,12 @@ async function logIn(page: Page, username: string, password: string): Promise<vo
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await assertAuthenticated(page);
 }
 
 async function logOut(page: Page): Promise<void> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Overview", exact: true }).click();
+  await openAccount(page);
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
 }
@@ -265,9 +266,10 @@ async function release(page: Page, alias: string, bucketId: string, keyId: strin
     return;
   }
   await page.goto("/").catch(() => undefined);
-  const logout = page.getByRole("button", { name: "Log out" });
-  if (await logout.isVisible().catch(() => false)) {
-    await logout.click().catch(() => undefined);
+  const logout = page.getByRole("button", { name: "Log out", includeHidden: true });
+  if (await logout.count() > 0) {
+    await openAccount(page);
+    await logout.click();
   }
   const username = page.getByLabel("Username");
   if (await username.isVisible().catch(() => false)) {
@@ -275,9 +277,7 @@ async function release(page: Page, alias: string, bucketId: string, keyId: strin
     await page.getByLabel("Password").fill(administrator.password);
     await page.getByRole("button", { name: "Log in" }).click();
   }
-  if (!(await page.getByRole("button", { name: "Log out" }).isVisible().catch(() => false))) {
-    return;
-  }
+  await expect(page.getByRole("button", { name: "Log out", includeHidden: true }), "fixture cleanup requires an authenticated administrator").toHaveCount(1);
   const headers = await csrfHeader(page);
   if (bucketId.length > 0) {
     for (const prefix of ["pix/", "bad/"]) {
