@@ -42,7 +42,9 @@ Metrics have their own token and unavailable notice. Repair the metrics configur
 
 Verify `S3_ENDPOINT_URL` and `S3_REGION` against Garage's S3 configuration. Explicit settings are necessary for v2.3.0 and v2.4.1. The S3 endpoint must be reachable by the UI process, not merely by your browser.
 
-Choose a **Bucket key** when prompted, or check the configured project-wide S3 key. Verify Read/Write grants for that bucket. A project-wide key overrides a per-bucket choice. An admin token is not an S3 credential.
+Choose a **Bucket key** when prompted, or check the configured project-wide S3 key. Verify Read/Write grants for that bucket. A project-wide key overrides a per-bucket choice. An admin token is not an S3 credential. After restoring an unavailable Garage Admin API, retry the object operation in the same UI process: failed S3 discovery probes are not retained until restart. Explicit endpoint/region settings still take precedence.
+
+A pending upload or read releases the shared credential-cache lock before network I/O, allowing other buckets and permission changes to proceed. If a key is revoked or replaced during a request, that request cannot restore its stale credential on a forbidden retry. Check current grants and retry with the intended key. This does not cancel an operation Garage has already accepted.
 
 ## Preview, download, share, or upload fails
 
@@ -51,12 +53,16 @@ Choose a **Bucket key** when prompted, or check the configured project-wide S3 k
 | Preview/download missing for a viewer | The viewer needs Download permission; unsupported content types are not inline previews |
 | Share unavailable | Viewer needs both Download and Share; server needs a public S3 endpoint |
 | Share link cannot open | Use a recipient-reachable public S3 hostname, the correct region, and an unexpired link |
-| ZIP link fails | Prepare a new ZIP link; tokens are short-lived, single-use, and session-user-bound |
+| ZIP link fails or its stream is interrupted | Check Garage/S3 connectivity and prepare a new ZIP link; discard an incomplete archive. Tokens are short-lived, single-use, and session-user-bound |
 | Upload fails | Check file limit, bucket quota, Write grants, connectivity, and queue destination; use Retry after fixing the cause |
 | Upload appears in another location | Individual-file keys use filenames; folder uploads use relative folder paths rather than the currently browsed prefix |
 | Deletion partially fails | Read remaining per-key errors and the refreshed list before retrying |
 
+Bucket/key catalog mutations invalidate cached pagination boundaries. Refreshing a boundary also discards later offsets; an older in-flight response cannot restore an invalidated cursor. Refresh the list after a change before relying on a later page.
+
 Size/time sorting and many list filters apply to loaded rows or the current page. Use pagination or load more; narrow an object search if it reports truncation.
+
+For a cluster-wide partial failure, follow [Maintenance](Maintenance.md#handle-an-all-node-failure) before retrying successful nodes.
 
 ## Report a reproducible problem
 

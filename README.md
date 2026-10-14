@@ -109,6 +109,7 @@ Persist and back up `/data` in containers, or `DATA_DIR` when running the binary
 - [Contributing](CONTRIBUTING.md): local development, focused verification, and AI-assisted contributions.
 - [Requirements](docs/README.md): the working specification and acceptance targets. Requirements are not a record of completed verification.
 - [Roadmap](docs/roadmap.md): planned work.
+- [Nine audit fixes](evidence/nine-fixes/report.md): corrected behavior, focused regression evidence, and reproduction commands.
 
 Garage UI is under active development. GitHub Actions are disabled during development; an unpublished release draft and later source commits can have different verification results.
 

@@ -20,6 +20,8 @@ Select more than one object and choose **Download ZIP**. After the UI prepares t
 
 ZIPs contain the explicitly selected keys; there is no whole-prefix ZIP control in the current browser. ZIP links must be opened within 60 seconds and use single-use UI tokens tied to the signed-in user. If Garage cannot open a selected object, the archive can contain an `_errors.txt` entry listing unavailable keys; inspect it before treating the archive as complete. If a link has expired or was already consumed, prepare a new archive from the selection. These links are not public share links.
 
+A fatal error while reading an object body or writing/finalizing the ZIP fails the response stream instead of ending it as a complete archive. HTTP headers may already have reported 200 before the failure; a 200 status alone does not establish a complete download. Discard a partial archive, repair the upstream problem, and prepare a fresh link. Closing or canceling the download cancels its archive producer and pending S3 work.
+
 ## Share one object
 
 The operator must configure a browser-reachable `S3_PUBLIC_ENDPOINT_URL` first.

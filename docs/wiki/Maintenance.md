@@ -35,3 +35,9 @@ Use **Retry** for one block or **Retry all** for the displayed node's resync wor
 In **Nodes and layout**, choose **Snapshot metadata** for a node or **Snapshot every node** for the cluster. Review the confirmation. **Metadata snapshot started** confirms the request was accepted; the UI does not download the snapshot to your browser.
 
 Snapshots belong to Garage's metadata backup workflow. They do not back up the UI's SQLite state or replace an object-data backup. See [Deployment](Deployment.md#back-up-and-restore-ui-state) for UI backups.
+
+## Handle an all-node failure
+
+All-node worker and repair requests preserve each node outcome. When every node succeeds, the response remains the node-keyed success map. Mixed outcomes return HTTP 502 with `garage_partial_failure`; an all-failed outcome returns HTTP 502 with `garage_error`. Both error responses retain the `success` and `error` node maps and identify failed nodes in the message.
+
+Successful nodes may already have applied a mutation even though the overall request failed. Inspect those nodes and the failed-node details before retrying. Do not blindly rerun a repair, variable change, or other mutation across the whole cluster. Select the failed node where the control permits it, and check current worker state before acting.

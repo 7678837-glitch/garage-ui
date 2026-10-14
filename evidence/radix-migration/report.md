@@ -70,9 +70,9 @@ All six runs rendered 100 rows, made one request to the measured list, made no p
 
 This was a local loopback test; it does not measure remote-network latency or physical-phone performance. Receipts: `results.json`, `counts.json`, and `performance-measure-final.log`; measurement script revision: `c473e9b`. The owned performance fixture containers and volumes were cleaned up and their final inventories were empty (`performance-cleanup-final.log`).
 
-## Remaining recommendations
+## Recommendations at the time of the migration
 
-These nine existing source-audit recommendations remain open; this migration does not establish a defect-free repository. They were not freshly reproduced at runtime here.
+These nine source-audit recommendations were open at the October 14 migration checkpoint. Subsequent source fixes through `e4d8919` address them; see the [nine-fix behavior and verification report](../nine-fixes/report.md) for current evidence and remaining verification limits. The migration results above describe their original build and are not validation of those later fixes.
 
 | Priority | Finding | Follow-up |
 |---|---|---|
