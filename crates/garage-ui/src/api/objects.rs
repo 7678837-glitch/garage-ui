@@ -1168,7 +1168,11 @@ mod tests {
             tx.try_push(chunk.clone()).is_err(),
             "extra chunk was accepted"
         );
-        let taken = rx.recv().await.expect("queued chunk").expect("archive bytes");
+        let taken = rx
+            .recv()
+            .await
+            .expect("queued chunk")
+            .expect("archive bytes");
         assert_eq!(taken.len(), chunk.len());
         assert!(tx.try_push(chunk).is_ok());
     }

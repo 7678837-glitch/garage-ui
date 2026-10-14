@@ -24,10 +24,10 @@ fn main() {
             println!("cargo:rerun-if-changed={}", repo.join(path).display());
         }
     }
-    if let Some(reference) = git_output(&repo, &["symbolic-ref", "--quiet", "HEAD"]) {
-        if let Some(path) = git_output(&repo, &["rev-parse", "--git-path", &reference]) {
-            println!("cargo:rerun-if-changed={}", repo.join(path).display());
-        }
+    if let Some(reference) = git_output(&repo, &["symbolic-ref", "--quiet", "HEAD"])
+        && let Some(path) = git_output(&repo, &["rev-parse", "--git-path", &reference])
+    {
+        println!("cargo:rerun-if-changed={}", repo.join(path).display());
     }
     let commit = match std::env::var("GIT_COMMIT") {
         Ok(value) if value == "unknown" || valid_commit(&value) => value,
