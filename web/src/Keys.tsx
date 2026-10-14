@@ -1,5 +1,6 @@
+import { Button, Checkbox, Dialog, Select, Table, TextField } from "@radix-ui/themes";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
@@ -196,29 +197,28 @@ function KeyBuckets({ keyId }: { keyId: string }) {
         <>
           <p>{failure.message}</p>
           {failure.code ? <p>{failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void buckets.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {buckets.data && rows.length === 0 ? <p>{copy("ui.this.key.cannot.access.any.buckets")}</p> : null}
       {rows.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={copy("nav.buckets")} tabIndex={0}>
-          <table className="ui-table ui-table-records" role="table"><thead><tr>
-            <th scope="col">{copy("ui.bucket")}</th><th scope="col">{copy("ui.aliases")}</th>
-            <th scope="col">{copy("ui.owner.2")}</th><th scope="col">{copy("ui.read.2")}</th><th scope="col">{copy("ui.write.2")}</th>
-          </tr></thead><tbody>{rows.map((bucket, index) => (
-            <tr key={`${bucket.id}-${index}`} role="row" aria-label={bucket.id}>
+          <Table.Root className="ui-table-records"><Table.Header><Table.Row>
+            <Table.ColumnHeaderCell scope="col">{copy("ui.bucket")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell scope="col">{copy("ui.aliases")}</Table.ColumnHeaderCell>
+            <Table.ColumnHeaderCell scope="col">{copy("ui.owner.2")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell scope="col">{copy("ui.read.2")}</Table.ColumnHeaderCell><Table.ColumnHeaderCell scope="col">{copy("ui.write.2")}</Table.ColumnHeaderCell>
+          </Table.Row></Table.Header><Table.Body>{rows.map((bucket, index) => (
+            <Table.Row key={`${bucket.id}-${index}`} role="row" aria-label={bucket.id}>
               <DataCell label={copy("ui.bucket")} kind="identity" className="ui-identifier">{bucket.id}</DataCell><DataCell label={copy("ui.aliases")}>{[...bucket.globalAliases, ...bucket.localAliases].map((alias, aliasIndex) => <span className="mr-2" key={aliasIndex}>{alias}</span>)}</DataCell>
               <DataCell label={copy("ui.owner.2")}>{fill(copy("ui.owner"), { flag: yesNo(bucket.owner) })}</DataCell>
               <DataCell label={copy("ui.read.2")}>{fill(copy("ui.read"), { flag: yesNo(bucket.read) })}</DataCell><DataCell label={copy("ui.write.2")}>{fill(copy("ui.write"), { flag: yesNo(bucket.write) })}</DataCell>
-            </tr>
-          ))}</tbody></table>
+            </Table.Row>
+          ))}</Table.Body></Table.Root>
         </div>
       ) : null}
     </div>
@@ -321,18 +321,9 @@ async function copySecret(secret: string): Promise<"copied" | "select"> {
   }
 }
 
-function openDialog(dialog: HTMLDialogElement) {
-  if (typeof dialog.showModal === "function") {
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-    return;
-  }
-  dialog.setAttribute("open", "");
-}
-
-function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void }) {
+function CreateKeyForm({ open, onOpenChange, onSecret }: { open: boolean; onOpenChange: (open: boolean) => void; onSecret: (reveal: SecretReveal, trigger: HTMLButtonElement | null) => void }) {
   const client = useQueryClient();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [name, setName] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const create = useMutation({
@@ -343,7 +334,8 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
       });
       const secret = secretFrom(body);
       if (secret) {
-        onSecret({ keyId: createdKeyId(body, next), secret });
+        onOpenChange(false);
+        onSecret({ keyId: createdKeyId(body, next), secret }, triggerRef.current);
       }
     },
     onMutate: () => {
@@ -357,17 +349,20 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
   });
   const error = create.error instanceof Error ? create.error.message : null;
   return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!create.isPending) onOpenChange(next); }}>
+      <Dialog.Trigger><Button ref={triggerRef} size="2" variant="solid" color="orange" type="button">{copy("common.create")}</Button></Dialog.Trigger>
+      <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (create.isPending) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+      <Dialog.Title>{copy("ui.create.key")}</Dialog.Title>
     <form
       className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
-        create.mutate(name);
+        if (!create.isPending) create.mutate(name);
       }}
     >
       <label className="ui-field">
         <span className="text-sm">{copy("ui.key.name")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           value={name}
           onChange={(event) => {
             setName(event.target.value);
@@ -376,19 +371,22 @@ function CreateKeyForm({ onSecret }: { onSecret: (reveal: SecretReveal) => void 
       </label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {note ? <p>{note}</p> : null}
-      <button
-        className="ui-button"
+      <Button size="2" variant="solid" color="orange"
         type="submit"
         disabled={create.isPending}
       >
         {create.isPending ? copy("ui.creating.key") : copy("ui.create.key")}
-      </button>
+      </Button>
+      <Button size="2" variant="soft" color="gray" type="button" disabled={create.isPending} onClick={() => { setName(""); create.reset(); onOpenChange(false); }}>{copy("ui.cancel")}</Button>
     </form>
+    </Dialog.Content></Dialog.Root>
   );
 }
 
-function RenameKey({ id, name }: { id: string; name: string | null }) {
+function RenameKey({ id, name, allowed }: { id: string; name: string | null; allowed?: boolean | null }) {
   const client = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [permissionPending, setPermissionPending] = useState(false);
   const currentName = name ?? "";
   const [baseline, setBaseline] = useState(currentName);
   const [draft, setDraft] = useState(currentName);
@@ -413,17 +411,21 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
     copy("ui.key.renamed"),
   );
   return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!rename.isPending && !permissionPending) setOpen(next); }}>
+      <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")} (${id})`}>{copy("ui.edit")}</Button></Dialog.Trigger>
+      <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (rename.isPending || permissionPending) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+      <Dialog.Title>{copy("ui.name")}</Dialog.Title>
+      <p className="ui-identifier">{id}</p>
     <form
       className="ui-form"
       onSubmit={(event) => {
         event.preventDefault();
-        rename.mutate(draft);
+        if (!rename.isPending && !permissionPending) rename.mutate(draft);
       }}
     >
       <label className="ui-field">
         <span className="text-sm">{copy("ui.name")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           aria-label={fill(copy("ui.name.for"), { id })}
           value={draft}
           onChange={(event) => {
@@ -433,21 +435,22 @@ function RenameKey({ id, name }: { id: string; name: string | null }) {
       </label>
       {error ? <p className="ui-alert">{error}</p> : null}
       {renameStatus ? <p>{renameStatus}</p> : null}
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2" variant="solid" color="orange"
         type="submit"
         aria-label={`${translate("Save name")} (${id})`}
         disabled={rename.isPending}
       >
         {translate("Save name")}
-      </button>
+      </Button>
     </form>
+      {allowed !== undefined ? <CreateBucketSwitch id={id} allowed={allowed} onPendingChange={setPermissionPending} /> : null}
+      <Button size="2" variant="soft" color="gray" type="button" disabled={rename.isPending || permissionPending} onClick={() => setOpen(false)}>{translate("Close")}</Button>
+    </Dialog.Content></Dialog.Root>
   );
 }
 
-function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | null }) {
+function CreateBucketSwitch({ id, allowed, onPendingChange }: { id: string; allowed: boolean | null; onPendingChange?: (pending: boolean) => void }) {
   const client = useQueryClient();
-  const inputRef = useRef<HTMLInputElement>(null);
   const [chosen, setChosen] = useState<boolean | null>(null);
   const shown = chosen ?? allowed;
   const change = useMutation({
@@ -462,24 +465,18 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
       await client.invalidateQueries({ queryKey: ["keys"] });
     },
   });
-  useLayoutEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.indeterminate = shown === null;
-    }
-  }, [shown]);
+  useEffect(() => { onPendingChange?.(change.isPending); }, [change.isPending, onPendingChange]);
   const error = change.error instanceof Error ? change.error.message : null;
   return (
     <div>
       <label className="ui-checkbox-field">
-        <input
-          ref={inputRef}
-          className="mr-2"
-          type="checkbox"
+        <Checkbox size="2"
+
           aria-label={`${translate("Allow bucket creation")} (${id})`}
-          checked={shown === true}
+          checked={shown === null ? "indeterminate" : shown}
           disabled={change.isPending}
-          onChange={(event) => {
-            change.mutate(event.target.checked);
+          onCheckedChange={(checked) => {
+            change.mutate((checked === true));
           }}
         />
         {translate("Allow bucket creation")}</label>
@@ -490,81 +487,33 @@ function CreateBucketSwitch({ id, allowed }: { id: string; allowed: boolean | nu
   );
 }
 
-function SecretDialog({ reveal, onClose }: { reveal: SecretReveal; onClose: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+function SecretDialog({ reveal, onClose, returnFocus }: { reveal: SecretReveal; onClose: () => void; returnFocus: HTMLButtonElement | null }) {
   const copyRef = useRef<HTMLButtonElement>(null);
   const [visible, setVisible] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    openDialog(dialog);
-    copyRef.current?.focus();
-  }, [reveal]);
   return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby="key-secret-title"
-      className="border border-ink bg-canvas p-4 text-ink"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onClose();
-        }
-      }}
-    >
-      <h3 id="key-secret-title" className="font-medium">
-        {fill(copy("ui.secret.for"), { keyId: reveal.keyId })}</h3>
-      <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
-      <label className="ui-field">
-        <span className="text-sm">{copy("ui.secret.access.key")}</span>
-        <input
-          className="ui-input"
-          readOnly
-          autoComplete="off"
-          type={visible ? "text" : "password"}
-          value={reveal.secret}
-        />
-      </label>
-      <button
-        className="ui-button"
-        type="button"
-        onClick={() => {
-          setVisible(true);
-        }}
-      >
-        {copy("ui.show.secret")}</button>
-      <button
-        ref={copyRef}
-        className="ui-button"
-        type="button"
-        onClick={() => {
-          void copySecret(reveal.secret).then((result) => {
-            if (result === "copied") {
-              setFeedback(copy("ui.copied"));
-              return;
-            }
-            setVisible(true);
-            setFeedback(copy("ui.select.the.secret.and.copy.it"));
-          });
-        }}
-      >
-        {copy("ui.copy.secret")}</button>
-      {feedback ? <p>{feedback}</p> : null}
-      <button
-        className="ui-button"
-        type="button"
-        onClick={onClose}
-      >
-        {copy("ui.i.have.saved.it")}</button>
-    </dialog>
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Content maxWidth="480px" onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus(); }} onOpenAutoFocus={(event) => { event.preventDefault(); copyRef.current?.focus(); }}>
+        <Dialog.Title>{fill(copy("ui.secret.for"), { keyId: reveal.keyId })}</Dialog.Title>
+        <Dialog.Description>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</Dialog.Description>
+        <label className="ui-field">
+          <span>{copy("ui.secret.access.key")}</span>
+          <TextField.Root size="2" readOnly autoComplete="off" type={visible ? "text" : "password"} value={reveal.secret} />
+        </label>
+        <div className="ui-actions">
+          <Button size="2" variant="soft" color="gray" type="button" onClick={() => setVisible(true)}>{copy("ui.show.secret")}</Button>
+          <Button size="2" variant="soft" color="gray" type="button" ref={copyRef} onClick={() => {
+            void copySecret(reveal.secret).then((result) => {
+              if (result === "copied") { setFeedback(copy("ui.copied")); return; }
+              setVisible(true);
+              setFeedback(copy("ui.select.the.secret.and.copy.it"));
+            });
+          }}>{copy("ui.copy.secret")}</Button>
+          <Button size="2" variant="soft" color="gray" type="button" onClick={onClose}>{copy("ui.i.have.saved.it")}</Button>
+        </div>
+        {feedback ? <p role="status">{feedback}</p> : null}
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -658,6 +607,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const [creating, setCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
+  const secretTrigger = useRef<HTMLButtonElement | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [hash, assignHash] = useLocationHash();
   const goHash = (next: string) => {
@@ -734,7 +684,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
     <section className="ui-page" aria-label={copy("nav.keys")} aria-busy={view.busy}>
       {keyDetail === null ? <header className="ui-page-header">
         <h2>{copy("nav.keys")}</h2>
-        {canManage ? <button className="ui-button ui-button-primary" aria-expanded={creating} type="button" onClick={() => setCreating(!creating)}>{copy(creating ? "ui.cancel" : "common.create")}</button> : null}
+        {canManage ? <CreateKeyForm open={creating} onOpenChange={setCreating} onSecret={(secret, trigger) => { secretTrigger.current = trigger; setNotice(copy("ui.key.created")); setReveal(secret); }} /> : null}
       </header> : null}
       {keyDetail ? (
         <DetailTabs
@@ -751,7 +701,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div> : null}
           {["settings", "overview"].includes(keyDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
             <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
-            <button className="ui-button" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</button>
+            <Button size="2" variant="soft" color="gray" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</Button>
           </div> : null}
           {keyDetail.tab === "overview" && openedKey ? <div className="ui-panel">{openedKey.created ? <p>{openedKey.created}</p> : null}</div> : null}
           {keyDetail.tab === "buckets" ? <KeyBuckets keyId={keyDetail.id} /> : null}
@@ -764,17 +714,16 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                 <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
               </SettingsSection>
               <SettingsSection title={translate("Credentials")}>
-                <button className="ui-button" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={() => { viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{copy("ui.view.secret")}</button>
+                <Button size="2" variant="soft" color="gray" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={(event) => { secretTrigger.current = event.currentTarget; viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{copy("ui.view.secret")}</Button>
                 {viewError ? <p className="ui-alert">{viewError}</p> : null}
               </SettingsSection>
               <SettingsSection title={translate("Danger zone")} danger>
-                <button className="ui-button ui-button-danger" type="button" aria-label={`${translate("Delete key")} (${openedKey.id})`} onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{translate("Delete key")}</button>
+                <Button size="2" variant="solid" color="red" type="button" aria-label={`${translate("Delete key")} (${openedKey.id})`} onClick={() => { removeKey.reset(); setDeleteId(openedKey.id); }}>{translate("Delete key")}</Button>
               </SettingsSection>
             </div>
           ) : null}
         </DetailTabs>
       ) : null}
-      {keyDetail === null && canManage ? <div className="ui-panel" hidden={!creating}><CreateKeyForm onSecret={setReveal} /></div> : null}
       {keyDetail === null && view.busy ? (
         <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.keys")}>{copy("ui.loading.keys")}</div>
       ) : null}
@@ -783,22 +732,20 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void list.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {notice ? <p>{notice}</p> : null}
       {keyDetail === null ? (
       <div className="ui-toolbar ui-resource-filters">
         <label className="ui-field">
-          {copy("ui.filter.keys")}<input
-            className="ui-input"
+          {copy("ui.filter.keys")}<TextField.Root size="2"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -808,22 +755,21 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
           />
         </label>
         <label className="ui-field">
-          {copy("ui.sort.keys")}<select
-            className="ui-input"
+          {copy("ui.sort.keys")}<Select.Root size="2"
             value={query.sort}
-            onChange={(event) => {
+            onValueChange={(value) => {
               const next = {
                 filter: query.filter,
-                sort: keySortFrom(event.target.value),
+                sort: keySortFrom(value),
               };
               setQuery(next);
               writeKeyQuery(next);
             }}
-          >
-            <option value="id">Id</option>
-            <option value="name">{copy("ui.name")}</option>
-            <option value="created">{copy("ui.created")}</option>
-          </select>
+          ><Select.Trigger aria-label={copy("ui.sort.keys")} /><Select.Content>
+            <Select.Item value="id">Id</Select.Item>
+            <Select.Item value="name">{copy("ui.name")}</Select.Item>
+            <Select.Item value="created">{copy("ui.created")}</Select.Item>
+          </Select.Content></Select.Root>
         </label>
         <details className="ui-filter-help"><summary>{copy("ui.only.loaded.rows")}</summary><p className="ui-muted">{copy("ui.default.order.is.id")}</p></details>
       </div>
@@ -833,20 +779,20 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {keyDetail === null && list.data && shown.length > 0 ? (
         <div className="ui-table-container min-w-0" role="region" aria-label={copy("ui.key.2")} tabIndex={0}>
-          <table className="ui-table ui-table-records ui-key-list" role="table">
-            <thead>
-              <tr>
-                <th className="py-2 pr-3 font-medium" scope="col">
-                  {copy("ui.key.2")}</th>
+          <Table.Root className="ui-table-records ui-key-list">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeaderCell className="py-2 pr-3 font-medium" scope="col">
+                  {copy("ui.key.2")}</Table.ColumnHeaderCell>
                 {canManage ? (
-                  <th className="py-2 font-medium" scope="col">
-                    {copy("ui.actions")}</th>
+                  <Table.ColumnHeaderCell className="py-2 font-medium" scope="col">
+                    {copy("ui.actions")}</Table.ColumnHeaderCell>
                 ) : null}
-              </tr>
-            </thead>
-            <tbody>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {shown.map((accessKey, index) => (
-                <tr key={`${accessKey.id}-${index}`} role="row">
+                <Table.Row key={`${accessKey.id}-${index}`} role="row">
                   <DataCell label={copy("ui.key.2")} kind="identity">{accessKey.name ? <strong className="block">{accessKey.name}</strong> : null}<a className="ui-identifier ui-button-quiet" title={accessKey.id} aria-label={accessKey.id.length > 24 ? `${accessKey.id.slice(0, 8)}…${accessKey.id.slice(-6)} (${accessKey.id})` : accessKey.id}
                     href={hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })}
                     onClick={(event) => { event.preventDefault(); goHash(hashForDetail({ resource: "key", id: accessKey.id, tab: "overview" })); }}>
@@ -854,12 +800,12 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                   </a></DataCell>
                   {canManage ? (
                     <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide"><div className="ui-actions">
-                      <button
-                        className="ui-button"
+                      <Button size="2" variant="soft" color="gray"
                         type="button"
                         aria-label={viewSecret.isPending && viewSecret.variables === accessKey.id ? copy("ui.reading.secret") : `${copy("ui.show.secret")} (${accessKey.id})`}
                         disabled={viewSecret.isPending && viewSecret.variables === accessKey.id}
-                        onClick={() => {
+                        onClick={(event) => {
+                          secretTrigger.current = event.currentTarget;
                           viewSecret.reset();
                           viewSecret.mutate(accessKey.id);
                         }}
@@ -867,46 +813,31 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                         {viewSecret.isPending && viewSecret.variables === accessKey.id
                           ? copy("ui.reading.secret")
                           : copy("ui.show.secret")}
-                      </button>
+                      </Button>
                       {viewSecret.variables === accessKey.id && viewError ? (
                         <p className="ui-alert">{viewError}</p>
                       ) : null}
-                      <details className="ui-disclosure">
-                        <summary aria-label={`${copy("ui.actions")} (${accessKey.id})`}>{copy("ui.actions")}</summary>
-                        <button
-                          className="ui-button"
-                          type="button"
-                          aria-label={fill(copy("ui.delete"), { id: accessKey.id })}
-                          onClick={() => {
-                            removeKey.reset();
-                            setDeleteId(accessKey.id);
-                          }}
-                        >
-                          {copy("ui.delete.2")}</button>
-                        {accessKey.id.length > 24 ? <p className="ui-identifier">{accessKey.id}</p> : null}
-                        <RenameKey id={accessKey.id} name={accessKey.name} />
-                        <CreateBucketSwitch id={accessKey.id} allowed={accessKey.createBucket} />
-                      </details>
+                      <RenameKey id={accessKey.id} name={accessKey.name} allowed={accessKey.createBucket} />
+                      <Button size="2" variant="solid" color="red" type="button" aria-label={fill(copy("ui.delete"), { id: accessKey.id })} onClick={() => { removeKey.reset(); setDeleteId(accessKey.id); }}>{copy("ui.delete.2")}</Button>
                     </div></DataCell>
                   ) : null}
-                </tr>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table.Root>
         </div>
       ) : null}
       {keyDetail === null && view.partial ? (
         <>
           <p>{copy("ui.more.keys.are.available")}</p>
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={list.isFetchingNextPage}
             onClick={() => {
               void list.fetchNextPage();
             }}
           >
-            {copy("ui.load.more")}</button>
+            {copy("ui.load.more")}</Button>
         </>
       ) : null}
       {deleteId !== null ? (
@@ -930,6 +861,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       {reveal !== null ? (
         <SecretDialog
           reveal={reveal}
+          returnFocus={secretTrigger.current}
           onClose={() => {
             setReveal(null);
             viewSecret.reset();

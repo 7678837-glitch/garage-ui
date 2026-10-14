@@ -1,3 +1,4 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -40,17 +41,18 @@ function isUserList(input: RequestInfo | URL, method: string): boolean {
   return method === "GET" && url.pathname === "/api/users";
 }
 
-function renderUsers(expandCreate = true) {
+function renderUsers(expandCreate = false) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <QueryClientProvider client={client}>
+    <Theme><QueryClientProvider client={client}>
       <Users selfUsername="Ada" />
-    </QueryClientProvider>,
+    </QueryClientProvider></Theme>,
   );
   if (expandCreate) {
-    fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
   }
   return client;
 }
@@ -169,14 +171,20 @@ const bea: Row = {
 
 async function shown(expandEditors = true) {
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
-  if (expandEditors) {
-    for (const row of screen.getAllByRole("row").slice(1)) {
-      fireEvent.click(within(row).getByText("Actions", { selector: "summary" }));
-      fireEvent.click(within(row).getByText("Edit", { selector: "summary" }));
-    }
-    fireEvent.click(screen.getByLabelText("Reset password for Bea", { selector: "summary" }));
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
+  if (expandEditors) fireEvent.click(screen.getByLabelText("Actions: Bea"));
+}
+
+function createForm() {
+  if (!screen.queryByRole("form", { name: "Create user" })) {
+    const close = screen.queryByRole("button", { name: "Close" });
+    if (close) fireEvent.click(close);
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }));
   }
+  return screen.getByRole("form", { name: "Create user" });
+}
+function editUser(username = "Bea") {
+  fireEvent.click(screen.getByLabelText(`Actions: ${username}`));
 }
 
 test("lists users and never renders a password hash", async () => {
@@ -190,32 +198,29 @@ test("lists users and never renders a password hash", async () => {
 test("locks delete, role, and disable on the signed-in user", async () => {
   const calls = installApi([ada, bea]);
   renderUsers();
-  await shown();
-  const role = screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLSelectElement;
-  const disabled = screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLInputElement;
+  await shown(false);
+  editUser("Ada");
+  const role = screen.getByRole("combobox", { name: "Role for Ada" }) as HTMLButtonElement;
+  const disabled = screen.getByRole("checkbox", { name: "Disabled for Ada" }) as HTMLButtonElement;
   const remove = screen.getByRole("button", { name: "Delete Ada" }) as HTMLButtonElement;
   const reset = screen.getByRole("button", { name: "Reset password for Ada" }) as HTMLButtonElement;
   expect(role.disabled).toBe(true);
   expect(disabled.disabled).toBe(true);
   expect(remove.disabled).toBe(true);
   expect(reset.disabled).toBe(true);
-  expect((screen.getByRole("combobox", { name: "Role for Bea" }) as HTMLSelectElement).disabled).toBe(
-    false,
-  );
   fireEvent.click(remove);
   fireEvent.click(disabled);
-  expect(calls.some((call) => call.init?.method === "DELETE" || call.init?.method === "PATCH")).toBe(
-    false,
-  );
+  expect(calls.some((call) => call.init?.method === "DELETE" || call.init?.method === "PATCH")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  editUser();
+  expect((screen.getByRole("combobox", { name: "Role for Bea" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 test("changes role, clears share when download turns off, and disables another user", async () => {
   const calls = installApi([ada, bea]);
   renderUsers();
   await shown();
-  fireEvent.change(screen.getByRole("combobox", { name: "Role for Bea" }), {
-    target: { value: "admin" },
-  });
+  selectValue(screen.getByRole("combobox", { name: "Role for Bea" }), "admin");
   await waitFor(() => {
     const patch = calls.find((call) => call.url === "/api/users/2" && call.init?.method === "PATCH");
     expect(JSON.parse(String(patch?.init?.body))).toEqual({
@@ -262,11 +267,9 @@ test("shows Saving while an account patch is pending and keeps the alert when it
   renderUsers();
   await shown();
   expect(screen.queryByText("Saving")).toBeNull();
-  fireEvent.change(screen.getByRole("combobox", { name: "Role for Bea" }), {
-    target: { value: "admin" },
-  });
+  selectValue(screen.getByRole("combobox", { name: "Role for Bea" }), "admin");
   expect(await screen.findByText("Saving")).toBeTruthy();
-  const role = screen.getByRole("combobox", { name: "Role for Bea" }) as HTMLSelectElement;
+  const role = screen.getByRole("combobox", { name: "Role for Bea" }) as HTMLButtonElement;
   const download = screen.getByRole("checkbox", { name: "Download for Bea" }) as HTMLInputElement;
   const share = screen.getByRole("checkbox", { name: "Share for Bea" }) as HTMLInputElement;
   const disabled = screen.getByRole("checkbox", { name: "Disabled for Bea" }) as HTMLInputElement;
@@ -274,7 +277,7 @@ test("shows Saving while an account patch is pending and keeps the alert when it
   expect(download.disabled).toBe(true);
   expect(share.disabled).toBe(true);
   expect(disabled.disabled).toBe(true);
-  expect(role.value).toBe("viewer");
+  expect(role.textContent).toBe("viewer");
   const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   const remove = screen.getByRole("button", { name: "Delete Bea" }) as HTMLButtonElement;
   expect(reset.textContent).toBe("Reset password");
@@ -293,7 +296,7 @@ test("shows Saving while an account patch is pending and keeps the alert when it
   await waitFor(() => {
     expect(screen.queryByText("Saving")).toBeNull();
   });
-  expect(role.value).toBe("viewer");
+  expect(role.textContent).toBe("viewer");
   expect(reset.textContent).toBe("Reset password");
   expect(remove.textContent).toBe("Delete");
 });
@@ -304,7 +307,7 @@ test("turns share off with download and refuses share while download is off", as
   await shown();
   const share = screen.getByRole("checkbox", { name: "Share for Bea" }) as HTMLInputElement;
   expect(share.disabled).toBe(true);
-  expect(share.checked).toBe(false);
+  expect(share.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(screen.getByRole("checkbox", { name: "Download for Bea" }));
   await waitFor(() => {
     const patch = calls.find((call) => call.url === "/api/users/2" && call.init?.method === "PATCH");
@@ -320,7 +323,7 @@ test("turns share off with download and refuses share while download is off", as
   fireEvent.click(screen.getByRole("checkbox", { name: "Share for Bea" }));
   await waitFor(() => {
     const box = screen.getByRole("checkbox", { name: "Share for Bea" }) as HTMLInputElement;
-    expect(box.checked).toBe(true);
+    expect(box.getAttribute("aria-checked")).toBe("true");
     const patch = calls.find((call) => {
       if (call.url !== "/api/users/2" || call.init?.method !== "PATCH") {
         return false;
@@ -345,7 +348,7 @@ test("turns share off with download and refuses share while download is off", as
   });
   await waitFor(() => {
     const box = screen.getByRole("checkbox", { name: "Share for Bea" }) as HTMLInputElement;
-    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-checked")).toBe("false");
     expect(box.disabled).toBe(true);
   });
 });
@@ -354,7 +357,7 @@ test("creates a user, deletes one, and resets a password with the csrf header", 
   const calls = installApi([ada, bea]);
   renderUsers();
   await shown();
-  const form = screen.getByRole("form", { name: "Create user" });
+  const form = createForm();
   fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "Cara" } });
   fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "correct horse" } });
   fireEvent.click(within(form).getByLabelText("Download"));
@@ -372,11 +375,13 @@ test("creates a user, deletes one, and resets a password with the csrf header", 
     expectAuthed(post as Call);
   });
   expect(await screen.findByText("Cara")).toBeTruthy();
-  const created = screen.getByRole("form", { name: "Create user" });
+  const created = createForm();
   expect(within(created).getByText("User created")).toBeTruthy();
   expect((within(created).getByLabelText("Username") as HTMLInputElement).value).toBe("");
   expect((within(created).getByLabelText("Password") as HTMLInputElement).value).toBe("");
 
+  fireEvent.click(within(created).getByRole("button", { name: "Cancel" }));
+  editUser();
   fireEvent.change(screen.getByLabelText("New password for Bea"), {
     target: { value: "brand new secret" },
   });
@@ -402,31 +407,31 @@ test("keeps share off on the create form unless download is on", async () => {
   installApi([ada]);
   renderUsers();
   expect(await screen.findByRole("heading", { name: "Users" })).toBeTruthy();
-  const form = screen.getByRole("form", { name: "Create user" });
+  const form = createForm();
   const download = within(form).getByLabelText("Download") as HTMLInputElement;
   const share = within(form).getByLabelText("Share") as HTMLInputElement;
   expect(share.disabled).toBe(true);
-  expect(share.checked).toBe(false);
+  expect(share.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(download);
   expect(share.disabled).toBe(false);
   fireEvent.click(share);
-  expect(share.checked).toBe(true);
+  expect(share.getAttribute("aria-checked")).toBe("true");
   fireEvent.click(download);
-  expect(download.checked).toBe(false);
-  expect(share.checked).toBe(false);
+  expect(download.getAttribute("aria-checked")).toBe("false");
+  expect(share.getAttribute("aria-checked")).toBe("false");
   expect(share.disabled).toBe(true);
-  fireEvent.change(within(form).getByLabelText("Role"), { target: { value: "admin" } });
+  selectValue(within(form).getByLabelText("Role"), "admin");
   expect(download.disabled).toBe(true);
   expect(share.disabled).toBe(true);
-  expect(download.checked).toBe(false);
-  expect(share.checked).toBe(false);
+  expect(download.getAttribute("aria-checked")).toBe("false");
+  expect(share.getAttribute("aria-checked")).toBe("false");
 });
 
 test("shows the error text when a request fails", async () => {
   const calls = installApi([ada, bea], true);
   renderUsers();
   await shown();
-  const form = screen.getByRole("form", { name: "Create user" });
+  const form = createForm();
   fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "Ada" } });
   fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "correct horse" } });
   fireEvent.click(within(form).getByRole("button", { name: "Create user" }));
@@ -435,6 +440,8 @@ test("shows the error text when a request fails", async () => {
   expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("correct horse");
   expect(within(form).queryByText("User created")).toBeNull();
 
+  fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+  editUser();
   fireEvent.change(screen.getByLabelText("New password for Bea"), { target: { value: "short" } });
   fireEvent.click(screen.getByRole("button", { name: "Reset password for Bea" }));
   expect(await screen.findByText("Password must be 10 to 72 characters and not blank")).toBeTruthy();
@@ -465,7 +472,7 @@ test("shows Loading users and marks the users section busy on the first load", a
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(screen.queryByText("Refreshing users")).toBeNull();
-  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create user" })).toBeTruthy();
   release(json(userPage([ada])));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Users" }).getAttribute("aria-busy")).toBe("false");
@@ -518,7 +525,7 @@ test("shows there are no users and keeps the create form", async () => {
   );
   expect(screen.getByText("There are no users. Create the first user.").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create user" })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
   expect(screen.queryByLabelText("Loading users")).toBeNull();
   expect(screen.queryByText("Loading users")).toBeNull();
@@ -551,7 +558,7 @@ test("shows the API code and requests the user list again from Retry", async () 
   expect(screen.getByText("upstream_failed").getAttribute("role")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
-  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create user" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
   expect(screen.queryByText("upstream_failed")).toBeNull();
@@ -605,7 +612,7 @@ test("sorts loaded users by created time and keeps the choice in the address", a
   ]);
   renderUsers();
   await screen.findByRole("cell", { name: "Zed" });
-  fireEvent.change(screen.getByLabelText("Sort users"), { target: { value: "created" } });
+  selectValue(screen.getByLabelText("Sort users"), "created");
   const names = screen
     .getAllByRole("row")
     .slice(1)
@@ -614,7 +621,7 @@ test("sorts loaded users by created time and keeps the choice in the address", a
   expect(window.location.search).toContain("usersSort=created");
   expect(window.location.search).toContain("keep=1");
   expect(window.location.hash).toBe("#users/stay");
-  expect((screen.getByLabelText("Sort users") as HTMLSelectElement).value).toBe("created");
+  expect(screen.getByLabelText("Sort users").textContent).toBe("Created");
 });
 
 test("filters loaded users from the query string and keeps that choice in the address", async () => {
@@ -628,7 +635,7 @@ test("filters loaded users from the query string and keeps that choice in the ad
     "Default order is Username.",
   );
   expect(screen.queryByText("Only loaded rows")).toBeNull();
-  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create user" })).toBeTruthy();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
   expect(window.location.hash).toBe("#users/stay");
   expect(window.location.search).toContain("users=bea");
@@ -647,7 +654,7 @@ test("filters loaded users from the query string and keeps that choice in the ad
 
   fireEvent.change(screen.getByLabelText("Filter users"), { target: { value: "" } });
   expect(screen.getByRole("cell", { name: "Ada" })).toBeTruthy();
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
   expect(window.location.search).toContain("keep=1");
   expect(window.location.search).toContain("usersSort=keep-me");
   expect(window.location.search).not.toContain("users=ADA");
@@ -659,14 +666,14 @@ test("filters loaded users from the query string and keeps that choice in the ad
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
   expect(screen.queryByRole("cell", { name: "Bea" })).toBeNull();
   expect(screen.queryByText("There are no users. Create the first user.")).toBeNull();
-  expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create user" })).toBeTruthy();
   expect(calls).toHaveLength(1);
 
   act(() => {
     window.history.pushState(null, "", "/?users=BEA&keep=1#users/stay");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "Ada" })).toBeNull();
   expect((screen.getByLabelText("Filter users") as HTMLInputElement).value).toBe("BEA");
   expect(window.location.hash).toBe("#users/stay");
@@ -694,7 +701,7 @@ test("shows Creating user while create is submitting, then User created", async 
   );
   renderUsers();
   expect(await screen.findByRole("cell", { name: "Ada" })).toBeTruthy();
-  const form = screen.getByRole("form", { name: "Create user" });
+  const form = createForm();
   fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "Cara" } });
   fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "correct horse" } });
   fireEvent.click(within(form).getByRole("button", { name: "Create user" }));
@@ -720,8 +727,8 @@ test("shows Creating user while create is submitting, then User created", async 
     ),
   );
   expect(await within(form).findByText("User created")).toBeTruthy();
-  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("");
-  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
   const idle = within(form).getByRole("button", { name: "Create user" }) as HTMLButtonElement;
   expect(idle.disabled).toBe(true);
   expect(idle.textContent).toBe("Create user");
@@ -772,7 +779,7 @@ test("shows Resetting password while reset is submitting, then Password reset", 
   const idle = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   expect(idle.disabled).toBe(true);
   expect(idle.textContent).toBe("Reset password");
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
 });
 
 test("keeps the typed password and alert when reset fails", async () => {
@@ -815,7 +822,7 @@ test("keeps the typed password and alert when reset fails", async () => {
   })) as HTMLButtonElement;
   expect(idle.disabled).toBe(false);
   expect(idle.textContent).toBe("Reset password");
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
 });
 
 test("shows Deleting while delete is submitting and keeps the row when it fails", async () => {
@@ -844,18 +851,18 @@ test("shows Deleting while delete is submitting and keeps the row when it fails"
   expect(pending.disabled).toBe(true);
   expect(pending.textContent).toBe("Deleting Bea");
   expect(screen.queryByRole("button", { name: "Delete Bea" })).toBeNull();
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
   const reset = screen.getByRole("button", { name: "Reset password for Bea" }) as HTMLButtonElement;
   expect(reset.disabled).toBe(true);
   expect(reset.textContent).toBe("Reset password");
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: /^Confirm/ })).toBeNull();
   release(json({ message: "The user still owns a bucket" }, 409));
   expect((await screen.findByRole("alert")).textContent).toBe("The user still owns a bucket");
-  expect(screen.getByRole("cell", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "Bea", hidden: true })).toBeTruthy();
   const idle = (await screen.findByRole("button", { name: "Delete Bea" })) as HTMLButtonElement;
   expect(idle.disabled).toBe(false);
   expect(idle.textContent).toBe("Delete");
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: /^Confirm/ })).toBeNull();
 });
 
 test("turns user pages by 100 and keeps the filter, sort, and hash", async () => {
@@ -936,16 +943,16 @@ test("opens user creation and password reset on demand while retaining reset dra
   installApi([ada, bea]);
   renderUsers(false);
   await shown(false);
-  expect(screen.getByRole("form", { name: "Create user" }).closest("details")?.open).toBe(false);
-  fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
+  expect(screen.queryByRole("form", { name: "Create user" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create user" }));
   expect(screen.getByRole("form", { name: "Create user" })).toBeTruthy();
-  expect(screen.getByLabelText("New password for Bea").closest("details")?.open).toBe(false);
-  const reset = screen.getByLabelText("Reset password for Bea", { selector: "summary" });
-  fireEvent.click(reset);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByLabelText("New password for Bea")).toBeNull();
+  editUser();
   fireEvent.change(screen.getByLabelText("New password for Bea"), { target: { value: "retained-password" } });
-  fireEvent.click(reset);
-  expect(reset.closest("details")?.open).toBe(false);
-  fireEvent.click(reset);
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.queryByLabelText("New password for Bea")).toBeNull();
+  editUser();
   expect((screen.getByLabelText("New password for Bea") as HTMLInputElement).value).toBe("retained-password");
 });
 
@@ -953,12 +960,11 @@ test("opens account permission controls on demand", async () => {
   installApi([ada, bea]);
   renderUsers(false);
   await shown(false);
-  const role = screen.getByRole("combobox", { name: "Role for Bea" });
-  expect(role.closest("details")?.open).toBe(false);
-  const row = screen.getByRole("row", { name: /Bea/ });
-  fireEvent.click(within(row).getByText("Edit", { selector: "summary" }));
-  expect(role.closest("details")?.open).toBe(true);
-  expect((screen.getByRole("checkbox", { name: "Download for Bea" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByRole("combobox", { name: "Role for Bea" })).toBeNull();
+  editUser();
+  expect(screen.getByRole("dialog", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Role for Bea" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Download for Bea" }).getAttribute("aria-checked")).toBe("true");
 });
 
 test("an empty later user page does not claim the repository is empty", async () => {
@@ -977,25 +983,33 @@ test("row actions contain the account editor and password reset controls", async
   await shown(false);
   const row = screen.getByRole("cell", { name: "Bea" }).closest("tr");
   if (!row) throw new Error("Missing user row");
-  const actions = within(row).getByText("Actions", { selector: "summary" });
+  const actions = within(row).getByRole("button", { name: "Actions: Bea" });
   expect(actions.getAttribute("aria-label")).toBe("Actions: Bea");
-  expect(actions.closest("details")?.open).toBe(false);
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(actions);
-  expect(actions.closest("details")?.open).toBe(true);
-  expect(within(row).getByText("Edit", { selector: "summary" })).toBeTruthy();
-  expect(within(row).getByLabelText("Reset password for Bea", { selector: "summary" })).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "Bea" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Role for Bea" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Reset password for Bea" })).toBeTruthy();
 });
 
-test("canceling user creation clears credentials and closes its disclosure", async () => {
+test("canceling user creation clears credentials and closes its dialog", async () => {
   installApi([ada, bea]);
   renderUsers();
   await shown(false);
-  const form = screen.getByRole("form", { name: "Create user" });
+  const form = createForm();
   fireEvent.change(within(form).getByLabelText("Username"), { target: { value: "discarded" } });
   fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "discarded-password" } });
   fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
-  expect(form.closest("details")?.open).toBe(false);
-  fireEvent.click(screen.getByText("Create user", { selector: "summary" }));
-  expect((within(form).getByLabelText("Username") as HTMLInputElement).value).toBe("");
-  expect((within(form).getByLabelText("Password") as HTMLInputElement).value).toBe("");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create user" }));
+  expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
 });
+
+function selectValue(trigger: HTMLElement, value: string) {
+  const labels: Record<string, string> = { admin: "Admin", viewer: "Viewer", name: "Name", created: "Created", id: "Id", username: "Username" };
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(`^${labels[value]}$`, "i") }));
+}
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });

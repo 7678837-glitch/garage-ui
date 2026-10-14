@@ -1,5 +1,6 @@
+import { Button, Checkbox, Dialog, Select, Table, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { copy, fill, translate } from "./i18n";
@@ -272,6 +273,7 @@ async function loadUsers(offset: number): Promise<UserPage> {
 
 function AccountRow({ account, self }: { account: Account; self: boolean }) {
   const client = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const shown = permissionBits(account.role, account.can_download, account.can_share);
@@ -318,91 +320,89 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
 
   return (
     <>
-      <tr role="row">
+      <Table.Row role="row">
         <DataCell label={copy("ui.username")} kind="identity"><strong>{account.username}</strong><span className="ui-user-mobile-summary" aria-hidden="true"><span>{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</span>{account.disabled ? <span className="text-danger">{copy("ui.disabled")}</span> : null}</span></DataCell>
         <DataCell label={copy("ui.role")} className="ui-user-role">{account.role === "admin" ? copy("ui.admin") : copy("ui.viewer")}</DataCell>
         <DataCell label={copy("ui.disabled")} className="ui-user-disabled">{account.disabled ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.download")}>{shown.can_download ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.share")}>{shown.can_share ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
         <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide">
-          <details className="ui-disclosure">
-            <summary aria-label={`${copy("ui.actions")}: ${account.username}`}>{copy("ui.actions")}</summary>
+          <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) { setOpen(next); } }}>
+            <Dialog.Trigger><Button size="2" variant="soft" color="gray" type="button" aria-label={`${copy("ui.actions")}: ${account.username}`}>{copy("ui.edit")}</Button></Dialog.Trigger>
+            <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+            <Dialog.Title>{account.username}</Dialog.Title>
             <div className="ui-form">
-                <details className="ui-disclosure">
-                  <summary>{copy("ui.edit")}</summary>
+                <div>
                   <div className="ui-form">
                     <label className="ui-field">
                       <span>{copy("ui.role")}</span>
-                      <select
-                        aria-label={fill(copy("ui.role.for"), { username: account.username })}
-                        className="ui-input"
+                      <Select.Root size="2"
                         value={account.role}
                         disabled={self || busy}
-                        onChange={(event) => {
-                          if (self) {
+                        onValueChange={(value) => {
+                          if (self || busy) {
                             return;
                           }
-                          const role = asRole(event.target.value);
+                          const role = asRole(value);
                           patch.mutate({
                             role,
                             ...permissionBits(role, account.can_download, account.can_share),
                           });
                         }}
-                      >
-                        <option value="admin">{copy("ui.admin")}</option>
-                        <option value="viewer">{copy("ui.viewer")}</option>
-                      </select>
+                      ><Select.Trigger aria-label={fill(copy("ui.role.for"), { username: account.username })} /><Select.Content>
+                        <Select.Item value="admin">{copy("ui.admin")}</Select.Item>
+                        <Select.Item value="viewer">{copy("ui.viewer")}</Select.Item>
+                      </Select.Content></Select.Root>
                       {patch.isPending ? <span>{copy("ui.saving")}</span> : null}
                     </label>
                     <label className="ui-checkbox-field">
                       <span>{copy("ui.download")}</span>
-                      <input
+                      <Checkbox size="2"
                         aria-label={fill(copy("ui.download.for"), { username: account.username })}
-                        type="checkbox"
+
                         checked={shown.can_download}
                         disabled={account.role !== "viewer" || busy}
-                        onChange={(event) => {
-                          patch.mutate(permissionBits(account.role, event.target.checked, account.can_share));
+                        onCheckedChange={(checked) => {
+                          patch.mutate(permissionBits(account.role, (checked === true), account.can_share));
                         }}
                       />
                     </label>
                     <label className="ui-checkbox-field">
                       <span>{copy("ui.share")}</span>
-                      <input
+                      <Checkbox size="2"
                         aria-label={fill(copy("ui.share.for"), { username: account.username })}
-                        type="checkbox"
+
                         checked={shown.can_share}
                         disabled={shareLocked}
-                        onChange={(event) => {
-                          patch.mutate({ can_share: event.target.checked });
+                        onCheckedChange={(checked) => {
+                          patch.mutate({ can_share: (checked === true) });
                         }}
                       />
                     </label>
                     <label className="ui-checkbox-field">
                       <span>{copy("ui.disabled")}</span>
-                      <input
+                      <Checkbox size="2"
                         aria-label={fill(copy("ui.disabled.for"), { username: account.username })}
-                        type="checkbox"
+
                         checked={account.disabled}
                         disabled={self || busy}
-                        onChange={(event) => {
-                          if (self) {
+                        onCheckedChange={(checked) => {
+                          if (self || busy) {
                             return;
                           }
-                          patch.mutate({ disabled: event.target.checked });
+                          patch.mutate({ disabled: (checked === true) });
                         }}
                       />
                     </label>
                   </div>
-                </details>
-                {self ? <button className="ui-button" type="button" disabled aria-label={fill(copy("ui.reset.password.for"), { username: account.username })}>{copy("ui.reset.password")}</button> : (
-                  <details className="ui-disclosure">
-                    <summary aria-label={fill(copy("ui.reset.password.for"), { username: account.username })}>{copy("ui.reset.password")}</summary>
+                </div>
+                {self ? <Button size="2" variant="soft" color="gray" type="button" disabled aria-label={fill(copy("ui.reset.password.for"), { username: account.username })}>{copy("ui.reset.password")}</Button> : (
+                  <div>
                     <form
                       className="ui-form"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        if (self || password.length === 0) {
+                        if (self || busy || password.length === 0) {
                           return;
                         }
                         setError(null);
@@ -411,9 +411,8 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
                     >
                       <label className="ui-field">
                         <span>{copy("ui.new.password")}</span>
-                      <input
+                      <TextField.Root size="2"
                         aria-label={fill(copy("ui.new.password.for"), { username: account.username })}
-                        className="ui-input"
                         type="password"
                         autoComplete="new-password"
                         value={password}
@@ -421,25 +420,23 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
                         onChange={(event) => setPassword(event.target.value)}
                       />
                       </label>
-                      <button
-                        className="ui-button"
+                      <Button size="2" variant="soft" color="gray"
                         type="submit"
                         aria-label={reset.isPending ? copy("ui.resetting.password") : fill(copy("ui.reset.password.for"), { username: account.username })}
                         disabled={self || busy || password.length === 0}
                       >
                         {reset.isPending ? copy("ui.resetting.password") : copy("ui.reset.password")}
-                      </button>
+                      </Button>
                     </form>
-                  </details>
+                  </div>
                 )}
                 {reset.isSuccess ? <p>{copy("ui.password.reset")}</p> : null}
-                <button
-                  className="ui-button ui-button-danger"
+                <Button size="2" variant="solid" color="red"
                   aria-label={remove.isPending ? fill(copy("ui.deleting"), { username: account.username }) : fill(copy("ui.delete.3"), { username: account.username })}
                   type="button"
                   disabled={self || busy}
                   onClick={() => {
-                    if (self) {
+                    if (self || busy) {
                       return;
                     }
                     setError(null);
@@ -447,24 +444,27 @@ function AccountRow({ account, self }: { account: Account; self: boolean }) {
                   }}
                 >
                   {remove.isPending ? fill(copy("ui.deleting"), { username: account.username }) : copy("ui.delete.2")}
-                </button>
+                </Button>
 
             </div>
-          </details>
+            {error ? <p className="ui-alert" role="alert">{error}</p> : null}
+            <Button size="2" variant="soft" color="gray" type="button" disabled={busy} onClick={() => setOpen(false)}>{translate("Close")}</Button>
+            </Dialog.Content>
+          </Dialog.Root>
         </DataCell>
-      </tr>
-      {error ? (
-        <tr role="row">
+      </Table.Row>
+      {error && !open ? (
+        <Table.Row role="row">
           <DataCell label="" kind="identity" colSpan={6} className="pb-2">
             <p className="ui-alert" role="alert">{error}</p>
           </DataCell>
-        </tr>
+        </Table.Row>
       ) : null}
     </>
   );
 }
 
-function CreateAccount({ onCancel }: { onCancel: () => void }) {
+function CreateAccount({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const client = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -491,11 +491,16 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
   });
 
   return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!create.isPending) onOpenChange(next); }}>
+      <Dialog.Trigger><Button size="2" variant="solid" color="orange" type="button">{copy("ui.create.user")}</Button></Dialog.Trigger>
+      <Dialog.Content maxWidth="480px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (create.isPending) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+      <Dialog.Title>{copy("ui.create.user")}</Dialog.Title>
     <form
       aria-label={copy("ui.create.user")}
       className="ui-form ui-settings"
       onSubmit={(event) => {
         event.preventDefault();
+        if (create.isPending) return;
         setError(null);
         create.mutate({
           username,
@@ -509,8 +514,7 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
       <SettingsSection title={copy("ux.credentials")}>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.username")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           autoComplete="off"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
@@ -518,8 +522,7 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
       </label>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.password")}</span>
-        <input
-          className="ui-input"
+        <TextField.Root size="2"
           type="password"
           autoComplete="new-password"
           value={password}
@@ -530,29 +533,28 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
       <SettingsSection title={copy("tab.permissions")}>
       <label className="ui-field">
         <span className="text-sm">{copy("ui.role")}</span>
-        <select
-          className="ui-input"
+        <Select.Root size="2"
           value={role}
-          onChange={(event) => {
-            const next = asRole(event.target.value);
+          onValueChange={(value) => {
+            const next = asRole(value);
             setRole(next);
             if (next === "admin") {
               setDownload(false);
               setShare(false);
             }
           }}
-        >
-          <option value="viewer">{copy("ui.viewer")}</option>
-          <option value="admin">{copy("ui.admin")}</option>
-        </select>
+        ><Select.Trigger aria-label={copy("ui.role")} /><Select.Content>
+          <Select.Item value="viewer">{copy("ui.viewer")}</Select.Item>
+          <Select.Item value="admin">{copy("ui.admin")}</Select.Item>
+        </Select.Content></Select.Root>
       </label>
       <label className="ui-checkbox-field">
-        <input
-          type="checkbox"
+        <Checkbox size="2"
+
           checked={download}
           disabled={role !== "viewer" || create.isPending}
-          onChange={(event) => {
-            const next = event.target.checked;
+          onCheckedChange={(checked) => {
+            const next = (checked === true);
             setDownload(next);
             if (!next) {
               setShare(false);
@@ -561,34 +563,34 @@ function CreateAccount({ onCancel }: { onCancel: () => void }) {
         />{" "}
         {copy("ui.download")}</label>
       <label className="ui-checkbox-field">
-        <input
-          type="checkbox"
+        <Checkbox size="2"
+
           checked={bits.can_share}
           disabled={role !== "viewer" || !download || create.isPending}
-          onChange={(event) => setShare(event.target.checked)}
+          onCheckedChange={(checked) => setShare((checked === true))}
         />{" "}
         {copy("ui.share")}</label>
       </SettingsSection>
       {error ? <p className="ui-alert" role="alert">{error}</p> : null}
       {create.isSuccess ? <p>{copy("ui.user.created")}</p> : null}
       <div className="ui-actions">
-      <button
-        className="ui-button ui-button-primary"
+      <Button size="2" variant="solid" color="orange"
         type="submit"
         disabled={create.isPending || username.length === 0 || password.length === 0}
       >
         {create.isPending ? copy("ui.creating.user") : copy("ui.create.user")}
-      </button>
-      <button className="ui-button" type="button" disabled={create.isPending} onClick={() => {
-        setUsername(""); setPassword(""); setRole("viewer"); setDownload(false); setShare(false); setError(null); create.reset(); onCancel();
-      }}>{copy("ui.cancel")}</button>
+      </Button>
+      <Button size="2" variant="soft" color="gray" type="button" disabled={create.isPending} onClick={() => {
+        setUsername(""); setPassword(""); setRole("viewer"); setDownload(false); setShare(false); setError(null); create.reset(); onOpenChange(false);
+      }}>{copy("ui.cancel")}</Button>
       </div>
     </form>
+    </Dialog.Content></Dialog.Root>
   );
 }
 
 export function Users({ selfUsername }: { selfUsername: string }) {
-  const createDisclosure = useRef<HTMLDetailsElement>(null);
+  const [creating, setCreating] = useState(false);
   const [offset, setOffset] = useState(readUserOffset);
   const users = useQuery({
     queryKey: ["users", offset],
@@ -617,14 +619,10 @@ export function Users({ selfUsername }: { selfUsername: string }) {
   return (
     <section className="ui-page" aria-label={copy("nav.users")} aria-busy={view.busy}>
       <div className="ui-page-header ui-users-header"><h2>{copy("nav.users")}</h2>
-      <details className="ui-disclosure" ref={createDisclosure}>
-        <summary className="ui-button ui-button-primary">{copy("ui.create.user")}</summary>
-        <CreateAccount onCancel={() => { if (createDisclosure.current) createDisclosure.current.open = false; }} />
-      </details></div>
+      <CreateAccount open={creating} onOpenChange={setCreating} /></div>
       <div className="ui-toolbar ui-resource-filters">
         <label className="ui-field">
-          {copy("ui.filter.users")}<input
-            className="ui-input"
+          {copy("ui.filter.users")}<TextField.Root size="2"
             value={filter}
             onChange={(event) => {
               const next = event.target.value;
@@ -634,18 +632,17 @@ export function Users({ selfUsername }: { selfUsername: string }) {
           />
         </label>
         <label className="ui-field">
-          {copy("ui.sort.users")}<select
-            className="ui-input"
+          {copy("ui.sort.users")}<Select.Root size="2"
             value={sort}
-            onChange={(event) => {
-              const next = userSortFrom(event.target.value);
+            onValueChange={(value) => {
+              const next = userSortFrom(value);
               setSort(next);
               writeUserSort(next);
             }}
-          >
-            <option value="username">{copy("ui.username")}</option>
-            <option value="created">{copy("ui.created")}</option>
-          </select>
+          ><Select.Trigger aria-label={copy("ui.sort.users")} /><Select.Content>
+            <Select.Item value="username">{copy("ui.username")}</Select.Item>
+            <Select.Item value="created">{copy("ui.created")}</Select.Item>
+          </Select.Content></Select.Root>
         </label>
         <details className="ui-filter-help"><summary>{translate("Filtering and sorting apply to the current page")}</summary><p className="ui-muted">{copy("ui.default.order.is.username")}</p></details>
 
@@ -656,34 +653,33 @@ export function Users({ selfUsername }: { selfUsername: string }) {
         <>
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void users.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {users.isSuccess && loaded.length > 0 && shown.length === 0 ? <p>{translate("No matches on this page.")}</p> : null}
       {view.empty ? <p>{offset === 0 && users.data?.hasMore === false ? copy("ui.there.are.no.users.create.the.first.user") : translate("No matches on this page.")}</p> : null}
       {users.data && shown.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={translate("User list")} tabIndex={0}>
-          <table className="ui-table ui-table-records ui-user-list" role="table">
-            <thead role="rowgroup">
-              <tr role="row">
-                <th scope="col">
-                  {copy("ui.username")}</th>
-                <th scope="col">
-                  {copy("ui.role")}</th>
-                <th scope="col">{copy("ui.disabled")}</th>
-                <th scope="col">{copy("ui.download")}</th>
-                <th scope="col">{copy("ui.share")}</th>
-                <th scope="col">{copy("ui.actions")}</th>
-              </tr>
-            </thead>
-            <tbody role="rowgroup">
+          <Table.Root className="ui-table-records ui-user-list">
+            <Table.Header role="rowgroup">
+              <Table.Row role="row">
+                <Table.ColumnHeaderCell scope="col">
+                  {copy("ui.username")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell scope="col">
+                  {copy("ui.role")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell scope="col">{copy("ui.disabled")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell scope="col">{copy("ui.download")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell scope="col">{copy("ui.share")}</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell scope="col">{copy("ui.actions")}</Table.ColumnHeaderCell>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body role="rowgroup">
               {shown.map((account) => (
                 <AccountRow
                   key={account.id}
@@ -691,14 +687,13 @@ export function Users({ selfUsername }: { selfUsername: string }) {
                   self={account.username === selfUsername}
                 />
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table.Root>
         </div>
       ) : null}
 
         <div className="ui-actions">
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={offset === 0}
             onClick={() => {
@@ -707,9 +702,8 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserOffset(next);
             }}
           >
-            {copy("ui.previous")}</button>
-          <button
-            className="ui-button"
+            {copy("ui.previous")}</Button>
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={users.data?.hasMore !== true}
             onClick={() => {
@@ -718,7 +712,7 @@ export function Users({ selfUsername }: { selfUsername: string }) {
               writeUserOffset(next);
             }}
           >
-            {copy("ui.next")}</button>
+            {copy("ui.next")}</Button>
         </div>
     </section>
   );

@@ -1,3 +1,4 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -14,13 +15,14 @@ afterEach(() => {
 });
 
 function renderKeys(canManage = false) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <QueryClientProvider client={client}>
+    <Theme><QueryClientProvider client={client}>
       <Keys canManage={canManage} />
-    </QueryClientProvider>,
+    </QueryClientProvider></Theme>,
   );
   return client;
 }
@@ -351,7 +353,7 @@ test("keeps the typed name and shows the API message when create fails", async (
   fireEvent.click(screen.getByRole("button", { name: "Create key" }));
   expect(await screen.findByText("Key name is invalid")).toBeTruthy();
   expect((screen.getByLabelText("Key name") as HTMLInputElement).value).toBe("my key");
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByLabelText("Secret access key")).toBeNull();
   expect(screen.queryByText("Key created")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(calls.find((call) => call.method === "POST")).toEqual({
@@ -406,7 +408,7 @@ test("shows a created secret once, copies it, and removes it when the dialog clo
   expect(await screen.findByRole("heading", { name: "Secret for GK1" })).toBeTruthy();
   expect(await screen.findByText("GK1")).toBeTruthy();
   expect(screen.getByText("Key created")).toBeTruthy();
-  expect((screen.getByLabelText("Key name") as HTMLInputElement).value).toBe("");
+  expect(screen.queryByLabelText("Key name")).toBeNull();
   const field = screen.getByLabelText("Secret access key") as HTMLInputElement;
   expect(field.type).toBe("password");
   expect(field.value).toBe("ONCESECRET");
@@ -478,14 +480,7 @@ test("renames a key with only the name and does not ask for confirmation", async
     }),
   );
   renderKeys(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  fireEvent.click(await screen.findByLabelText("Actions (GK1)"));
   const name = (await screen.findByLabelText("Name for GK1")) as HTMLInputElement;
   fireEvent.change(name, { target: { value: "已有 名称" } });
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
@@ -496,7 +491,7 @@ test("renames a key with only the name and does not ask for confirmation", async
   fireEvent.click(screen.getByRole("button", { name: "Save name (GK1)" }));
   expect(await screen.findByText("Key renamed")).toBeTruthy();
   expect(screen.queryByText("Unsaved changes")).toBeNull();
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: /^Confirm/ })).toBeNull();
   expect(pageHolds("PATCHSECRET")).toBe(false);
   expect(pageHolds("LISTSECRET")).toBe(false);
   expect((screen.getByLabelText("Name for GK1") as HTMLInputElement).value).toBe("已有 名称");
@@ -532,34 +527,30 @@ test("sends only createBucket when the allow-create-bucket switch changes", asyn
     }),
   );
   renderKeys(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  fireEvent.click(await screen.findByLabelText("Actions (GK1)"));
   const known = (await screen.findByRole("checkbox", {
     name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
-  const unknown = screen.getByRole("checkbox", {
-    name: "Allow bucket creation (GK2)",
-  }) as HTMLInputElement;
-  expect(known.checked).toBe(false);
-  expect(known.indeterminate).toBe(false);
-  expect(unknown.checked).toBe(false);
-  expect(unknown.indeterminate).toBe(true);
-  fireEvent.click(known);
+  expect(known.getAttribute("aria-checked")).toBe("false");
+  expect(known.getAttribute("aria-checked") === "mixed").toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByLabelText("Actions (GK2)"));
+  const unknown = screen.getByRole("checkbox", { name: "Allow bucket creation (GK2)" });
+  expect(unknown.getAttribute("aria-checked") === "true").toBe(false);
+  expect(unknown.getAttribute("aria-checked") === "mixed").toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByLabelText("Actions (GK1)"));
+  const activeKnown = screen.getByRole("checkbox", { name: "Allow bucket creation (GK1)" });
+  fireEvent.click(activeKnown);
   await waitFor(() => {
     expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
   });
-  expect(known.checked).toBe(true);
-  fireEvent.click(known);
+  expect(activeKnown.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(activeKnown);
   await waitFor(() => {
     expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(2);
   });
-  expect(known.checked).toBe(false);
+  expect(activeKnown.getAttribute("aria-checked")).toBe("false");
   expect(calls.filter((call) => call.method === "PATCH").map((call) => call.body)).toEqual([
     { createBucket: true },
     { createBucket: false },
@@ -583,21 +574,14 @@ test("shows the API message when the create-bucket switch fails and keeps the pr
     }),
   );
   renderKeys(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  fireEvent.click(await screen.findByLabelText("Actions (GK1)"));
   const box = (await screen.findByRole("checkbox", {
     name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
-  expect(box.checked).toBe(true);
+  expect(box.getAttribute("aria-checked")).toBe("true");
   fireEvent.click(box);
   expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
-  expect(box.checked).toBe(true);
+  expect(box.getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -622,24 +606,17 @@ test("shows Saving while allow-create-bucket is pending and keeps the error when
     }),
   );
   renderKeys(true);
-  await waitFor(() => expect(document.querySelector("tbody details")).toBeTruthy());
-  for (const details of document.querySelectorAll<HTMLDetailsElement>("tbody details")) {
-    if (!details.open) {
-      const summary = details.querySelector("summary");
-      if (!summary) throw new Error("Editor disclosure has no summary");
-      fireEvent.click(summary);
-    }
-  }
+  fireEvent.click(await screen.findByLabelText("Actions (GK1)"));
   const box = (await screen.findByRole("checkbox", {
     name: "Allow bucket creation (GK1)",
   })) as HTMLInputElement;
-  expect(box.checked).toBe(false);
+  expect(box.getAttribute("aria-checked")).toBe("false");
   expect(box.disabled).toBe(false);
   expect(screen.queryByText("Saving")).toBeNull();
   fireEvent.click(box);
   expect(await screen.findByText("Saving")).toBeTruthy();
   expect(box.disabled).toBe(true);
-  expect(box.checked).toBe(false);
+  expect(box.getAttribute("aria-checked")).toBe("false");
   expect(calls.filter((call) => call.method === "PATCH")).toEqual([
     {
       url: "/api/keys/GK1",
@@ -654,7 +631,7 @@ test("shows Saving while allow-create-bucket is pending and keeps the error when
   expect(await screen.findByText("Garage admin API is not configured")).toBeTruthy();
   expect(screen.queryByText("Saving")).toBeNull();
   expect(box.disabled).toBe(false);
-  expect(box.checked).toBe(false);
+  expect(box.getAttribute("aria-checked")).toBe("false");
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -706,7 +683,7 @@ test("cancels a key delete without a request, then confirms the encoded delete",
   });
 });
 
-test("shows Working while a key delete is submitting and Cancel still closes", async () => {
+test("shows Working while a key delete is submitting and Cancel and Escape wait for completion", async () => {
   let release: (response: Response) => void = () => {};
   vi.stubGlobal(
     "fetch",
@@ -734,26 +711,30 @@ test("shows Working while a key delete is submitting and Cancel still closes", a
   expect(working.disabled).toBe(true);
   expect(working.textContent).toBe("Working");
   expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
-  const during = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
+  const during = screen.getByRole("button", { name: "Delete GK1", hidden: true }) as HTMLButtonElement;
   expect(during.disabled).toBe(false);
   expect(during.textContent).toBe("Delete");
   expect(screen.getByText("photos")).toBeTruthy();
   const cancel = within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
-  expect(cancel.disabled).toBe(false);
+  expect(cancel.getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(cancel);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBe(dialog);
   expect(screen.getByText("GK1")).toBeTruthy();
   expect(screen.getByText("photos")).toBeTruthy();
   expect(screen.queryByText("Key deleted")).toBeNull();
-  const after = screen.getByRole("button", { name: "Delete GK1" }) as HTMLButtonElement;
+  const after = screen.getByRole("button", { name: "Delete GK1", hidden: true }) as HTMLButtonElement;
   expect(after.disabled).toBe(false);
   expect(after.textContent).toBe("Delete");
   await act(async () => {
     release(json({ message: "Key is still in use" }, 409));
   });
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(await screen.findByText(/Key is still in use/)).toBeTruthy();
   expect(screen.queryByText("Key deleted")).toBeNull();
   expect(screen.getByText("GK1")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 test("shows the API message when deleting a key fails and keeps the key listed", async () => {
@@ -806,7 +787,9 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   renderKeys(true);
   expect(await screen.findByText("photos")).toBeTruthy();
   expect(pageHolds("LISTSECRET")).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Show secret (a b&c=d)" }));
+  const trigger = screen.getByRole("button", { name: "Show secret (a b&c=d)" });
+  trigger.focus();
+  fireEvent.click(trigger);
   const field = (await screen.findByLabelText("Secret access key")) as HTMLInputElement;
   expect(field.value).toBe("VIEWSECRET");
   expect(screen.queryByText("NOTINLIST")).toBeNull();
@@ -814,6 +797,7 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(pageHolds("VIEWSECRET")).toBe(false);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(setItem).not.toHaveBeenCalled();
   expect(calls.find((call) => call.method === "POST")).toEqual({
     url: "/api/keys/a%20b%26c%3Dd/secret",
@@ -901,7 +885,7 @@ test("filters loaded keys from the query string and keeps that choice in the add
   expect(window.location.hash).toBe("#keys/stay");
   expect(calls).toBe(1);
 
-  fireEvent.change(screen.getByLabelText("Sort keys"), { target: { value: "name" } });
+  selectValue(screen.getByLabelText("Sort keys"), "name");
   expect(keyRowText()[0]).toContain("k-c");
   expect(keyRowText()[1]).toContain("k-a");
   expect(keyRowText()[2]).toContain("k-b");
@@ -930,7 +914,7 @@ test("filters loaded keys from the query string and keeps that choice in the add
   expect(screen.queryByText("There are no keys.")).toBeNull();
   expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   expect((screen.getByLabelText("Filter keys") as HTMLInputElement).value).toBe("missing");
-  expect((screen.getByLabelText("Sort keys") as HTMLSelectElement).value).toBe("id");
+  expect(screen.getByLabelText("Sort keys").textContent).toBe("Id");
   expect(window.location.hash).toBe("#keys/stay");
   expect(calls).toBe(1);
 });
@@ -957,17 +941,17 @@ test("sorts loaded keys by created time and keeps the choice in the address", as
   expect(keyRowText()[0]).toContain("later-key");
   expect(keyRowText()[1]).toContain("earlier-key");
   expect(keyRowText()[2]).toContain("undated-key");
-  const created = screen.getByRole("option", { name: "Created" }) as HTMLOptionElement;
-  expect(created.value).toBe("created");
-
-  fireEvent.change(screen.getByLabelText("Sort keys"), { target: { value: "created" } });
+  fireEvent.keyDown(screen.getByLabelText("Sort keys"), { key: "ArrowDown" });
+  const created = screen.getByRole("option", { name: "Created" });
+  expect(created.textContent).toBe("Created");
+  fireEvent.click(created);
   expect(keyRowText()[0]).toContain("earlier-key");
   expect(keyRowText()[1]).toContain("later-key");
   expect(keyRowText()[2]).toContain("undated-key");
   expect(window.location.search).toContain("keysSort=created");
   expect(window.location.search).toContain("keep=1");
   expect(window.location.hash).toBe("#keys/stay");
-  expect((screen.getByLabelText("Sort keys") as HTMLSelectElement).value).toBe("created");
+  expect(screen.getByLabelText("Sort keys").textContent).toBe("Created");
   expect(calls).toBe(1);
 });
 
@@ -1055,9 +1039,9 @@ test("the key buckets tab shows the grant bits", async () => {
   expect(within(bucket).getByText("owner yes").textContent).toBe("owner yes");
   expect(within(bucket).getByText("read yes").textContent).toBe("read yes");
   expect(within(bucket).getByText("write no").textContent).toBe("write no");
-  expect(screen.getByRole("tab", { name: "Overview" }).textContent).toBe("Overview");
-  expect(screen.getByRole("tab", { name: "Buckets" }).textContent).toBe("Buckets");
-  expect(screen.getByRole("tab", { name: "Settings" }).textContent).toBe("Settings");
+  expect(within(screen.getByRole("tab", { name: "Overview" })).getByText("Overview", { selector: "span:not([aria-hidden])" }).textContent).toBe("Overview");
+  expect(within(screen.getByRole("tab", { name: "Buckets" })).getByText("Buckets", { selector: "span:not([aria-hidden])" }).textContent).toBe("Buckets");
+  expect(within(screen.getByRole("tab", { name: "Settings" })).getByText("Settings", { selector: "span:not([aria-hidden])" }).textContent).toBe("Settings");
   expect(calls).toContain("/api/keys/GK1");
 });
 
@@ -1068,24 +1052,22 @@ test("the key buckets tab shows the grant bits", async () => {
   expect(screen.queryByRole("textbox", { name: "Key name" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(screen.getByRole("textbox", { name: "Key name" })).toBeTruthy();
-  const disclosure = screen.getByLabelText("Actions (compact)").closest("details");
-  expect(disclosure?.open).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByLabelText("Name for compact")).toBeNull();
   fireEvent.click(screen.getByLabelText("Actions (compact)"));
-  const input = screen.getByLabelText("Name for compact") as HTMLInputElement;
-  fireEvent.change(input, { target: { value: "42" } });
-  fireEvent.click(screen.getByLabelText("Actions (compact)"));
-  expect(disclosure?.open).toBe(false);
+  fireEvent.change(screen.getByLabelText("Name for compact"), { target: { value: "42" } });
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.queryByLabelText("Name for compact")).toBeNull();
   fireEvent.click(screen.getByLabelText("Actions (compact)"));
   expect((screen.getByLabelText("Name for compact") as HTMLInputElement).value).toBe("42");
   expect(screen.getByText("Unsaved changes")).toBeTruthy();
-  fireEvent.click(screen.getByLabelText("Actions (compact)"));
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
   const before = window.location.hash;
   fireEvent.click(screen.getByRole("link", { name: "compact" }));
   expect(confirmLeave).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
   expect(window.location.hash).toBe(before);
- });
-
+});
 
 test("groups key settings under one display-name heading with contextual actions", async () => {
   const id = "GK" + "a".repeat(48);
@@ -1102,8 +1084,10 @@ test("groups key settings under one display-name heading with contextual actions
   for (const name of ["General", "Permissions", "Credentials", "Danger zone"]) {
     expect(screen.getByRole("heading", { name })).toBeTruthy();
   }
+  fireEvent.click(screen.getByLabelText(`Actions (${id})`));
   expect(screen.getByRole("textbox", { name: `Name for ${id}` })).toBeTruthy();
   expect(screen.getByRole("button", { name: `Save name (${id})` }).textContent).toBe("Save name");
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.getByRole("checkbox", { name: `Allow bucket creation (${id})` })).toBeTruthy();
   expect(screen.getByText("Saved automatically")).toBeTruthy();
   expect(screen.getByRole("button", { name: `View secret for ${id}` }).textContent).toBe("View secret");
@@ -1113,3 +1097,11 @@ test("groups key settings under one display-name heading with contextual actions
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(screen.getByRole("heading", { name: `Confirm ${id}` })).toBeTruthy();
 });
+
+function selectValue(trigger: HTMLElement, value: string) {
+  const labels: Record<string, string> = { admin: "Admin", viewer: "Viewer", name: "Name", created: "Created", id: "Id", username: "Username" };
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(`^${labels[value]}$`, "i") }));
+}
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });

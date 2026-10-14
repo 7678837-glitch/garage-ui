@@ -1,3 +1,4 @@
+import { Theme } from "@radix-ui/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -39,17 +40,18 @@ function isTokenList(input: RequestInfo | URL, method: string): boolean {
   return method === "GET" && url.pathname === "/api/admin-tokens";
 }
 
-function renderTokens(expandCreate = true) {
+function renderTokens(expandCreate = false) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <QueryClientProvider client={client}>
+    <Theme><QueryClientProvider client={client}>
       <AdminTokens />
-    </QueryClientProvider>,
+    </QueryClientProvider></Theme>,
   );
   if (expandCreate) {
-    fireEvent.click(screen.getByText("Create token", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
   }
   return client;
 }
@@ -206,6 +208,9 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
     }),
   );
   renderTokens();
+  const trigger = screen.getByRole("button", { name: "Create token" });
+  trigger.focus();
+  fireEvent.click(trigger);
   expect(screen.getByRole("checkbox", { name: "Never expires" })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "ListBuckets" })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "GetClusterStatus" })).toBeTruthy();
@@ -214,7 +219,7 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
   expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
   fireEvent.click(screen.getByRole("button", { name: "Create token" }));
-  const confirm = screen.getByRole("dialog");
+  const confirm = screen.getByRole("dialog", { name: /^Confirm/ });
   expect(confirm.textContent).toContain("The secret is shown once. It cannot be viewed again.");
   expect(confirm.textContent).toContain("*");
   fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
@@ -236,6 +241,7 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
   expect(await screen.findByText("Copied")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
   expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(document.body.textContent ?? "").not.toContain(CREATED_SECRET);
   for (const node of document.querySelectorAll("input, textarea")) {
     expect((node as HTMLInputElement).value).not.toContain(CREATED_SECRET);
@@ -318,7 +324,6 @@ test("an admin updates an issued token and the response secret stays off the pag
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   expect(window.location.href).not.toContain(issuedId);
 
-  fireEvent.click(within(issued).getByText("Actions", { selector: "summary" }));
   fireEvent.click(within(issued).getByRole("button", { name: "Edit" }));
   const update = screen.getByRole("button", { name: "Update token" });
   const form = update.closest("form");
@@ -327,18 +332,14 @@ test("an admin updates an issued token and the response secret stays off the pag
   }
   const edit = within(form);
   expect((edit.getByLabelText("Name") as HTMLInputElement).value).toBe("issued-reader");
-  expect((edit.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(
-    true,
-  );
-  expect((edit.getByRole("checkbox", { name: "Never expires" }) as HTMLInputElement).checked).toBe(
-    false,
-  );
+  expect((edit.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
+  expect((edit.getByRole("checkbox", { name: "Never expires" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("false");
   fireEvent.click(edit.getByRole("checkbox", { name: "All" }));
   expect(edit.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   fireEvent.change(edit.getByLabelText("Name"), { target: { value: "renamed-reader" } });
   fireEvent.click(update);
-  const dialog = screen.getByRole("dialog");
+  const dialog = screen.getByRole("dialog", { name: /^Confirm/ });
   expect(dialog.textContent).toContain("This replaces the token name, expiration, and scope.");
   expect(dialog.textContent).toContain("*");
   fireEvent.change(screen.getByLabelText("Type issued-reader to confirm"), {
@@ -438,9 +439,8 @@ test("an admin deletes an issued token and the response secret stays off the pag
   expect(document.body.textContent ?? "").not.toContain(issuedId);
   expect(window.location.href).not.toContain(issuedId);
 
-  fireEvent.click(within(issued).getByText("Actions", { selector: "summary" }));
   fireEvent.click(within(issued).getByRole("button", { name: "Delete" }));
-  const dialog = screen.getByRole("dialog");
+  const dialog = screen.getByRole("dialog", { name: /^Confirm/ });
   expect(dialog.textContent).toContain("issued-reader");
   expect(dialog.textContent).toContain("This deletes the admin token.");
   expect(within(dialog).queryByRole("textbox")).toBeNull();
@@ -681,7 +681,7 @@ function operationIds(specText: string): string[] {
 }
 
 function checkedBox(name: string): boolean {
-  return (screen.getByRole("checkbox", { name }) as HTMLInputElement).checked;
+  return screen.getByLabelText(name, { selector: "button" }).getAttribute("aria-checked") === "true";
 }
 
 test("scope_groups_cover_every_v24_admin_endpoint", async () => {
@@ -733,6 +733,7 @@ test("scope_groups_cover_every_v24_admin_endpoint", async () => {
   );
   renderTokens();
 
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
   for (const id of endpoints) {
     expect(screen.getByRole("checkbox", { name: id })).toBeTruthy();
   }
@@ -768,7 +769,7 @@ test("scope_groups_cover_every_v24_admin_endpoint", async () => {
   expect(checkedBox("All")).toBe(true);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
   fireEvent.click(screen.getByRole("button", { name: "Create token" }));
-  const fullDialog = screen.getByRole("dialog");
+  const fullDialog = screen.getByRole("dialog", { name: /^Confirm/ });
   expect(fullDialog.textContent).toContain("*");
   fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
@@ -781,6 +782,7 @@ test("scope_groups_cover_every_v24_admin_endpoint", async () => {
   });
   fireEvent.click(await screen.findByRole("button", { name: "I have saved it" }));
   expect(screen.queryByText("This scope is equivalent to full admin access.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "CreateAdminToken" }));
   expect(screen.getByText("This scope is equivalent to full admin access.")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
@@ -937,20 +939,22 @@ test("discloses page-local token filtering without claiming the repository is em
   expect(screen.getByRole("button", { name: "Previous" })).toBeTruthy();
 });
 
-test("opens token creation on demand and preserves the scope draft across collapse", async () => {
+test("opens token creation on demand and preserves the scope draft across Escape", async () => {
   installApi();
   renderTokens(false);
   await screen.findByRole("cell", { name: "issued-reader" });
-  expect(screen.getByRole("button", { name: "Create token" }).closest("details")?.open).toBe(false);
-  const create = screen.getByText("Create token", { selector: "summary" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const create = screen.getByRole("button", { name: "Create token" });
   fireEvent.click(create);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "retained-name" } });
   fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
-  fireEvent.click(create);
-  expect(screen.getByRole("button", { name: "Create token" }).closest("details")?.open).toBe(false);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Filter scope" }), { target: { value: "bucket" } });
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(create);
   expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("retained-name");
-  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("searchbox", { name: "Filter scope" }) as HTMLInputElement).value).toBe("bucket");
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
 });
 
 test("an empty later token page does not claim the repository is empty", async () => {
@@ -963,39 +967,41 @@ test("an empty later token page does not claim the repository is empty", async (
 });
 
 
-test("canceling token creation clears the draft and closes its disclosure", async () => {
+test("canceling token creation clears the draft and closes its dialog", async () => {
   installApi();
   renderTokens();
   await screen.findByRole("cell", { name: "issued-reader" });
-  const create = screen.getByText("Create token", { selector: "summary" });
+  const create = screen.getByRole("button", { name: "Create token" });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
   const form = screen.getByRole("button", { name: "Create token" }).closest("form");
   if (!form) throw new Error("Missing token creation form");
   fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "discarded" } });
   fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
-  expect(create.closest("details")?.open).toBe(false);
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(create);
-  expect((within(form).getByLabelText("Name") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("");
 });
 
 test("scope search preserves hidden selected endpoints and group selection semantics", async () => {
   installApi();
   renderTokens();
   await screen.findByRole("cell", { name: "issued-reader" });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "ListBuckets" }));
   const search = screen.getByRole("searchbox", { name: "Filter scope" });
   fireEvent.change(search, { target: { value: "getclusterhealth" } });
   expect(screen.queryByRole("checkbox", { name: "ListBuckets" })).toBeNull();
   expect(screen.getByText("1 selected")).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: "Cluster" }));
-  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
   expect(screen.getByText("6 selected")).toBeTruthy();
   fireEvent.change(search, { target: { value: "bucket" } });
-  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
   fireEvent.change(search, { target: { value: "no-matching-endpoint" } });
   expect(screen.getByText("No matching scopes.")).toBeTruthy();
   fireEvent.change(search, { target: { value: "" } });
-  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).checked).toBe(true);
-  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole("checkbox", { name: "GetClusterHealth" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
+  expect((screen.getByRole("checkbox", { name: "ListBuckets" }) as HTMLInputElement).getAttribute("aria-checked")).toBe("true");
 });
 
 test("editing focuses its name field once and Cancel returns focus to its Edit trigger", async () => {
@@ -1004,7 +1010,6 @@ test("editing focuses its name field once and Cancel returns focus to its Edit t
   installApi();
   const client = renderTokens(false);
   const row = await screen.findByRole("row", { name: /issued-reader/ });
-  fireEvent.click(within(row).getByText("Actions", { selector: "summary" }));
   const trigger = within(row).getByRole("button", { name: "Edit" });
   fireEvent.click(trigger);
   const form = screen.getByRole("button", { name: "Update token" }).closest("form");
@@ -1020,5 +1025,28 @@ test("editing focuses its name field once and Cancel returns focus to its Edit t
   expect(document.activeElement).toBe(filter);
   expect(scroll).toHaveBeenCalledTimes(1);
   fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
-  expect(document.activeElement).toBe(trigger);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
 });
+
+
+test("created token secret is never retained in the mutation cache", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/admin-tokens" && init?.method === "POST") {
+      return json({ secretToken: CREATED_SECRET });
+    }
+    return tokenResponse(new URL(String(input), "http://ui.local").pathname);
+  }));
+  const client = renderTokens();
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+  fireEvent.change(screen.getByLabelText("Type reader to confirm"), { target: { value: "reader" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  expect((await screen.findByLabelText("Secret") as HTMLInputElement).value).toBe(CREATED_SECRET);
+  expect(JSON.stringify(client.getMutationCache().getAll().map((mutation) => mutation.state.data))).not.toContain(CREATED_SECRET);
+  fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+  expect(screen.queryByLabelText("Secret")).toBeNull();
+  expect(JSON.stringify(client.getMutationCache().getAll())).not.toContain(CREATED_SECRET);
+});
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });

@@ -1,5 +1,6 @@
+import { Button, Checkbox, Dialog, Select, Table, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { ReadableInstantText, copy, fill, translate } from "./i18n";
@@ -365,11 +366,14 @@ function createTokenBody(draft: TokenDraft): CreateAdminTokenBody {
 function ScopePicker({
   selected,
   onChange,
+  filter,
+  onFilterChange,
 }: {
   selected: readonly string[];
   onChange: (next: string[]) => void;
+  filter: string;
+  onFilterChange: (filter: string) => void;
 }) {
-  const [filter, setFilter] = useState("");
   const query = filter.trim().toLowerCase();
   const visibleGroups = SCOPE_GROUPS.map((group) => ({
     ...group,
@@ -381,18 +385,17 @@ function ScopePicker({
     <fieldset className="grid gap-2">
       <legend className="text-sm">{copy("ui.scope")}</legend>
       <label className="ui-checkbox-field">
-        <input
-          className="mr-2"
-          type="checkbox"
+        <Checkbox size="2"
+
           checked={allChecked}
-          onChange={(event) => {
-            onChange(event.target.checked ? [...SCOPE_ENDPOINTS] : []);
+          onCheckedChange={(checked) => {
+            onChange((checked === true) ? [...SCOPE_ENDPOINTS] : []);
           }}
         />
         {copy("ui.all")}</label>
       <label className="ui-field">
         {copy("ux.scope.filter")}
-        <input className="ui-input" type="search" value={filter} onChange={(event) => setFilter(event.target.value)} />
+        <TextField.Root size="2" type="search" value={filter} onChange={(event) => onFilterChange(event.target.value)} />
       </label>
       <p className="ui-muted" aria-live="polite">{fill(copy("ux.scope.selected"), { count: String(chosen.size) })}</p>
       <div className="grid max-h-64 gap-2 overflow-y-auto overscroll-contain pr-1">
@@ -401,24 +404,22 @@ function ScopePicker({
         return (
           <div key={group.name} className="grid gap-1">
             <label className="ui-checkbox-field">
-              <input
-                className="mr-2"
-                type="checkbox"
+              <Checkbox size="2"
+
                 checked={groupChecked}
-                onChange={(event) => {
-                  onChange(withMembers(selected, group.endpoints, event.target.checked));
+                onCheckedChange={(checked) => {
+                  onChange(withMembers(selected, group.endpoints, (checked === true)));
                 }}
               />
               {group.name}
             </label>
             {group.shown.map((id) => (
               <label key={id} className="ui-checkbox-field ml-4">
-                <input
-                  className="mr-2"
-                  type="checkbox"
+                <Checkbox size="2"
+
                   checked={chosen.has(id)}
-                  onChange={(event) => {
-                    onChange(withEndpoint(selected, id, event.target.checked));
+                  onCheckedChange={(checked) => {
+                    onChange(withEndpoint(selected, id, (checked === true)));
                   }}
                 />
                 <span className="min-w-0 break-words">{id}</span>
@@ -458,94 +459,41 @@ async function copySecret(secret: string): Promise<"copied" | "select"> {
   }
 }
 
-function openDialog(dialog: HTMLDialogElement) {
-  if (typeof dialog.showModal === "function") {
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-    return;
-  }
-  dialog.setAttribute("open", "");
-}
-
-function SecretDialog({ secret, onClose }: { secret: string; onClose: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+function SecretDialog({ secret, onClose, returnFocus }: { secret: string; onClose: () => void; returnFocus: HTMLButtonElement | null }) {
   const copyRef = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
   const [visible, setVisible] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    openDialog(dialog);
-    copyRef.current?.focus();
-  }, []);
   return (
-    <dialog
-      ref={dialogRef}
-      aria-modal="true"
-      aria-labelledby={titleId}
-      className="ui-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onClose();
-        }
-      }}
-    >
-      <h3 id={titleId} className="font-medium">
-        {copy("ui.admin.token.secret")}</h3>
-      <p>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</p>
-      <label className="ui-field">
-        <span className="text-sm">{copy("ui.secret")}</span>
-        <input
-          className="ui-input"
-          readOnly
-          autoComplete="off"
-          type={visible ? "text" : "password"}
-          value={secret}
-        />
-      </label>
-      <button
-        className="ui-button"
-        type="button"
-        onClick={() => {
-          setVisible(true);
-        }}
-      >
-        {copy("ui.show.secret")}</button>
-      <button
-        ref={copyRef}
-        className="ui-button"
-        type="button"
-        onClick={() => {
-          void copySecret(secret).then((result) => {
-            if (result === "copied") {
-              setFeedback(copy("ui.copied"));
-              return;
-            }
-            setVisible(true);
-            setFeedback(copy("ui.select.the.secret.and.copy.it"));
-          });
-        }}
-      >
-        {copy("ui.copy.secret")}</button>
-      {feedback ? <p>{feedback}</p> : null}
-      <button className="ui-button" type="button" onClick={onClose}>
-        {copy("ui.i.have.saved.it")}</button>
-    </dialog>
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Content maxWidth="480px" onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus(); }} onOpenAutoFocus={(event) => { event.preventDefault(); copyRef.current?.focus(); }}>
+        <Dialog.Title>{copy("ui.admin.token.secret")}</Dialog.Title>
+        <Dialog.Description>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</Dialog.Description>
+        <label className="ui-field">
+          <span>{copy("ui.secret")}</span>
+          <TextField.Root size="2" readOnly autoComplete="off" type={visible ? "text" : "password"} value={secret} />
+        </label>
+        <div className="ui-actions">
+          <Button size="2" variant="soft" color="gray" type="button" onClick={() => setVisible(true)}>{copy("ui.show.secret")}</Button>
+          <Button size="2" variant="soft" color="gray" type="button" ref={copyRef} onClick={() => {
+            void copySecret(secret).then((result) => {
+              if (result === "copied") { setFeedback(copy("ui.copied")); return; }
+              setVisible(true);
+              setFeedback(copy("ui.select.the.secret.and.copy.it"));
+            });
+          }}>{copy("ui.copy.secret")}</Button>
+          <Button size="2" variant="soft" color="gray" type="button" onClick={onClose}>{copy("ui.i.have.saved.it")}</Button>
+        </div>
+        {feedback ? <p role="status">{feedback}</p> : null}
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
-function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
+function CreateTokenForm({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const client = useQueryClient();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [scopeFilter, setScopeFilter] = useState("");
   const [pending, setPending] = useState<TokenDraft | null>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const create = useMutation({
@@ -559,19 +507,22 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
       if (!secret) {
         throw new Error(copy("ui.admin.token.secret.is.unavailable"));
       }
-      return secret;
+      onOpenChange(false);
+      setReveal(secret);
     },
-    onSuccess: async (secret) => {
+    onSuccess: async () => {
       setPending(null);
       setDraft(EMPTY_DRAFT);
-      // The secret stays in the dialog. The list refresh uses loadAdminTokens and does not write the create response into the query cache.
-      setReveal(secret);
       await client.invalidateQueries({ queryKey: ["admin-tokens", "list"] });
     },
   });
   const error = create.error instanceof Error ? create.error.message : null;
   return (
     <>
+      <Dialog.Root open={open} onOpenChange={(next) => { if (!create.isPending && pending === null) onOpenChange(next); }}>
+      <Dialog.Trigger><Button ref={triggerRef} size="2" variant="solid" color="orange" type="button">{copy("ui.create.token")}</Button></Dialog.Trigger>
+      <Dialog.Content maxWidth="640px" aria-describedby={undefined} onEscapeKeyDown={(event) => { if (create.isPending || pending !== null) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+      <Dialog.Title>{copy("ui.create.token")}</Dialog.Title>
       <form
         className="ui-form ui-settings"
         onSubmit={(event) => {
@@ -585,8 +536,7 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
       >
         <SettingsSection title={copy("ux.general")}>
         <label className="ui-field">
-          {copy("ui.name")}<input
-            className="ui-input"
+          {copy("ui.name")}<TextField.Root size="2"
             value={draft.name}
             required
             onChange={(event) => {
@@ -595,8 +545,7 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
           />
         </label>
         <label className="ui-field">
-          {copy("ui.expiration")}<input
-            className="ui-input"
+          {copy("ui.expiration")}<TextField.Root size="2"
             value={draft.expiration}
             onChange={(event) => {
               setDraft({ ...draft, expiration: event.target.value });
@@ -604,18 +553,19 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
           />
         </label>
         <label className="ui-checkbox-field">
-          <input
-            className="mr-2"
-            type="checkbox"
+          <Checkbox size="2"
+
             checked={draft.neverExpires}
-            onChange={(event) => {
-              setDraft({ ...draft, neverExpires: event.target.checked });
+            onCheckedChange={(checked) => {
+              setDraft({ ...draft, neverExpires: (checked === true) });
             }}
           />
           {copy("ui.never.expires")}</label>
         </SettingsSection>
         <SettingsSection title={copy("tab.permissions")}>
         <ScopePicker
+          filter={scopeFilter}
+          onFilterChange={setScopeFilter}
           selected={draft.scope}
           onChange={(scope) => {
             setDraft({ ...draft, scope });
@@ -624,15 +574,15 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
         </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
         <div className="ui-actions">
-        <button
-          className="ui-button ui-button-primary"
+        <Button size="2" variant="solid" color="orange"
           type="submit"
           disabled={create.isPending}
         >
-          {copy("ui.create.token")}</button>
-        <button className="ui-button" type="button" disabled={create.isPending} onClick={() => { setDraft(EMPTY_DRAFT); create.reset(); onCancel(); }}>{copy("ui.cancel")}</button>
+          {copy("ui.create.token")}</Button>
+        <Button size="2" variant="soft" color="gray" type="button" disabled={create.isPending} onClick={() => { setDraft(EMPTY_DRAFT); create.reset(); onOpenChange(false); }}>{copy("ui.cancel")}</Button>
         </div>
       </form>
+      </Dialog.Content></Dialog.Root>
       {pending !== null ? (
         <ConfirmDialog
           action="create-admin-token"
@@ -656,6 +606,7 @@ function CreateTokenForm({ onCancel }: { onCancel: () => void }) {
       {reveal !== null ? (
         <SecretDialog
           secret={reveal}
+          returnFocus={triggerRef.current}
           onClose={() => {
             setReveal(null);
             create.reset();
@@ -670,19 +621,17 @@ function EditTokenForm({
   id,
   token,
   onClose,
+  onRestoreFocus,
 }: {
   id: string;
   token: AdminToken;
   onClose: () => void;
+  onRestoreFocus: () => void;
 }) {
   const client = useQueryClient();
   const formRef = useRef<HTMLFormElement>(null);
-  useLayoutEffect(() => {
-    const name = formRef.current?.querySelector<HTMLInputElement>("input");
-    name?.focus();
-    name?.scrollIntoView({ block: "center" });
-  }, []);
   const [draft, setDraft] = useState(() => draftFrom(token));
+  const [scopeFilter, setScopeFilter] = useState("");
   const [pending, setPending] = useState<TokenDraft | null>(null);
   const update = useMutation({
     mutationFn: async (next: TokenDraft) => {
@@ -700,6 +649,9 @@ function EditTokenForm({
   const error = update.error instanceof Error ? update.error.message : null;
   return (
     <>
+      <Dialog.Root open onOpenChange={(next) => { if (!next && !update.isPending && pending === null) onClose(); }}>
+      <Dialog.Content maxWidth="640px" aria-describedby={undefined} onOpenAutoFocus={(event) => { event.preventDefault(); const name = formRef.current?.querySelector<HTMLInputElement>("input"); name?.focus(); name?.scrollIntoView({ block: "center" }); }} onCloseAutoFocus={(event) => { event.preventDefault(); onRestoreFocus(); }} onEscapeKeyDown={(event) => { if (update.isPending || pending !== null) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>
+      <Dialog.Title>{token.name}</Dialog.Title>
       <form
         ref={formRef}
         className="ui-form ui-settings"
@@ -714,8 +666,7 @@ function EditTokenForm({
       >
         <SettingsSection title={copy("ux.general")}>
         <label className="ui-field">
-          {copy("ui.name")}<input
-            className="ui-input"
+          {copy("ui.name")}<TextField.Root size="2"
             value={draft.name}
             required
             onChange={(event) => {
@@ -724,8 +675,7 @@ function EditTokenForm({
           />
         </label>
         <label className="ui-field">
-          {copy("ui.expiration")}<input
-            className="ui-input"
+          {copy("ui.expiration")}<TextField.Root size="2"
             value={draft.expiration}
             onChange={(event) => {
               setDraft({ ...draft, expiration: event.target.value });
@@ -733,18 +683,19 @@ function EditTokenForm({
           />
         </label>
         <label className="ui-checkbox-field">
-          <input
-            className="mr-2"
-            type="checkbox"
+          <Checkbox size="2"
+
             checked={draft.neverExpires}
-            onChange={(event) => {
-              setDraft({ ...draft, neverExpires: event.target.checked });
+            onCheckedChange={(checked) => {
+              setDraft({ ...draft, neverExpires: (checked === true) });
             }}
           />
           {copy("ui.never.expires")}</label>
         </SettingsSection>
         <SettingsSection title={copy("tab.permissions")}>
         <ScopePicker
+          filter={scopeFilter}
+          onFilterChange={setScopeFilter}
           selected={draft.scope}
           onChange={(scope) => {
             setDraft({ ...draft, scope });
@@ -753,15 +704,15 @@ function EditTokenForm({
         </SettingsSection>
         {error ? <p className="ui-alert">{error}</p> : null}
         <div className="ui-actions">
-        <button
-          className="ui-button ui-button-primary"
+        <Button size="2" variant="solid" color="orange"
           type="submit"
           disabled={update.isPending}
         >
-          {copy("ui.update.token")}</button>
-        <button type="button" className="ui-button" disabled={update.isPending} onClick={onClose}>{copy("ui.cancel")}</button>
+          {copy("ui.update.token")}</Button>
+        <Button size="2" variant="soft" color="gray" type="button" disabled={update.isPending} onClick={onClose}>{copy("ui.cancel")}</Button>
         </div>
       </form>
+      </Dialog.Content></Dialog.Root>
       {pending !== null ? (
         <ConfirmDialog
           action="update-admin-token"
@@ -792,7 +743,6 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
   const editTrigger = useRef<HTMLButtonElement | null>(null);
   const closeEditor = () => {
     setEditing(null);
-    if (editTrigger.current?.isConnected) editTrigger.current.focus();
   };
   const [removing, setRemoving] = useState<AdminToken | null>(null);
   const editingId = editing === null ? null : issuedTokenId(editing);
@@ -811,69 +761,62 @@ function TokenTable({ rows }: { rows: AdminToken[] }) {
   return (
     <>
       <div className="ui-table-container" role="region" aria-label={translate("Admin token list")} tabIndex={0}>
-        <table className="ui-table ui-table-records" role="table">
-          <thead role="rowgroup">
-            <tr role="row">
-              <th scope="col">
-                {copy("ui.name")}</th>
-              <th scope="col">
-                {copy("ui.scope")}</th>
-              <th scope="col">{copy("ui.expired")}</th>
-              <th scope="col">{copy("ui.expiration")}</th>
-              <th scope="col">
-                {copy("ui.source")}</th>
-              <th scope="col">{copy("ui.actions")}</th>
-            </tr>
-          </thead>
-          <tbody role="rowgroup">
+        <Table.Root className="ui-table-records">
+          <Table.Header role="rowgroup">
+            <Table.Row role="row">
+              <Table.ColumnHeaderCell scope="col">
+                {copy("ui.name")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">
+                {copy("ui.scope")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.expired")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.expiration")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">
+                {copy("ui.source")}</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell scope="col">{copy("ui.actions")}</Table.ColumnHeaderCell>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body role="rowgroup">
             {rows.map((token, index) => (
-              <tr role="row" key={`${token.name}-${token.created}-${index}`}>
+              <Table.Row role="row" key={`${token.name}-${token.created}-${index}`}>
                 <DataCell label={copy("ui.name")} kind="identity"><strong>{token.name}</strong></DataCell>
                 <DataCell label={copy("ui.scope")} className="ui-identifier">{token.scope.join(", ")}</DataCell>
                 <DataCell label={copy("ui.expired")}>{token.expired ? copy("ui.yes.2") : copy("ui.no.2")}</DataCell>
                 <DataCell label={copy("ui.expiration")}><ReadableInstantText value={token.expiration} /></DataCell>
                 <DataCell label={copy("ui.source")}>{sourceLabel(token)}</DataCell>
                 <DataCell label={copy("ui.actions")} kind="actions" className="ui-record-actions-wide">
-                  {issuedTokenId(token) !== null ? <details className="ui-disclosure">
-                    <summary aria-label={`${copy("ui.actions")}: ${token.name}`}>{copy("ui.actions")}</summary>
-                    <div className="ui-actions">
+                  {issuedTokenId(token) !== null ? <div className="ui-actions">
                     <>
-                      <button
-                        className="ui-button"
+                      <Button size="2" variant="soft" color="gray"
                         type="button"
                         onClick={(event) => {
                           editTrigger.current = event.currentTarget;
                           setEditing(token);
                         }}
                       >
-                        {copy("ui.edit")}</button>
-                      <button
-                        className="ui-button ui-button-danger"
+                        {copy("ui.edit")}</Button>
+                      <Button size="2" variant="solid" color="red"
                         type="button"
                         onClick={() => {
                           setRemoving(token);
                         }}
                       >
-                        {copy("ui.delete.2")}</button>
+                        {copy("ui.delete.2")}</Button>
                     </>
-                    </div>
-                  </details> : null}
+                  </div> : null}
                 </DataCell>
-              </tr>
+              </Table.Row>
             ))}
-          </tbody>
-        </table>
+          </Table.Body>
+        </Table.Root>
       </div>
       {editing !== null && editingId !== null ? (
-        <div className="ui-panel">
-          <div className="ui-page-header"><h3>{editing.name}</h3></div>
-          <EditTokenForm
+        <EditTokenForm
           key={editingId}
           id={editingId}
           token={editing}
           onClose={closeEditor}
+          onRestoreFocus={() => { if (editTrigger.current?.isConnected) editTrigger.current.focus(); }}
           />
-        </div>
       ) : null}
       {removing !== null && removingId !== null ? (
         <ConfirmDialog
@@ -932,7 +875,7 @@ function CurrentToken({ token }: { token: AdminToken }) {
 }
 
 export function AdminTokens() {
-  const createDisclosure = useRef<HTMLDetailsElement>(null);
+  const [creating, setCreating] = useState(false);
   const [offset, setOffset] = useState(readTokenOffset);
   const list = useQuery({
     queryKey: ["admin-tokens", "list", offset],
@@ -964,15 +907,12 @@ export function AdminTokens() {
       aria-label={copy("nav.tokens")}
       aria-busy={list.isPending || current.isPending}
     >
-      <div className="ui-page-header"><h2>{copy("nav.tokens")}</h2></div>
-      <details className="ui-disclosure" ref={createDisclosure}>
-        <summary className="ui-button ui-button-primary">{copy("ui.create.token")}</summary>
-        <CreateTokenForm onCancel={() => { if (createDisclosure.current) createDisclosure.current.open = false; }} />
-      </details>
+      <div className="ui-page-header"><h2>{copy("nav.tokens")}</h2>
+        <CreateTokenForm open={creating} onOpenChange={setCreating} />
+      </div>
       <div className="ui-toolbar">
         <label className="ui-field">
-          {copy("ui.filter.admin.tokens")}<input
-            className="ui-input"
+          {copy("ui.filter.admin.tokens")}<TextField.Root size="2"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -982,18 +922,17 @@ export function AdminTokens() {
           />
         </label>
         <label className="ui-field">
-          {copy("ui.sort")}<select
-            className="ui-input"
+          {copy("ui.sort")}<Select.Root size="2"
             value={query.sort}
-            onChange={(event) => {
-              const next = { filter: query.filter, sort: tokenSortFrom(event.target.value) };
+            onValueChange={(value) => {
+              const next = { filter: query.filter, sort: tokenSortFrom(value) };
               setQuery(next);
               writeTokenQuery(next);
             }}
-          >
-            <option value="name">{copy("ui.name")}</option>
-            <option value="created">{copy("ui.created")}</option>
-          </select>
+          ><Select.Trigger aria-label={copy("ui.sort")} /><Select.Content>
+            <Select.Item value="name">{copy("ui.name")}</Select.Item>
+            <Select.Item value="created">{copy("ui.created")}</Select.Item>
+          </Select.Content></Select.Root>
         </label>
         <p>{copy("ui.default.sort.is.by.name")}</p>
         <p className="ui-muted">{translate("Filtering and sorting apply to the current page")}</p>
@@ -1006,35 +945,32 @@ export function AdminTokens() {
         <>
           <p>{listFailure.message}</p>
           {listFailure.code ? <p>{listFailure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void list.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {currentFailure ? (
         <>
           <p>{currentFailure.message}</p>
           {currentFailure.code ? <p>{currentFailure.code}</p> : null}
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             onClick={() => {
               void current.refetch();
             }}
           >
-            {copy("ui.retry")}</button>
+            {copy("ui.retry")}</Button>
         </>
       ) : null}
       {list.isSuccess && shown.length === 0 ? <p>{list.data.items.length === 0 && offset === 0 && !list.data.hasMore ? copy("ui.no.admin.tokens") : translate("No matches on this page.")}</p> : null}
       {list.isSuccess && shown.length > 0 ? <TokenTable rows={shown} /> : null}
         <div className="ui-actions">
-          <button
-            className="ui-button"
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={offset === 0}
             onClick={() => {
@@ -1043,9 +979,8 @@ export function AdminTokens() {
               writeTokenOffset(next);
             }}
           >
-            {copy("ui.previous")}</button>
-          <button
-            className="ui-button"
+            {copy("ui.previous")}</Button>
+          <Button size="2" variant="soft" color="gray"
             type="button"
             disabled={list.data?.hasMore !== true}
             onClick={() => {
@@ -1054,7 +989,7 @@ export function AdminTokens() {
               writeTokenOffset(next);
             }}
           >
-            {copy("ui.next")}</button>
+            {copy("ui.next")}</Button>
         </div>
       {current.data ? <CurrentToken token={current.data} /> : null}
     </section>
