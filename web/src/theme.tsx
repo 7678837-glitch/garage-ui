@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { CopyKey } from "./copy-en";
+import { useI18n } from "./i18n";
 
 const themeStorageKey = "garage-ui-theme";
 const colorSchemeQuery = "(prefers-color-scheme: dark)";
@@ -7,10 +9,10 @@ export type ThemeChoice = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
 const themeOptions = [
-  ["light", "Light"],
-  ["dark", "Dark"],
-  ["system", "System"],
-] as const;
+  ["light", "theme.light"],
+  ["dark", "theme.dark"],
+  ["system", "theme.system"],
+] as const satisfies ReadonlyArray<readonly [ThemeChoice, CopyKey]>;
 
 export function readThemeChoice(storage: Pick<Storage, "getItem">): ThemeChoice {
   const value = storage.getItem(themeStorageKey);
@@ -63,12 +65,13 @@ export function ThemeChooser() {
       media.removeEventListener("change", onChange);
     };
   }, []);
+  const { t } = useI18n();
   const resolved = resolveTheme(choice, prefersDarkScheme);
   useEffect(() => {
     applyResolvedTheme(document.documentElement, resolved);
   }, [resolved]);
   return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Theme">
+    <div className="flex flex-wrap gap-2" role="group" aria-label={t("theme.group")}>
       {themeOptions.map(([option, label]) => (
         <button
           key={option}
@@ -80,7 +83,7 @@ export function ThemeChooser() {
             setChoice(option);
           }}
         >
-          {label}
+          {t(label)}
         </button>
       ))}
     </div>

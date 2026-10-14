@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { CopyKey } from "./copy-en";
+import { useI18n } from "./i18n";
 
 const sections = [
   { id: "overview", label: "Overview", adminOnly: false },
@@ -220,6 +222,19 @@ export function useLocationHash(): [string, (next: string) => void] {
   return [hash, assign];
 }
 
+const sectionCopy = {
+  overview: "nav.overview",
+  buckets: "nav.buckets",
+  keys: "nav.keys",
+  nodes: "nav.nodes",
+  workers: "nav.workers",
+  "block-errors": "nav.blockErrors",
+  audit: "nav.audit",
+  tokens: "nav.tokens",
+  users: "nav.users",
+  settings: "nav.settings",
+} as const satisfies Record<SectionId, CopyKey>;
+
 export function Nav({
   role,
   section,
@@ -233,16 +248,17 @@ export function Nav({
   onToggle: () => void;
   onSelect: (id: SectionId) => void;
 }) {
+  const { t } = useI18n();
   const visible = sections.filter((item) => !item.adminOnly || role === "admin");
   return (
-    <nav className="grid w-full content-start gap-2 sm:w-44 sm:shrink-0" aria-label="Sections">
+    <nav className="grid w-full content-start gap-2 sm:w-44 sm:shrink-0" aria-label={t("nav.sections")}>
       <button
         className="border border-ink px-3 py-1 text-left"
         type="button"
         aria-expanded={open}
         onClick={onToggle}
       >
-        Menu
+        {t("nav.menu")}
       </button>
       {open ? (
         <div className="grid gap-2">
@@ -261,7 +277,7 @@ export function Nav({
                 onSelect(item.id);
               }}
             >
-              {item.label}
+              {t(sectionCopy[item.id])}
             </a>
           ))}
         </div>

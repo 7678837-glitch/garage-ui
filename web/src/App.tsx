@@ -20,6 +20,7 @@ import { BlockErrors } from "./BlockErrors";
 import { Buckets } from "./Buckets";
 import { ClusterHealth } from "./ClusterHealth";
 import { ClusterNodes } from "./ClusterNodes";
+import { LanguageChooser, useI18n } from "./i18n";
 import { Keys } from "./Keys";
 import {
   Nav,
@@ -151,6 +152,7 @@ function SetupForm() {
 
 function LoginForm() {
   const client = useQueryClient();
+  const { t } = useI18n();
   const form = useForm<Credentials>({ resolver: zodResolver(credentials) });
   const { errors } = form.formState;
   const login = useMutation({
@@ -185,7 +187,7 @@ function LoginForm() {
         type="submit"
         disabled={login.isPending}
       >
-        {login.isPending ? "Logging in" : "Log in"}
+        {login.isPending ? t("auth.loggingIn") : t("auth.logIn")}
       </button>
     </form>
   );
@@ -348,6 +350,7 @@ function GarageBanner() {
 
 function Home({ status }: { status: SessionStatus }) {
   const client = useQueryClient();
+  const { t } = useI18n();
   const health = useQuery({
     queryKey: ["healthz"],
     queryFn: () => api<Health>("/healthz"),
@@ -435,7 +438,7 @@ function Home({ status }: { status: SessionStatus }) {
                 disabled={logout.isPending}
                 onClick={() => logout.mutate()}
               >
-                {logout.isPending ? "Logging out" : "Log out"}
+                {logout.isPending ? t("auth.loggingOut") : t("auth.logOut")}
               </button>
             </div>
             {admin ? <ClusterHealth /> : null}
@@ -447,6 +450,7 @@ function Home({ status }: { status: SessionStatus }) {
         {section === "audit" && admin ? <Audit /> : null}
         {section === "settings" ? (
           <>
+            <LanguageChooser />
             <form
               className="grid max-w-sm gap-3"
               onSubmit={form.handleSubmit((input) => change.mutate(input))}
