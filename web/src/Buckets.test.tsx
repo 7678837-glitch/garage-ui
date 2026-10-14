@@ -1537,7 +1537,7 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   }));
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   renderBuckets(true);
-  fireEvent.click(await screen.findByRole("button", { name: "Upload", exact: true }));
+  fireEvent.click(await screen.findByRole("button", { name: "Upload" }));
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["body"], "new.txt")] } });
   await waitFor(() => expect(requests).toHaveLength(1));
   await changeBucketHash("#bucket/B/objects");

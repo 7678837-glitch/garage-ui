@@ -192,8 +192,8 @@ async function geometry(page: Page, objects: Locator) {
 
 async function touchTarget(control: Locator, width: number) {
   const box = await bounds(control);
-  expect(box.width).toBeGreaterThanOrEqual(44);
-  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeGreaterThanOrEqual(36);
+  expect(box.height).toBeGreaterThanOrEqual(36);
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(width);
 }

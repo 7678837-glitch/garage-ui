@@ -8,21 +8,24 @@
 @media (max-width: 899px) {
   .console-topbar { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 60px; }
   .console-breadcrumb { display: none; }
-  .console-parent-link { display: flex; align-items: center; min-height: 44px; min-width: 0; white-space: normal; }
+  .console-parent-link { display: flex; align-items: center; min-height: var(--touch-control-height); min-width: 0; white-space: normal; }
   .console-session { width: auto; max-width: 100px; }
 }
 
 @media (max-width: 639px) {
+  .console-topbar { min-height: 56px; padding: 8px 12px; }
+  .console-header-disclosure > summary { padding: 4px 8px; }
+  .ui-audit-table tbody tr { padding: 12px; }
   .ui-resource-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
   .ui-resource-filters > .ui-field { min-width: 0; }
   .ui-resource-filters > .ui-filter-help { grid-column: 1 / -1; }
-  .ui-filter-help > summary { min-height: 44px; display: flex; align-items: center; gap: 6px; }
+  .ui-filter-help > summary { min-height: var(--touch-control-height); display: flex; align-items: center; gap: 6px; }
   .ui-filter-help > summary::before { content: "▸"; }
   .ui-filter-help[open] > summary::before { content: "▾"; }
   .ui-users-header { align-items: flex-start; gap: 8px; }
   .ui-users-header > .ui-disclosure { min-width: 0; }
   .ui-users-header:has(> .ui-disclosure[open]) > .ui-disclosure { width: 100%; }
-  .ui-bucket-list tbody tr, .ui-key-list tbody tr { gap: 4px 12px; padding: 12px 16px; }
+  .ui-bucket-list tbody tr, .ui-key-list tbody tr { gap: 4px 12px; padding: 8px 12px; }
   .ui-bucket-list [data-kind="actions"] .ui-data-label, .ui-key-list [data-kind="actions"] .ui-data-label { display: none; }
   .ui-bucket-list [data-kind="metadata"] .ui-data-label { display: inline; margin-right: 8px; }
   .ui-bucket-list [data-kind="metadata"] .ui-data-value { display: inline; }
@@ -30,16 +33,16 @@
   .ui-bucket-list .ui-bucket-usage-cell > .ui-data-label { display: none; }
   .ui-bucket-list .ui-bucket-usage-desktop { display: none; }
   .ui-bucket-list .ui-bucket-usage-mobile { display: block; }
-  .ui-bucket-usage-mobile > summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; cursor: pointer; }
+  .ui-bucket-usage-mobile > summary { min-height: var(--touch-control-height); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; cursor: pointer; }
   .ui-bucket-usage-mobile > summary::before { content: "▸"; }
   .ui-bucket-usage-mobile[open] > summary::before { content: "▾"; }
   .ui-bucket-usage-mobile > summary > :first-child { color: var(--muted); }
   .ui-bucket-usage-mobile > :not(summary) { padding-block: 4px 12px; }
-  .ui-bucket-list [data-kind="identity"] a { display: inline-flex; align-items: center; min-height: 44px; }
-  .ui-bucket-list .ui-identity-details > summary { min-height: 44px; padding-block: 0; }
+  .ui-bucket-list [data-kind="identity"] a { display: inline-flex; align-items: center; min-height: var(--touch-control-height); }
+  .ui-bucket-list .ui-identity-details > summary { min-height: var(--touch-control-height); padding-block: 0; }
   .ui-key-list [data-kind="identity"] .ui-data-value { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; }
-  .ui-key-list [data-kind="identity"] a { min-height: 44px; display: flex; align-items: center; }
-  .ui-user-list tbody tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 4px 8px; padding: 12px 16px; min-height: 104px; }
+  .ui-key-list [data-kind="identity"] a { min-height: var(--touch-control-height); display: flex; align-items: center; }
+  .ui-user-list tbody tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 4px 8px; padding: 8px 12px; }
   .ui-user-list [data-kind="identity"] .ui-data-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-height: 24px; }
   .ui-user-list .ui-user-mobile-summary { display: inline-flex; gap: 8px; font-size: 12px; color: var(--muted); }
   .ui-user-list .ui-user-role, .ui-user-list .ui-user-disabled { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
