@@ -182,9 +182,11 @@ function byteRate(percent: number | null, loaded: number, startedAt: number, now
 export function UploadPanel({
   bucketId,
   existingKeys,
+  onActiveChange,
 }: {
   bucketId: string;
   existingKeys: readonly string[];
+  onActiveChange?: (count: number) => void;
 }) {
   const queryClient = useQueryClient();
   const guardId = useId();
@@ -192,6 +194,8 @@ export function UploadPanel({
   const dropGeneration = useRef(0);
   const { t } = useI18n();
   const [rows, setRows] = useState<Row[]>([]);
+  const [pendingDrops, setPendingDrops] = useState(0);
+  const [dropError, setDropError] = useState<string | null>(null);
   const rowsRef = useRef(rows);
   const abortRef = useRef(new Map<number, () => void>());
   const nextIdRef = useRef(1);
@@ -202,6 +206,7 @@ export function UploadPanel({
   rowsRef.current = rows;
 
   function commit(next: Row[]) {
+    if (!mounted.current) return;
     rowsRef.current = next;
     setRows(next);
   }
@@ -218,7 +223,10 @@ export function UploadPanel({
     abortRef.current.clear();
     setFormDirty(guardId, false);
     window.onbeforeunload = null;
-    if (mounted.current) setRows(next);
+    if (mounted.current) {
+      setRows(next);
+      setPendingDrops(0);
+    }
   }
 
   function pump() {
@@ -396,14 +404,19 @@ export function UploadPanel({
   }, []);
 
   useEffect(() => {
-    const busy = rows.some((row) => row.phase.kind === "queued" || row.phase.kind === "uploading");
+    const busy = pendingDrops > 0 || rows.some((row) => row.phase.kind === "queued" || row.phase.kind === "uploading");
     setFormDirty(guardId, busy, () => cancelAllRef.current());
     window.onbeforeunload = busy ? () => "" : null;
     return () => {
       setFormDirty(guardId, false);
       window.onbeforeunload = null;
     };
-  }, [guardId, rows]);
+  }, [guardId, pendingDrops, rows]);
+
+  const activeCount = pendingDrops + rows.filter((row) => row.phase.kind === "queued" || row.phase.kind === "uploading").length;
+  useEffect(() => {
+    onActiveChange?.(activeCount);
+  }, [activeCount, onActiveChange]);
 
   const keys = new Set(existingKeys);
 
@@ -423,25 +436,41 @@ export function UploadPanel({
       return;
     }
     const generation = dropGeneration.current;
-    void filesFromDrop(entries).then((files) => {
-      if (generation === dropGeneration.current) addFiles(files, true);
-    });
+    setPendingDrops((current) => current + 1);
+    setDropError(null);
+    void filesFromDrop(entries).then(
+      (files) => {
+        if (generation !== dropGeneration.current || !mounted.current) return;
+        setPendingDrops((current) => current - 1);
+        addFiles(files, true);
+      },
+      (error: unknown) => {
+        if (generation !== dropGeneration.current || !mounted.current) return;
+        setPendingDrops((current) => current - 1);
+        setDropError(error instanceof Error ? error.message : copy("ui.failed"));
+      },
+    );
   }
 
   return (
     <section
       aria-label={copy("ui.upload")}
-      className="grid gap-3"
+      className="ui-form"
       onDragOver={(event) => {
         event.preventDefault();
       }}
       onDrop={onDrop}
     >
-      <h2 className="text-lg font-semibold">{copy("ui.upload")}</h2>
-      <p>{copy("ui.drop.files.here")}</p>
-      <label className="grid gap-1">
+      <p className="ui-muted">{copy("ui.drop.files.here")}</p>
+      {pendingDrops > 0 ? <div className="ui-actions">
+        <span className="ui-status">{copy("ui.queued")} · {pendingDrops}</span>
+        <button className="ui-button" type="button" onClick={cancelAll}>{copy("ui.cancel")}</button>
+      </div> : null}
+      {dropError !== null ? <p className="ui-alert" role="alert">{dropError}</p> : null}
+      <div className="ui-toolbar items-end">
+      <label className="ui-field flex-1">
         {copy("ui.choose.files")}<input
-          className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
+          className="ui-input w-full min-w-0 max-w-full"
           multiple
           type="file"
           onChange={(event) => {
@@ -450,9 +479,9 @@ export function UploadPanel({
           }}
         />
       </label>
-      <label className="grid gap-1">
+      <label className="ui-field">
         {copy("ui.choose.folder")}<input
-          className="w-full min-w-0 max-w-full border border-ink px-3 py-1"
+          className="ui-input w-full min-w-0 max-w-full"
           multiple
           type="file"
           webkitdirectory=""
@@ -462,15 +491,16 @@ export function UploadPanel({
           }}
         />
       </label>
-      <button className="border border-ink px-3 py-1 text-left" type="button" onClick={clearFinished}>
+      </div>
+      <button className="ui-button" type="button" onClick={clearFinished}>
         {copy("ui.clear.finished")}</button>
-      <ul className="grid gap-2">
+      <ul className="grid gap-2" aria-live="polite">
         {rows.map((row) => {
           const prompt = row.phase.kind === "queued" && needsPrompt(row, rows, keys);
           return (
-            <li key={row.id} className="flex flex-wrap items-center gap-2">
-              <span>{row.name}</span>
-              <span>{translate(STATUS_LABEL[row.phase.kind])}</span>
+            <li key={row.id} className="ui-actions border-b border-line py-2">
+              <span className="ui-identifier flex-1" title={row.name}>{row.name}</span>
+              <span className="ui-status">{translate(STATUS_LABEL[row.phase.kind])}</span>
               {row.phase.kind === "uploading" && row.phase.percent !== null ? (
                 <span>{row.phase.percent}%</span>
               ) : null}
@@ -482,7 +512,7 @@ export function UploadPanel({
               {prompt ? (
                 <>
                   <button
-                    className="border border-ink px-3 py-1 text-left"
+                    className="ui-button"
                     type="button"
                     onClick={() => {
                       overwrite(row.id, false);
@@ -490,7 +520,7 @@ export function UploadPanel({
                   >
                     {copy("ui.overwrite")}</button>
                   <button
-                    className="border border-ink px-3 py-1 text-left"
+                    className="ui-button"
                     type="button"
                     onClick={() => {
                       skip(row.id);
@@ -498,7 +528,7 @@ export function UploadPanel({
                   >
                     {copy("ui.skip")}</button>
                   <button
-                    className="border border-ink px-3 py-1 text-left"
+                    className="ui-button"
                     type="button"
                     onClick={() => {
                       overwrite(row.id, true);
@@ -509,7 +539,7 @@ export function UploadPanel({
               ) : null}
               {row.phase.kind === "queued" || row.phase.kind === "uploading" ? (
                 <button
-                  className="border border-ink px-3 py-1 text-left"
+                  className="ui-button"
                   type="button"
                   onClick={() => {
                     cancel(row.id);
@@ -519,7 +549,7 @@ export function UploadPanel({
               ) : null}
               {row.phase.kind === "failed" || row.phase.kind === "cancelled" ? (
                 <button
-                  className="border border-ink px-3 py-1 text-left"
+                  className="ui-button"
                   type="button"
                   onClick={() => {
                     retry(row.id);

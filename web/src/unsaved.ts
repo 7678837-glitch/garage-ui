@@ -1,8 +1,10 @@
-import { copy } from "./i18n";
+import { copy, translate } from "./i18n";
 export type SavePhase = "idle" | "pending" | "success" | "failed";
 
 function leavePrompt(): string {
-  return copy("ui.leave.this.page.unsaved.changes.will.be.lost");
+  return leaveActions.size > 0
+    ? translate("Leave this page? Unfinished uploads will be cancelled and unsaved changes will be lost.")
+    : copy("ui.leave.this.page.unsaved.changes.will.be.lost");
 }
 
 const dirtyIds = new Set<string>();

@@ -358,7 +358,7 @@ test("requests the next token and shows that page", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
   expect(await screen.findByRole("button", { name: "b.txt" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "a.txt" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(true);
   expect(tokens).toEqual([null, "page-2"]);
 });
 
@@ -1969,3 +1969,21 @@ test("refreshes a previously rendered search after prefix deletion", async () =>
   expect(searches).toBe(2);
 });
 
+test("returns to the prior object page using its continuation cursor", async () => {
+  const tokens: (string | null)[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    if (url.pathname.endsWith("/objects")) {
+      const token = url.searchParams.get("next"); tokens.push(token);
+      return json(token === "page-2" ? listed("second.txt") : page([objectRow("first.txt", 1, "2026-10-11T00:00:00Z")], "page-2"));
+    }
+    return json({});
+  }));
+  renderObjects();
+  await screen.findByRole("button", { name: "first.txt" });
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByRole("button", { name: "second.txt" });
+  fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+  await screen.findByRole("button", { name: "first.txt" });
+  expect(tokens).toEqual([null, "page-2", null]);
+});

@@ -7,6 +7,7 @@ import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
 import { bucketLocationFromHash, hashForObjects, useLocationHash } from "./Nav";
+import { Pagination } from "./ui";
 import { UploadPanel } from "./UploadPanel";
 
 type ObjectEntry = {
@@ -706,6 +707,9 @@ export function Objects({
       search: address.filter.length >= 2 ? address.filter : null,
     };
   });
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [activeUploads, setActiveUploads] = useState(0);
   const [draft, setDraft] = useState(() => readObjectQuery().filter);
   const [trackedPrefix, setTrackedPrefix] = useState(prefix);
   const [kept, setKept] = useState<{ prefix: string; page: ObjectPage } | null>(null);
@@ -737,6 +741,8 @@ export function Objects({
     selected = null;
     picked = [];
     setTrackedPrefix(prefix);
+    setCursors([null]);
+    setPageIndex(0);
     setDraft("");
     writeObjectQuery("", browse.sort);
     setBrowse((current) => ({
@@ -978,6 +984,8 @@ export function Objects({
     !searching && page && page.next && page.next !== pageToken && !list.isError ? page.next : null;
 
   function openPrefix(nextPrefix: string) {
+    setCursors([null]);
+    setPageIndex(0);
     setDraft("");
     setCopyNote(null);
     setBrowse((current) => ({
@@ -1029,16 +1037,19 @@ export function Objects({
   }
 
   return (
-    <section className="grid gap-4" aria-label={copy("nav.objects")} aria-busy={loading}>
+    <section className="ui-page" aria-label={copy("nav.objects")} aria-busy={loading}>
+      <header className="ui-page-header">
+      <h2>{copy("nav.objects")}</h2>
       <button
-        className="border border-neutral-900 px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         onClick={onBack}
       >
         {copy("ui.back.to.buckets")}</button>
-      <nav aria-label={copy("ui.prefix")} className="flex flex-wrap gap-2">
+      </header>
+      <nav aria-label={copy("ui.prefix")} className="ui-actions">
         <button
-          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
           type="button"
           onClick={() => {
             openPrefix("");
@@ -1049,7 +1060,7 @@ export function Objects({
         {prefixSegments(prefix).map((segment) => (
           <button
             key={segment.prefix}
-            className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+            className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
             type="button"
             onClick={() => {
               openPrefix(segment.prefix);
@@ -1059,14 +1070,17 @@ export function Objects({
           </button>
         ))}
       </nav>
+      <div className="ui-toolbar items-end">
       <form
-        className="flex flex-wrap items-end gap-2"
+        className="ui-actions items-end"
         onSubmit={(event) => {
           event.preventDefault();
           const q = draft.trim();
           if (q.length < 2) {
             return;
           }
+          setCursors([null]);
+          setPageIndex(0);
           setBrowse((current) => ({
             ...current,
             search: q,
@@ -1076,9 +1090,9 @@ export function Objects({
           writeObjectQuery(q, browse.sort);
         }}
       >
-        <label className="block text-sm">
+        <label className="ui-field">
           {copy("ui.search")}<input
-            className="mt-1 border border-neutral-300 px-2 py-1"
+            className="ui-input"
             value={draft}
             autoComplete="off"
             onChange={(event) => {
@@ -1086,12 +1100,12 @@ export function Objects({
             }}
           />
         </label>
-        <button className="border border-neutral-900 px-3 py-1 text-left" type="submit">
+        <button className="ui-button" type="submit">
           {copy("ui.search")}</button>
       </form>
-      <label className="block text-sm">
+      <label className="ui-field">
         {copy("ui.sort")}<select
-          className="mt-1 border border-neutral-300 px-2 py-1"
+          className="ui-input"
           value={browse.sort}
           onChange={(event) => {
             const value = event.target.value;
@@ -1107,15 +1121,25 @@ export function Objects({
           <option value="time">{copy("ui.time")}</option>
         </select>
       </label>
+      </div>
       {browse.sort !== "key" ? <p>{copy("ui.only.this.page")}</p> : null}
+      {canWrite ? (
+        <details className="ui-disclosure">
+          <summary>
+            {copy("ui.upload")}
+            {activeUploads > 0 ? <span className="ui-status ml-3">{copy("ui.uploading")} · {activeUploads}</span> : null}
+          </summary>
+          <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} onActiveChange={setActiveUploads} />
+        </details>
+      ) : null}
       {loading && !showRows ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.objects")} />
       ) : null}
-      {showFailure && failure ? <p>{failure.message}</p> : null}
+      {showFailure && failure ? <p className="ui-alert">{failure.message}</p> : null}
       {showFailure && failure?.code ? <p>{failure.code}</p> : null}
       {needsKey ? (
         <form
-          className="flex flex-wrap items-end gap-2"
+          className="ui-panel ui-actions items-end"
           onSubmit={(event) => {
             event.preventDefault();
             if (keyChoice.length === 0 || chooseKey.isPending) {
@@ -1124,9 +1148,9 @@ export function Objects({
             chooseKey.mutate(keyChoice);
           }}
         >
-          <label className="block text-sm">
+          <label className="ui-field">
             {copy("ui.bucket.key")}<select
-              className="mt-1 border border-neutral-300 px-2 py-1"
+              className="ui-input"
               value={keyChoice}
               onChange={(event) => {
                 setKeyChoice(event.target.value);
@@ -1141,7 +1165,7 @@ export function Objects({
             </select>
           </label>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="submit"
             disabled={keyChoice.length === 0 || chooseKey.isPending}
           >
@@ -1154,7 +1178,7 @@ export function Objects({
       {showMeta && metaFailure?.code ? <p>{metaFailure.code}</p> : null}
       {showFailure || showMeta ? (
         <button
-          className="border border-neutral-900 px-3 py-1 text-left"
+          className="ui-button"
           type="button"
           onClick={retry}
         >
@@ -1169,16 +1193,17 @@ export function Objects({
       ) : null}
       {searching && found.data?.truncated && found.data.reason ? <p>{found.data.reason}</p> : null}
       {shownPicked.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="ui-panel ui-actions">
+          <span className="ui-status">{fill(copy("ui.objects"), { used: shownPicked.length })}</span>
           <button
-            className="border border-neutral-900 px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={copyPaths}
           >
             {copy("ui.copy.path")}</button>
           {canWrite ? (
             <button
-              className="border border-neutral-900 px-3 py-1 text-left"
+              className="ui-button"
               type="button"
               onClick={() => {
                 // One key still uses DELETE. Two or more keys POST objects:delete. One click must not call the batch route.
@@ -1197,7 +1222,7 @@ export function Objects({
           {canTransfer && shownPicked.length > 1 ? (
             <>
               <button
-                className="border border-neutral-900 px-3 py-1 text-left"
+                className="ui-button"
                 type="button"
                 disabled={archiveZip.isPending}
                 onClick={() => {
@@ -1221,7 +1246,7 @@ export function Objects({
           ) : null}
           {canTransfer && singleKey !== null ? (
             <a
-              className="border border-neutral-900 px-3 py-1 text-left"
+              className="ui-button"
               href={`${metadataPath(bucketId, singleKey)}?download=1`}
               target="_blank"
               rel="noopener"
@@ -1232,7 +1257,7 @@ export function Objects({
             ? SHARE_TIERS.map((tier) => (
                 <button
                   key={tier.seconds}
-                  className="border border-neutral-900 px-3 py-1 text-left"
+                  className="ui-button"
                   type="button"
                   onClick={() => {
                     shareObject.reset();
@@ -1255,7 +1280,7 @@ export function Objects({
             <>
               <p>{copy("ui.select.the.paths.and.copy.them")}</p>
               <textarea
-                className="min-w-0 max-w-full border border-neutral-300 px-2 py-1"
+                className="ui-input"
                 readOnly
                 aria-label={copy("ui.selected.paths")}
                 value={pathText}
@@ -1264,40 +1289,14 @@ export function Objects({
           ) : null}
         </div>
       ) : null}
-      {preview ? (
-        <section aria-label={copy("ui.object.details")}>
-          <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
-          <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
-          <p>{fill(copy("ui.etag"), { etag: preview.etag })}</p>
-          <p>
-            {copy("ui.last.modified")} <InstantText value={preview.lastModified} />
-          </p>
-          {kind !== null ? (
-            <InlineBody
-              kind={kind}
-              objectKey={preview.key}
-              src={previewPath(bucketId, preview.key)}
-              text={previewText.data}
-            />
-          ) : null}
-        </section>
-      ) : null}
-      {canWrite ? (
-        <details>
-          <summary className="cursor-pointer py-2 text-lg font-semibold focus-visible:outline focus-visible:outline-2">
-            {copy("ui.upload")}
-          </summary>
-          <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} />
-        </details>
-      ) : null}
       {showRows && visible.length > 0 ? (
-        <div className="min-w-0 overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+        <div className="ui-table-container" role="region" aria-label={copy("nav.objects")} tabIndex={0}>
+          <table className="ui-table">
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
                   <button
-                    className="border border-neutral-900 px-2 py-1 text-left"
+                    className="ui-button"
                     type="button"
                     onClick={selectPage}
                   >
@@ -1316,10 +1315,10 @@ export function Objects({
                 entry.kind === "prefix" ? (
                   <tr key={`prefix:${entry.prefix}`}>
                     <td />
-                    <td className="min-w-0 max-w-full break-all py-2 pr-3">
+                    <td className="min-w-0 max-w-full break-all">
                       <div className="flex flex-wrap items-center gap-2">
                         <button
-                          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+                          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
                           type="button"
                           onClick={() => {
                             openPrefix(entry.prefix);
@@ -1329,7 +1328,7 @@ export function Objects({
                         </button>
                         {canWrite ? (
                           <button
-                            className="border border-neutral-900 px-2 py-1 text-left"
+                            className="ui-button"
                             type="button"
                             onClick={() => {
                               removePrefix.reset();
@@ -1357,13 +1356,13 @@ export function Objects({
                         }}
                       />
                     </td>
-                    <td className="min-w-0 max-w-full break-all py-2 pr-3">
+                    <td className="min-w-0 max-w-full break-all">
                       <div className="flex flex-wrap items-center gap-2">
                         {canTransfer && bitmapKey(entry.key) ? (
                           <ObjectThumb src={thumbnailPath(bucketId, entry.key)} />
                         ) : null}
                         <button
-                          className={`${wrap} border border-neutral-900 px-2 py-1 text-left`}
+                          className={`${wrap} ui-button ui-identifier whitespace-normal text-left`}
                           type="button"
                           onClick={() => {
                             setBrowse((current) => ({ ...current, selected: entry.key }));
@@ -1373,13 +1372,14 @@ export function Objects({
                         </button>
                         {canManage ? (
                           <button
-                            className="border border-neutral-900 px-2 py-1 text-left"
+                            className="ui-button"
+                            aria-label={fill(copy("ui.inspect"), { key: entry.key })}
                             type="button"
                             onClick={() => {
                               setInspectKey(entry.key);
                             }}
                           >
-                            {fill(copy("ui.inspect"), { key: entry.key })}</button>
+                            {copy("ui.object.details")}</button>
                         ) : null}
                       </div>
                     </td>
@@ -1394,11 +1394,50 @@ export function Objects({
           </table>
         </div>
       ) : null}
+      {!searching && showRows ? (
+        <Pagination
+          page={pageIndex + 1}
+          hasPrevious={pageIndex > 0}
+          hasNext={nextPage !== null}
+          pending={listBusy}
+          onPrevious={() => {
+            const previous = Math.max(0, pageIndex - 1);
+            setPageIndex(previous);
+            setBrowse((current) => ({ ...current, next: cursors[previous], selected: null }));
+          }}
+          onNext={() => {
+            if (nextPage === null) return;
+            setCursors((current) => [...current.slice(0, pageIndex + 1), nextPage]);
+            setPageIndex(pageIndex + 1);
+            setBrowse((current) => ({ ...current, next: nextPage, selected: null }));
+          }}
+        />
+      ) : null}
+      {preview ? (
+        <section className="ui-panel" aria-label={copy("ui.object.details")}>
+          <h3 className="ui-identifier">{preview.key}</h3>
+          <p>{fill(copy("ui.size.2"), { size: preview.size })}</p>
+          <p>{fill(copy("ui.content.type"), { contentType: preview.contentType })}</p>
+          <p>{fill(copy("ui.etag"), { etag: preview.etag })}</p>
+          <p>
+            {copy("ui.last.modified")} <InstantText value={preview.lastModified} />
+          </p>
+          {kind !== null ? (
+            <InlineBody
+              kind={kind}
+              objectKey={preview.key}
+              src={previewPath(bucketId, preview.key)}
+              text={previewText.data}
+            />
+          ) : null}
+        </section>
+      ) : null}
       {inspect.data && inspected !== null && inspect.data.key === inspected ? (
-        <section aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
+        <section className="ui-panel" aria-label={fill(copy("ui.inspect.2"), { inspected: inspected })}>
+          <h3 className="ui-identifier">{inspected}</h3>
           {inspect.data.versions.map((version) => (
             <div key={version.uuid}>
-              <p className="break-all">{version.uuid}</p>
+              <p className="ui-identifier">{version.uuid}</p>
               {INSPECT_FLAGS.map((flag) => (
                 <p key={flag}>
                   {flag} {yesNo(version[flag])}
@@ -1409,16 +1448,6 @@ export function Objects({
         </section>
       ) : null}
       {meta.data && selected === meta.data.key ? <p>{meta.data.contentType}</p> : null}
-      {nextPage ? (
-        <button
-          className="border border-neutral-900 px-3 py-1 text-left"
-          type="button"
-          onClick={() => {
-            setBrowse((current) => ({ ...current, next: nextPage, selected: null }));
-          }}
-        >
-          {copy("ui.next.page")}</button>
-      ) : null}
       {pendingDelete?.kind === "object" ? (
         <ConfirmDialog
           action="delete-object"

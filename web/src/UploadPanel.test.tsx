@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Objects } from "./Objects";
 import { UploadPanel } from "./UploadPanel";
-import { releaseHash } from "./unsaved";
+import { releaseHash, setFormDirty } from "./unsaved";
 
 type Progress = { lengthComputable: boolean; loaded: number; total: number };
 
@@ -528,7 +528,7 @@ test("preserves active uploads on stay and cancels queued work on accepted navig
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   expect(releaseHash("#departed")).toBe(false);
-  expect(confirm).toHaveBeenCalledOnce();
+  expect(confirm).toHaveBeenCalledWith("Leave this page? Unfinished uploads will be cancelled and unsaved changes will be lost.");
   expect(FakeRequest.sent.every((request) => !request.aborted)).toBe(true);
   expect(within(row("a.txt")).getByRole("button", { name: "Cancel" })).toBeTruthy();
   confirm.mockReturnValue(true);
@@ -579,14 +579,58 @@ test("successful upload refreshes rendered search results while collapsed jobs r
   fireEvent.change(screen.getByLabelText("Search"), { target: { value: "new" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByText("There are no objects.");
-  const disclosure = screen.getByText("Upload", { selector: "summary" }).closest("details")!;
+  const disclosure = screen.getByText("Upload", { selector: "summary" }).closest("details");
+  if (!disclosure) throw new Error("missing upload disclosure");
   expect(disclosure.open).toBe(false);
   fireEvent.click(screen.getByText("Upload", { selector: "summary" }));
   choose(["new.txt"]);
-  fireEvent.click(disclosure.querySelector("summary")!);
+  const summary = disclosure.querySelector("summary");
+  if (!summary) throw new Error("missing upload summary");
+  fireEvent.click(summary);
   expect(disclosure.open).toBe(false);
+  expect(summary.textContent).toContain("Uploading · 1");
   expect(FakeRequest.sent[0]?.aborted).toBe(false);
   await act(async () => { FakeRequest.sent[0]?.succeed(); });
   expect(await screen.findByRole("button", { name: "new.txt" })).toBeTruthy();
   expect(searches).toBe(2);
+});
+
+test("accepted browser departure aborts uploads and cannot start queued work", async () => {
+  window.history.replaceState(null, "", "/#objects");
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  act(() => {
+    window.history.replaceState(null, "", "/#accepted-departure");
+    window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: "http://localhost/#objects" }));
+  });
+  expect(FakeRequest.sent.every((request) => request.aborted)).toBe(true);
+  await act(async () => { FakeRequest.sent[0]?.succeed(); });
+  expect(FakeRequest.sent).toHaveLength(3);
+  window.history.replaceState(null, "", "/");
+});
+test("form-only navigation keeps the original unsaved-changes prompt", () => {
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  setFormDirty("test-form", true);
+  try {
+    expect(releaseHash("#form-departure")).toBe(false);
+    expect(confirm).toHaveBeenCalledWith("Leave this page? Unsaved changes will be lost.");
+  } finally { setFormDirty("test-form", false); }
+});
+
+test("departure cancels a dropped directory still being read before any upload starts", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} />);
+  let deliver: ((entries: DropEntry[]) => void) | undefined;
+  dropEntries([{ isFile: false, isDirectory: true, name: "docs", createReader: () => ({ readEntries(done) { deliver = done; } }) }]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  expect(releaseHash("#directory-departure")).toBe(false);
+  expect(confirm).toHaveBeenCalledOnce();
+  confirm.mockReturnValue(true);
+  act(() => { expect(releaseHash("#directory-departure")).toBe(true); });
+  await act(async () => {
+    deliver?.([{ isFile: true, isDirectory: false, name: "late.txt", file(done) { done(new File(["late"], "late.txt")); } }]);
+    await Promise.resolve();
+    deliver?.([]);
+  });
+  expect(FakeRequest.sent).toHaveLength(0);
 });
