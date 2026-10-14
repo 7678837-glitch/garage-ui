@@ -123,7 +123,11 @@ impl App {
             return cached;
         }
         let probed = load.await;
-        *slot = Some(probed.clone());
+        if probed.endpoint.is_some()
+            || (self.settings.s3_endpoint_url.is_some() && probed.region.is_some())
+        {
+            *slot = Some(probed.clone());
+        }
         probed
     }
 
@@ -131,10 +135,6 @@ impl App {
         self.credentials.lock().await.clear(mutation);
     }
 
-    // CredentialCache::read is synchronous. block_on on the request thread panics,
-    // so the S3 call runs on a runtime that outlives the call. A runtime created
-    // inside this function would be dropped when the headers return, and that
-    // aborts the HTTP connection before the caller reads the body.
     pub(crate) async fn read_credential<T, F, Fut>(
         &self,
         bucket_id: &str,
@@ -146,31 +146,44 @@ impl App {
         F: FnMut(credentials::BucketCredential) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = credentials::Operation<T>> + Send + 'static,
     {
-        let cache = Arc::clone(&self.credentials);
-        let bucket_id = bucket_id.to_string();
+        use credentials::{Operation, ReadFailure};
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
             .unwrap_or(0);
-        tokio::task::spawn_blocking(move || {
-            let runtime = s3_runtime();
-            let mut guard = cache.blocking_lock();
-            guard.read(
-                &bucket_id,
-                now,
-                || load.clone(),
-                |credential| {
-                    let (sender, receiver) = std::sync::mpsc::channel();
-                    let pending = operation(credential.clone());
-                    runtime.spawn(async move {
-                        let _ = sender.send(pending.await);
-                    });
-                    receiver.recv().expect("s3 runtime")
-                },
-            )
-        })
-        .await
-        .expect("credential read")
+        let (first, revision) = self
+            .credentials
+            .lock()
+            .await
+            .resolve_attempt(bucket_id, now, &load)
+            .map_err(ReadFailure::NoUsableKey)?;
+        match operation(first).await {
+            Operation::Done(value) => Ok(value),
+            Operation::Forbidden => {
+                let (second, revision) = {
+                    let mut cache = self.credentials.lock().await;
+                    // A mutation or newer request owns the entry now. This request's
+                    // captured sources must not restore credentials it invalidated.
+                    if !cache.discard_attempt(bucket_id, revision) {
+                        return Err(ReadFailure::Forbidden);
+                    }
+                    cache
+                        .resolve_attempt(bucket_id, now, &load)
+                        .map_err(ReadFailure::NoUsableKey)?
+                };
+                match operation(second).await {
+                    Operation::Done(value) => Ok(value),
+                    Operation::Forbidden => {
+                        self.credentials
+                            .lock()
+                            .await
+                            .discard_attempt(bucket_id, revision);
+                        Err(ReadFailure::Forbidden)
+                    }
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -215,22 +228,6 @@ impl App {
     pub(crate) fn metrics_text(&self) -> String {
         self.metrics.render()
     }
-}
-
-fn s3_runtime() -> &'static tokio::runtime::Handle {
-    static HANDLE: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
-    HANDLE.get_or_init(|| {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_name("s3")
-            .build()
-            .expect("s3 runtime");
-        let handle = runtime.handle().clone();
-        // The HTTP connection task has to outlive GetObject's headers. Dropping
-        // this runtime at process exit from a destructor can panic, so it stays.
-        std::mem::forget(runtime);
-        handle
-    })
 }
 
 struct Metrics {
@@ -808,6 +805,216 @@ server.serve_forever()
         assert!(logs.contains("tls_insecure"), "{logs}");
     }
 
+    #[tokio::test]
+    async fn s3_discovery_recovers_after_admin_outage_with_configured_overrides() {
+        use axum::{Json, Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for overrides in [
+            vec![],
+            vec![("S3_ENDPOINT_URL", "http://configured.example")],
+            vec![("S3_REGION", "configured-region")],
+            vec![
+                ("S3_ENDPOINT_URL", "http://configured.example"),
+                ("S3_REGION", "configured-region"),
+            ],
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let requests = Arc::clone(&calls);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let router = Router::new().route(
+                "/v2/GetNodeInfo",
+                get(move || {
+                    let calls = Arc::clone(&requests);
+                    async move {
+                        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({})));
+                        }
+                        (
+                            StatusCode::OK,
+                            Json(serde_json::json!({
+                                "garageVersion": "v2.4.0",
+                                "connectionParameters": {
+                                    "s3Endpoint": "http://discovered.example",
+                                    "s3Region": "discovered-region"
+                                }
+                            })),
+                        )
+                    }
+                }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let mut extra = overrides.clone();
+            extra.extend([
+                ("GARAGE_ADMIN_URL", url.as_str()),
+                ("GARAGE_ADMIN_TOKEN", "admin-token-s3-discovery-9f3a"),
+            ]);
+            let app =
+                super::test_app_with(&crate::util::temp_dir(), &extra, crate::limit::test_quota())
+                    .await;
+            let first = crate::proxy::s3_origin(&app).await;
+            let recovered = crate::proxy::s3_origin(&app).await;
+            let cached = crate::proxy::s3_origin(&app).await;
+            server.abort();
+            let configured_endpoint = overrides.iter().any(|(key, _)| *key == "S3_ENDPOINT_URL");
+            let configured_region = overrides.iter().any(|(key, _)| *key == "S3_REGION");
+            assert_eq!(
+                recovered,
+                (
+                    Some(
+                        if configured_endpoint {
+                            "http://configured.example"
+                        } else {
+                            "http://discovered.example"
+                        }
+                        .to_string()
+                    ),
+                    if configured_region {
+                        "configured-region"
+                    } else {
+                        "discovered-region"
+                    }
+                    .to_string(),
+                ),
+                "discovery must recover on the same App after an outage: {overrides:?}; first={first:?}"
+            );
+            assert_eq!(cached, recovered);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                if overrides.len() == 2 { 0 } else { 2 }
+            );
+        }
+    }
+
+    fn credential_sources(id: &str) -> super::credentials::CredentialSources {
+        super::credentials::CredentialSources {
+            project_key: None,
+            explicit_key: Some(super::credentials::BucketCredential::new(id, "secret")),
+            read_write_keys: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_s3_operation_allows_other_buckets_and_invalidation_without_stale_retry() {
+        use super::credentials::{KeyMutation, Operation, ReadFailure};
+        use tokio::sync::Notify;
+        use tokio::time::{Duration, timeout};
+
+        let app = super::test_app(&crate::util::temp_dir()).await;
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reader_calls = Arc::clone(&calls);
+        let reader_app = app.clone();
+        let reader_entered = Arc::clone(&entered);
+        let reader_release = Arc::clone(&release);
+        let reader = tokio::spawn(async move {
+            let mut first = true;
+            reader_app
+                .read_credential("photos", credential_sources("OLD"), move |_| {
+                    reader_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let entered = Arc::clone(&reader_entered);
+                    let release = Arc::clone(&reader_release);
+                    let wait = first;
+                    first = false;
+                    async move {
+                        if wait {
+                            entered.notify_one();
+                            release.notified().await;
+                        }
+                        Operation::<()>::Forbidden
+                    }
+                })
+                .await
+        });
+        timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        let responsive = timeout(Duration::from_secs(1), async {
+            let other = app
+                .read_credential("other", credential_sources("KEEP"), |key| async move {
+                    Operation::Done(key.access_key_id().to_string())
+                })
+                .await;
+            assert_eq!(other, Ok("KEEP".to_string()));
+            app.clear_credential_cache(&KeyMutation::DenyBucketKey {
+                bucket_id: "photos".to_string(),
+            })
+            .await;
+        })
+        .await;
+        release.notify_one();
+        let outcome = timeout(Duration::from_secs(2), reader).await;
+        assert!(
+            responsive.is_ok(),
+            "a pending S3 operation blocked another bucket or key invalidation"
+        );
+        assert_eq!(outcome.unwrap().unwrap(), Err(ReadFailure::Forbidden));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an invalidated request retried its captured stale credentials"
+        );
+        let fresh = app
+            .read_credential("photos", credential_sources("NEW"), |key| async move {
+                Operation::Done(key.access_key_id().to_string())
+            })
+            .await;
+        assert_eq!(
+            fresh,
+            Ok("NEW".to_string()),
+            "an invalidated request restored stale credentials"
+        );
+    }
+
+    #[tokio::test]
+    async fn async_credential_read_refreshes_once_and_clears_a_second_forbidden() {
+        use super::credentials::{Operation, ReadFailure};
+
+        let app = super::test_app(&crate::util::temp_dir()).await;
+        app.read_credential("photos", credential_sources("OLD"), |_| async {
+            Operation::Done(())
+        })
+        .await
+        .unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let attempts = Arc::clone(&seen);
+        let refreshed = app
+            .read_credential("photos", credential_sources("NEW"), move |key| {
+                attempts
+                    .lock()
+                    .unwrap()
+                    .push(key.access_key_id().to_string());
+                async move {
+                    if key.access_key_id() == "OLD" {
+                        Operation::Forbidden
+                    } else {
+                        Operation::Done(key.access_key_id().to_string())
+                    }
+                }
+            })
+            .await;
+        assert_eq!(refreshed, Ok("NEW".to_string()));
+        assert_eq!(*seen.lock().unwrap(), ["OLD", "NEW"]);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts = Arc::clone(&calls);
+        let denied = app
+            .read_credential("photos", credential_sources("NEW"), move |_| {
+                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Operation::<()>::Forbidden }
+            })
+            .await;
+        assert_eq!(denied, Err(ReadFailure::Forbidden));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let fresh = app
+            .read_credential("photos", credential_sources("AFTER"), |key| async move {
+                Operation::Done(key.access_key_id().to_string())
+            })
+            .await;
+        assert_eq!(fresh, Ok("AFTER".to_string()));
+    }
+
     #[test]
     fn reported_version_blocks_only_a_parsed_release_below_2_3_0() {
         let old = GarageLink::from_reported(Some("v2.2.0"));
@@ -909,11 +1116,13 @@ pub mod credentials {
     struct Entry {
         credential: BucketCredential,
         stored_at: i64,
+        revision: u64,
     }
 
     pub struct CredentialCache {
         ttl_secs: i64,
         entries: HashMap<String, Entry>,
+        next_revision: u64,
     }
 
     impl CredentialCache {
@@ -921,6 +1130,7 @@ pub mod credentials {
             Self {
                 ttl_secs: ttl_secs.clamp(0, MAX_TTL_SECS),
                 entries: HashMap::new(),
+                next_revision: 0,
             }
         }
 
@@ -935,14 +1145,35 @@ pub mod credentials {
             }
             self.entries.remove(bucket_id);
             let selected = select(sources)?;
+            self.next_revision += 1;
             self.entries.insert(
                 bucket_id.to_string(),
                 Entry {
                     credential: selected.clone(),
                     stored_at: now,
+                    revision: self.next_revision,
                 },
             );
             Ok(selected)
+        }
+
+        pub(super) fn resolve_attempt(
+            &mut self,
+            bucket_id: &str,
+            now: i64,
+            sources: &CredentialSources,
+        ) -> Result<(BucketCredential, u64), NoUsableKey> {
+            let credential = self.resolve(bucket_id, now, sources)?;
+            let revision = self.entries[bucket_id].revision;
+            Ok((credential, revision))
+        }
+
+        pub(super) fn discard_attempt(&mut self, bucket_id: &str, revision: u64) -> bool {
+            if self.entries.get(bucket_id).map(|entry| entry.revision) != Some(revision) {
+                return false;
+            }
+            self.entries.remove(bucket_id);
+            true
         }
 
         pub fn clear(&mut self, mutation: &KeyMutation) {
