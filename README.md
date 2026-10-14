@@ -44,8 +44,11 @@ To call a Garage cluster, set the admin API address and the admin token before y
 
 1. Export `GARAGE_ADMIN_URL` to that admin API address.
 2. Export `GARAGE_ADMIN_TOKEN` to the admin token from the Garage configuration.
-3. Run `./target/release/garage-ui`.
-4. Open http://127.0.0.1:3909. The first visit is setup.
+3. Export `S3_ENDPOINT_URL` to the Garage S3 API address (for the example config, `http://127.0.0.1:3900`) and `S3_REGION` to the region in the Garage configuration. Garage v2.3.0 and v2.4.1 do not provide the main-v2 endpoint-discovery fields.
+4. Run `./target/release/garage-ui`.
+5. Open http://127.0.0.1:3909. The first visit is setup.
+
+For explicitly local cleartext development, set `COOKIE_SECURE=false`; the default is `true`. Keep the default for HTTPS deployments. The Compose example currently starts both services but does not pass the Garage address, token, or S3 endpoint to the UI; configure those in the UI service before using it for Garage operations.
 
 ## Environment variables
 
@@ -54,6 +57,8 @@ You can start the process with the variables below unset. Set an admin URL and a
 `API_BASE_URL` is the Garage admin API base URL. `GARAGE_ADMIN_URL` is an alias. When both are set, the process uses `API_BASE_URL`.
 
 `API_ADMIN_KEY_FILE` is a path to a file that contains the admin token. `GARAGE_ADMIN_TOKEN` is the token itself. When the file path is non-empty, the process reads the file and ignores `GARAGE_ADMIN_TOKEN`.
+
+`S3_ENDPOINT_URL` is the server-reachable S3 API address, separate from the admin API address. `S3_REGION` must match the Garage S3 region. `S3_PUBLIC_ENDPOINT_URL` optionally selects a browser-reachable S3 address for presigned share links.
 
 `DATA_DIR` is the directory for the SQLite database and the generated session key. The default is `./data`. The process creates the directory when it is missing.
 
@@ -77,7 +82,9 @@ Later work is listed in the [roadmap](docs/roadmap.md).
 
 ## Documentation
 
-Start with the [docs index](docs/README.md).
+Start with the [docs index](docs/README.md) for requirements, or [Contributing](CONTRIBUTING.md) for local development, verification, and AI-assisted contributions. Requirements describe acceptance targets; they are not evidence that every target is implemented or verified. GitHub Actions are disabled during development.
+
+The current development work and the unpublished release draft may refer to different commits. Check the source commit and its own verification results when evaluating a change; the draft version number alone does not establish that later development changes were tested.
 
 ## License
 

@@ -1,5 +1,7 @@
 # Development guide for the Garage web admin UI (this project)
 
+> For current development commands and AI-assisted contribution guidance, use [Contributing](CONTRIBUTING.md). This historical draft includes superseded Go/pnpm instructions; do not use them to build or test the current Rust/Bun implementation. GitHub Actions are disabled during development.
+>
 > Status: original requirements draft. The working spec is [`docs/README.md`](docs/README.md). When this file conflicts with `docs/`, `docs/` wins.
 > Decisions already absorbed: the backend is written in Rust; the frontend toolchain is Bun; multiple agents may develop in parallel; Garage may run in a local container for tests and evaluation. For the runtime crates, containerized deployment of the admin UI itself, and the removal of daisyUI and zustand, see [`docs/decisions.md`](docs/decisions.md).
 > Audience: K, the maintainer of this project.

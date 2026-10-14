@@ -2,6 +2,8 @@
 
 This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. The original text stays. When the two sides conflict, this directory wins.
 
+For local development and AI-assisted contributions, see [Contributing](../CONTRIBUTING.md). These chapters define requirements and acceptance targets, not a completed-feature checklist or a verification receipt. Consult the relevant implementation and record results for the exact source commit. GitHub Actions are disabled during development; the CI requirements below do not imply that remote checks are running.
+
 Endpoint names and field names still follow the Admin API v2 definition in the Garage source. This directory contains no implementation code.
 
 ## Decisions already absorbed
