@@ -951,79 +951,86 @@ export function ClusterNodes() {
       {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
         <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p>
       ) : null}
-      {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>      <div className="grid gap-2">
-        <button
-          className="ui-button"
-          disabled={snapshot.isPending}
-          type="button"
-          onClick={() => {
-            if (!snapshot.isPending) snapshot.mutate("*");
-          }}
-        >
-          {copy("ui.snapshot.every.node")}</button>
+      {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>
+      <div className="grid gap-2">
+        <div className="ui-actions">
+          <button
+            className="ui-button max-w-full whitespace-normal"
+            disabled={snapshot.isPending}
+            type="button"
+            onClick={() => {
+              if (!snapshot.isPending) snapshot.mutate("*");
+            }}
+          >
+            {copy("ui.snapshot.every.node")}</button>
+          <button
+            className="ui-button max-w-full whitespace-normal"
+            type="button"
+            onClick={() => {
+              setLayoutHistory({phase:"loading"});
+              void loadLayoutHistory().then(setLayoutHistory).catch((error: unknown) => setLayoutHistory({phase:"failed",message:error instanceof Error ? error.message : historyFailedMessage()}));
+            }}
+          >
+            {copy("ui.layout.history")}</button>
+        </div>
         {snapshot.isSuccess && snapshot.variables === "*" ? (
           <p>{copy("ui.metadata.snapshot.started")}</p>
         ) : null}
-        <button
-          className="ui-button"
-          type="button"
-          onClick={() => {
-            setLayoutPreview({phase:"loading"});
-            void previewLayout().then(setLayoutPreview).catch((error: unknown) => setLayoutPreview({phase:"failed",message:error instanceof Error ? error.message : previewFailedMessage()}));
-          }}
-        >
-          {copy("ui.preview.layout")}</button>
-        <button
-          className="ui-button ui-button-danger"
-          type="button"
-          disabled={layoutWriting || layoutPreview.phase !== "ready" || nextLayoutVersion === null}
-          onClick={() => {
-            if (layoutPreview.phase !== "ready" || nextLayoutVersion === null) {
-              return;
-            }
-            setApplyOpen(true);
-          }}
-        >
-          {copy("ui.apply.layout")}</button>
-        <button
-          className="ui-button"
-          disabled={layoutWriting}
-          type="button"
-          onClick={() => {
-            if (!layoutWriting) revert.mutate();
-          }}
-        >
-          {copy("ui.revert.staged.changes")}</button>
-        <label className="block text-sm">
-          <input
-            type="checkbox"
-            checked={allowMissingData}
-            onChange={(event) => {
-              setAllowMissingData(event.target.checked);
+        <div className="ui-actions">
+          <button
+            className="ui-button max-w-full whitespace-normal"
+            type="button"
+            onClick={() => {
+              setLayoutPreview({phase:"loading"});
+              void previewLayout().then(setLayoutPreview).catch((error: unknown) => setLayoutPreview({phase:"failed",message:error instanceof Error ? error.message : previewFailedMessage()}));
             }}
-          />
-          {copy("ui.allow.missing.data")}</label>
-        <button
-          className="ui-button ui-button-danger"
-          type="button"
-          disabled={layoutWriting || layoutVersion === null}
-          onClick={() => {
-            if (layoutVersion === null) {
-              return;
-            }
-            setSkipStep("risk");
-          }}
-        >
-          {copy("ui.skip.dead.nodes")}</button>
-        <button
-          className="ui-button"
-          type="button"
-          onClick={() => {
-            setLayoutHistory({phase:"loading"});
-            void loadLayoutHistory().then(setLayoutHistory).catch((error: unknown) => setLayoutHistory({phase:"failed",message:error instanceof Error ? error.message : historyFailedMessage()}));
-          }}
-        >
-          {copy("ui.layout.history")}</button>
+          >
+            {copy("ui.preview.layout")}</button>
+          <button
+            className="ui-button ui-button-danger max-w-full whitespace-normal"
+            type="button"
+            disabled={layoutWriting || layoutPreview.phase !== "ready" || nextLayoutVersion === null}
+            onClick={() => {
+              if (layoutPreview.phase !== "ready" || nextLayoutVersion === null) {
+                return;
+              }
+              setApplyOpen(true);
+            }}
+          >
+            {copy("ui.apply.layout")}</button>
+          <button
+            className="ui-button max-w-full whitespace-normal"
+            disabled={layoutWriting}
+            type="button"
+            onClick={() => {
+              if (!layoutWriting) revert.mutate();
+            }}
+          >
+            {copy("ui.revert.staged.changes")}</button>
+        </div>
+        <div className="ui-actions">
+          <label className="ui-checkbox-field text-sm">
+            <input
+              type="checkbox"
+              checked={allowMissingData}
+              onChange={(event) => {
+                setAllowMissingData(event.target.checked);
+              }}
+            />
+            {copy("ui.allow.missing.data")}</label>
+          <button
+            className="ui-button ui-button-danger max-w-full whitespace-normal"
+            type="button"
+            disabled={layoutWriting || layoutVersion === null}
+            onClick={() => {
+              if (layoutVersion === null) {
+                return;
+              }
+              setSkipStep("risk");
+            }}
+          >
+            {copy("ui.skip.dead.nodes")}</button>
+        </div>
         {layoutPreview.phase === "loading" || layoutHistory.phase === "loading" ? <p role="status">{copy("ui.working")}</p> : null}
         {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
         {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
@@ -1059,13 +1066,15 @@ export function ClusterNodes() {
             onChange={(event) => setAddress(event.target.value)}
           />
         </label>
-        <button
-          className="ui-button ui-button-primary"
-          type="submit"
-          disabled={trimmed.length === 0 || connect.isPending}
-        >
-          {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
-        </button>
+        <div className="ui-actions">
+          <button
+            className="ui-button ui-button-primary max-w-full whitespace-normal"
+            type="submit"
+            disabled={trimmed.length === 0 || connect.isPending}
+          >
+            {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
+          </button>
+        </div>
       </form>
       {connect.isError ? <p>{fill(copy("ui.connect"), { connectFailure: connectFailure })}</p> : null}
       {connect.isSuccess && lines !== null && lines.length === 0 ? <p>{copy("ui.connected")}</p> : null}
