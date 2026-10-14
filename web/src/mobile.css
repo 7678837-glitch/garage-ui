@@ -16,7 +16,8 @@
   .console-topbar { min-height: 56px; padding: 8px 12px; }
   .console-header-disclosure > summary { padding: 4px 8px; }
   .ui-audit-table tbody tr { padding: 12px; }
-  .ui-resource-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+  .ui-identity-details > summary { min-height: var(--touch-control-height); }
+  .ui-resource-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 12px; }
   .ui-resource-filters > .ui-field { min-width: 0; }
   .ui-resource-filters > .ui-filter-help { grid-column: 1 / -1; }
   .ui-filter-help > summary { min-height: var(--touch-control-height); display: flex; align-items: center; gap: 6px; }
