@@ -13,6 +13,7 @@ import {
   useLocationHash,
 } from "./Nav";
 import { Objects } from "./Objects";
+import { formatCapacity, useI18n, type Language } from "./i18n";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
 
 type Alias =
@@ -99,14 +100,6 @@ function parseAliases(value: unknown, scope: "global" | "local"): Alias[] {
 }
 
 const COUNT_KEYS = new Set(["objects", "bytes", "maxSize", "maxObjects"]);
-
-const DECIMAL_UNITS = [
-  ["PB", 15],
-  ["TB", 12],
-  ["GB", 9],
-  ["MB", 6],
-  ["KB", 3],
-] as const;
 
 function parseBucket(value: unknown): Bucket {
   if (typeof value !== "object" || value === null) {
@@ -381,20 +374,20 @@ function objectUsage(bucket: Bucket): string | null {
   return null;
 }
 
-function byteUsage(bucket: Bucket): string | null {
+function byteUsage(bucket: Bucket, language: Language): string | null {
   const used = bucket.bytes;
   const quota = bucket.quotas?.maxSize;
   if (used !== null && quota?.kind === "digits") {
-    return `${used} of ${quota.text} bytes${unitPair(used, quota.text)}`;
+    return `${used} of ${quota.text} bytes${unitPair(used, quota.text, language)}`;
   }
   if (used !== null && quota?.kind === "unset") {
-    return `${used} bytes${unitSingle(used)}. Size quota is not set`;
+    return `${used} bytes${unitSingle(used, language)}. Size quota is not set`;
   }
   if (used !== null) {
-    return `${used} bytes${unitSingle(used)}`;
+    return `${used} bytes${unitSingle(used, language)}`;
   }
   if (quota?.kind === "digits") {
-    return `Size quota ${quota.text} bytes${unitSingle(quota.text)}`;
+    return `Size quota ${quota.text} bytes${unitSingle(quota.text, language)}`;
   }
   if (quota?.kind === "unset") {
     return "Size quota is not set";
@@ -402,47 +395,22 @@ function byteUsage(bucket: Bucket): string | null {
   return null;
 }
 
-function unitSingle(digits: string): string {
-  const shown = formatBytes(digits);
-  if (shown.endsWith(" B")) {
+function hidesScaledUnit(digits: string): boolean {
+  return formatCapacity(digits, "en").endsWith(" B");
+}
+
+function unitSingle(digits: string, language: Language): string {
+  if (hidesScaledUnit(digits)) {
     return "";
   }
-  return ` (${shown})`;
+  return ` (${formatCapacity(digits, language)})`;
 }
 
-function unitPair(used: string, quota: string): string {
-  const left = formatBytes(used);
-  const right = formatBytes(quota);
-  if (left.endsWith(" B") && right.endsWith(" B")) {
+function unitPair(used: string, quota: string, language: Language): string {
+  if (hidesScaledUnit(used) && hidesScaledUnit(quota)) {
     return "";
   }
-  return ` (${left} of ${right})`;
-}
-
-// Split the original digit text on decimal units. Skip Number so byte counts past 2^53 are not rounded.
-function formatBytes(bytes: string): string {
-  const digits = bytes.replace(/^0+(?=\d)/, "");
-  for (const [unit, scale] of DECIMAL_UNITS) {
-    if (digits.length > scale) {
-      return `${formatInUnit(digits, scale)} ${unit}`;
-    }
-  }
-  return `${digits} B`;
-}
-
-function formatInUnit(bytes: string, scale: number): string {
-  const whole = bytes.length > scale ? bytes.slice(0, bytes.length - scale) : "0";
-  let fraction = bytes.length > scale ? bytes.slice(bytes.length - scale) : bytes.padStart(scale, "0");
-  if (fraction.length < 2) {
-    fraction = fraction.padEnd(2, "0");
-  } else {
-    let end = fraction.length;
-    while (end > 2 && fraction[end - 1] === "0") {
-      end -= 1;
-    }
-    fraction = fraction.slice(0, end);
-  }
-  return `${whole}.${fraction}`;
+  return ` (${formatCapacity(used, language)} of ${formatCapacity(quota, language)})`;
 }
 
 function fieldText(value: WholeNumber): string {
@@ -461,8 +429,9 @@ function fieldLiteral(text: string): string | null {
 }
 
 function UsageText({ bucket }: { bucket: Bucket }) {
+  const { language } = useI18n();
   const objects = objectUsage(bucket);
-  const bytes = byteUsage(bucket);
+  const bytes = byteUsage(bucket, language);
   if (objects === null && bytes === null) {
     return null;
   }

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { unitCopyKey, useI18n } from "./i18n";
 
 const MIN_FRACTION_DIGITS = 2;
 
@@ -67,6 +68,7 @@ export function CapacityField({
   const [unit, setUnit] = useState<DecimalUnit>("TB");
   const [amount, setAmount] = useState<Amount>({ kind: "original" });
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
   const [seenBytes, setSeenBytes] = useState(bytes);
   if (bytes !== seenBytes) {
     setSeenBytes(bytes);
@@ -129,7 +131,7 @@ export function CapacityField({
         >
           {DECIMAL_UNITS.map((item) => (
             <option key={item} value={item}>
-              {item}
+              {t(unitCopyKey(item))}
             </option>
           ))}
         </select>

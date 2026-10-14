@@ -28,6 +28,13 @@ export const en = {
   "auth.loggingIn": "Logging in",
   "auth.logOut": "Log out",
   "auth.loggingOut": "Logging out",
+  "unit.B": "B",
+  "unit.KB": "KB",
+  "unit.MB": "MB",
+  "unit.GB": "GB",
+  "unit.TB": "TB",
+  "unit.PB": "PB",
+  "unit.perSecond": "B/s",
 } as const;
 
 export type CopyKey = keyof typeof en;

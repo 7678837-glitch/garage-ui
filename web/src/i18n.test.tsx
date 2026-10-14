@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { Breadcrumb } from "./App";
+import { CapacityField } from "./CapacityField";
 import { en } from "./copy-en";
 import { zh } from "./copy-zh";
-import { InstantText, LanguageChooser, LanguageProvider } from "./i18n";
+import { CapacityText, InstantText, LanguageChooser, LanguageProvider } from "./i18n";
 
 afterEach(() => {
   cleanup();
@@ -96,4 +97,33 @@ test("a timestamp follows the language and english keeps the source text", () =>
     </LanguageProvider>,
   );
   expect(screen.getByText("2026-10-11T00:00:00Z").textContent).toBe("2026-10-11T00:00:00Z");
+});
+
+test("capacity units follow the language", () => {
+  const english = render(
+    <LanguageProvider>
+      <CapacityText digits="1000" />
+    </LanguageProvider>,
+  );
+  expect(screen.getByText("1.00 KB").textContent).toBe("1.00 KB");
+  english.unmount();
+
+  localStorage.setItem("garage-ui-language", "zh-CN");
+  const chinese = render(
+    <LanguageProvider>
+      <CapacityText digits="1000" />
+    </LanguageProvider>,
+  );
+  expect(screen.getByText("1.00 千字节").textContent).toBe("1.00 千字节");
+  expect(screen.queryByText("1.00 KB")).toBeNull();
+  chinese.unmount();
+
+  render(
+    <LanguageProvider>
+      <CapacityField bytes="1800000000000" submit={() => undefined} />
+    </LanguageProvider>,
+  );
+  const unit = screen.getByRole("combobox", { name: "Unit" }) as HTMLSelectElement;
+  expect(unit.value).toBe("TB");
+  expect(unit.selectedOptions[0]?.textContent).toBe("太字节");
 });

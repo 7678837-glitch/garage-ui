@@ -1,8 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { putObject } from "./api/client";
+import { useI18n } from "./i18n";
 
-// React 18 的 input 属性类型没有 webkitdirectory。目录选择只看这个属性在不在。
+// React 18 input types omit webkitdirectory. Directory selection only checks that the attribute is present.
 declare module "react" {
   interface InputHTMLAttributes<T> {
     webkitdirectory?: T extends HTMLInputElement ? "" : never;
@@ -42,7 +43,7 @@ function objectKey(file: File, directory: boolean): string {
   return file.name;
 }
 
-// 只拼相对路径。上传键仍走 objectKey。前导斜杠不能进对象键。
+// Join only the relative path. The upload key still goes through objectKey. A leading slash must not enter the object key.
 function dropRelativePath(parent: string, name: string): string {
   const joined = parent === "" ? name : `${parent}/${name}`;
   return joined.replace(/^\/+/, "");
@@ -51,7 +52,7 @@ function dropRelativePath(parent: string, name: string): string {
 function readDirectory(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
   const collected: FileSystemEntry[] = [];
   return new Promise((resolve, reject) => {
-    // readEntries 一次只给一页，空列表才表示这个目录读完。
+    // readEntries returns one page. An empty list means this directory is finished.
     const pull = () => {
       reader.readEntries((batch) => {
         if (batch.length === 0) {
@@ -88,7 +89,7 @@ async function filesInDirectory(
       continue;
     }
     const file = await fileFromEntry(child as FileSystemFileEntry);
-    // 浏览器里这个值是空字符串。没有该属性时同样视为空，避免 objectKey 读到 undefined。
+    // Browsers use an empty string here. A missing property is treated the same way so objectKey does not read undefined.
     if (!file.webkitRelativePath) {
       Object.defineProperty(file, "webkitRelativePath", {
         value: dropRelativePath(prefix, child.name),
@@ -185,6 +186,7 @@ export function UploadPanel({
   existingKeys: readonly string[];
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [rows, setRows] = useState<Row[]>([]);
   const rowsRef = useRef(rows);
   const abortRef = useRef(new Map<number, () => void>());
@@ -381,7 +383,7 @@ export function UploadPanel({
 
   function onDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
-    // DataTransferItem 离开这次事件就失效，entry 必须在这里同步取走。
+    // A DataTransferItem expires when this event returns, so the entry has to be read here.
     const entries = directoryEntries(event.dataTransfer);
     if (!entries) {
       takeFiles(event.dataTransfer.files, false);
@@ -442,7 +444,9 @@ export function UploadPanel({
                 <span>{row.phase.percent}%</span>
               ) : null}
               {row.phase.kind === "uploading" && row.phase.rate !== null ? (
-                <span>{row.phase.rate} B/s</span>
+                <span>
+                  {row.phase.rate} {t("unit.perSecond")}
+                </span>
               ) : null}
               {prompt ? (
                 <>

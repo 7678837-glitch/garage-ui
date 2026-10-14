@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
+import { formatCapacity, useI18n, type Language } from "./i18n";
 
 const COUNTS = [
   ["knownNodes", "Known nodes"],
@@ -71,14 +72,6 @@ const STAT_KEYS = new Set<string>([
   "metadataAvail",
   "incompleteAvailInfo",
 ]);
-
-const DECIMAL_UNITS = [
-  ["PB", 15],
-  ["TB", 12],
-  ["GB", 9],
-  ["MB", 6],
-  ["KB", 3],
-] as const;
 
 type RawStat =
   | { kind: "digits"; text: string }
@@ -175,12 +168,17 @@ function countText(raw: RawStat | undefined): CountText {
   return { kind: "unset" };
 }
 
-function shownStatistic(field: CountText, display: StatisticDisplay, unset: string): string {
+function shownStatistic(
+  field: CountText,
+  display: StatisticDisplay,
+  unset: string,
+  language: Language,
+): string {
   if (field.kind === "unset") {
     return unset;
   }
   if (display === "bytes") {
-    return formatBytes(field.text);
+    return formatCapacity(field.text, language);
   }
   return field.text;
 }
@@ -304,32 +302,6 @@ function endOfDigits(text: string, index: number): number {
   return index;
 }
 
-// Split the original digit text on decimal units. Avoid Number so byte counts past 2^53 are not rounded.
-function formatBytes(bytes: string): string {
-  const digits = bytes.replace(/^0+(?=\d)/, "");
-  for (const [unit, scale] of DECIMAL_UNITS) {
-    if (digits.length > scale) {
-      return `${formatInUnit(digits, scale)} ${unit}`;
-    }
-  }
-  return `${digits} B`;
-}
-
-function formatInUnit(bytes: string, scale: number): string {
-  const whole = bytes.length > scale ? bytes.slice(0, bytes.length - scale) : "0";
-  let fraction = bytes.length > scale ? bytes.slice(bytes.length - scale) : bytes.padStart(scale, "0");
-  if (fraction.length < 2) {
-    fraction = fraction.padEnd(2, "0");
-  } else {
-    let end = fraction.length;
-    while (end > 2 && fraction[end - 1] === "0") {
-      end -= 1;
-    }
-    fraction = fraction.slice(0, end);
-  }
-  return `${whole}.${fraction}`;
-}
-
 function shownCode(error: unknown): string | null {
   if (!(error instanceof ApiError) || error.code === null || error.code.length === 0) {
     return null;
@@ -353,6 +325,7 @@ async function loadStatistics(): Promise<ClusterStatistics> {
 }
 
 export function ClusterHealth() {
+  const { language } = useI18n();
   const health = useQuery({
     queryKey: ["cluster", "health"],
     queryFn: async () => parseHealth(await api<unknown>("/api/cluster/health")),
@@ -430,7 +403,7 @@ export function ClusterHealth() {
             {STATISTICS.map(([key, label, display, unset]) => (
               <div key={key}>
                 <dt className="font-medium">{label}</dt>
-                <dd>{shownStatistic(statistics.data[key], display, unset)}</dd>
+                <dd>{shownStatistic(statistics.data[key], display, unset, language)}</dd>
               </div>
             ))}
           </dl>

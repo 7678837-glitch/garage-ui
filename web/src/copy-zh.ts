@@ -30,4 +30,11 @@ export const zh = {
   "auth.loggingIn": "正在登录",
   "auth.logOut": "退出",
   "auth.loggingOut": "正在退出",
+  "unit.B": "字节",
+  "unit.KB": "千字节",
+  "unit.MB": "兆字节",
+  "unit.GB": "吉字节",
+  "unit.TB": "太字节",
+  "unit.PB": "拍字节",
+  "unit.perSecond": "字节/秒",
 } as const satisfies Record<CopyKey, string>;

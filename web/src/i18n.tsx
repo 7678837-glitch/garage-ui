@@ -70,6 +70,64 @@ export function formatInstant(value: string, language: Language): string {
   }).format(date);
 }
 
+const capacityScale = {
+  PB: 15,
+  TB: 12,
+  GB: 9,
+  MB: 6,
+  KB: 3,
+  B: 0,
+} as const;
+
+export type CapacityUnit = keyof typeof capacityScale;
+
+const capacityOrder = ["PB", "TB", "GB", "MB", "KB"] as const;
+
+const capacityUnitKey = {
+  B: "unit.B",
+  KB: "unit.KB",
+  MB: "unit.MB",
+  GB: "unit.GB",
+  TB: "unit.TB",
+  PB: "unit.PB",
+} as const satisfies Record<CapacityUnit, CopyKey>;
+
+export function unitCopyKey(unit: CapacityUnit): CopyKey {
+  return capacityUnitKey[unit];
+}
+
+function capacityFraction(digits: string, scale: number): string {
+  const whole = digits.length > scale ? digits.slice(0, digits.length - scale) : "0";
+  let fraction = digits.length > scale ? digits.slice(digits.length - scale) : digits.padStart(scale, "0");
+  if (fraction.length < 2) {
+    fraction = fraction.padEnd(2, "0");
+  } else {
+    let end = fraction.length;
+    while (end > 2 && fraction[end - 1] === "0") {
+      end -= 1;
+    }
+    fraction = fraction.slice(0, end);
+  }
+  return `${whole}.${fraction}`;
+}
+
+// Split the original digit text on decimal units. Avoid Number so byte counts past 2^53 are not rounded.
+export function formatCapacity(digits: string, language: Language): string {
+  const normalized = digits.replace(/^0+(?=\d)/, "");
+  for (const unit of capacityOrder) {
+    const scale = capacityScale[unit];
+    if (normalized.length > scale) {
+      return `${capacityFraction(normalized, scale)} ${catalogs[language][capacityUnitKey[unit]]}`;
+    }
+  }
+  return `${normalized} ${catalogs[language][capacityUnitKey.B]}`;
+}
+
+export function CapacityText({ digits }: { digits: string }) {
+  const { language } = useI18n();
+  return <>{formatCapacity(digits, language)}</>;
+}
+
 export function InstantText({ value }: { value: string }) {
   const { language } = useI18n();
   return <time dateTime={value}>{formatInstant(value, language)}</time>;
