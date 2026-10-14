@@ -353,6 +353,19 @@ async function loadPage(offset: number): Promise<BucketPage> {
   return parsePage(text);
 }
 
+async function loadBucket(id: string): Promise<Bucket> {
+  const response = await fetch(bucketUrl(id), { credentials: "include" });
+  const text = await response.text();
+  if (!response.ok) {
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new BucketListError(failure);
+  }
+  const bucket = parseBucket(JSON.parse(quoteCountLiterals(text)) as unknown);
+  if (bucket.id !== id) throw new Error(copy("ui.buckets.are.unavailable"));
+  return bucket;
+}
+
 function objectUsage(bucket: Bucket): string | null {
   const used = bucket.objects;
   const quota = bucket.quotas?.maxObjects;
@@ -1772,8 +1785,15 @@ export function Buckets({
     partial: list.hasNextPage,
   };
   const deleteError = removeBucket.error instanceof Error ? removeBucket.error.message : null;
-  const openedBucket =
-    bucketDetail === null ? null : (rows.find((bucket) => bucket.id === bucketDetail.id) ?? null);
+  const addressedBucket = useQuery({
+    queryKey: ["buckets", "detail", bucketDetail?.id],
+    queryFn: () => loadBucket(bucketDetail!.id),
+    enabled: bucketDetail !== null && ["settings", "overview"].includes(bucketDetail.tab),
+    initialData: () => rows.find((bucket) => bucket.id === bucketDetail?.id),
+    staleTime: 30_000,
+  });
+  const openedBucket = addressedBucket.data;
+  const detailFailure = addressedBucket.isError ? bucketListFailure(addressedBucket.error) : null;
 
   return (
     <section className="grid gap-4" aria-label={copy("nav.buckets")} aria-busy={view.busy}>
@@ -1788,7 +1808,12 @@ export function Buckets({
             goHash(hashForDetail({ resource: "bucket", id: bucketDetail.id, tab }));
           }}
         >
-          <p>{bucketDetail.id}</p>
+          <p className="ui-identifier">{bucketDetail.id}</p>
+          {["settings", "overview"].includes(bucketDetail.tab) && addressedBucket.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.buckets")} /> : null}
+          {["settings", "overview"].includes(bucketDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
+            <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
+            <button className="ui-button" onClick={() => { void addressedBucket.refetch(); }}>{copy("ui.retry")}</button>
+          </div> : null}
           {bucketDetail.tab === "objects" ? (
             <Objects
               bucketId={bucketDetail.id}

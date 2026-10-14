@@ -163,6 +163,20 @@ async function loadKeyBuckets(keyId: string): Promise<KeyBucket[]> {
   return parseKeyBuckets(text ? (JSON.parse(text) as unknown) : undefined);
 }
 
+async function loadKey(id: string): Promise<AccessKey> {
+  const response = await fetch(keyUrl(id), { credentials: "include" });
+  const text = await response.text();
+  if (!response.ok) {
+    const failure = failureFrom(text, response.status);
+    noteUnauthenticated(response.status, failure.code);
+    throw new KeyListError(failure);
+  }
+  const body = JSON.parse(text) as Record<string, unknown>;
+  const key = parseKey({ ...body, id: body.id ?? body.accessKeyId });
+  if (key.id !== id) throw new Error(copy("ui.keys.are.unavailable"));
+  return key;
+}
+
 function KeyBuckets({ keyId }: { keyId: string }) {
   const buckets = useQuery({
     queryKey: ["key-buckets", keyId],
@@ -701,8 +715,15 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const viewError = viewSecret.error instanceof Error ? viewSecret.error.message : null;
   const detail = detailAddressFromHash(hash);
   const keyDetail = detail?.resource === "key" ? detail : null;
-  const openedKey =
-    keyDetail === null ? null : (rows.find((accessKey) => accessKey.id === keyDetail.id) ?? null);
+  const addressedKey = useQuery({
+    queryKey: ["keys", "detail", keyDetail?.id],
+    queryFn: () => loadKey(keyDetail!.id),
+    enabled: keyDetail !== null && ["settings", "overview"].includes(keyDetail.tab),
+    initialData: () => rows.find((accessKey) => accessKey.id === keyDetail?.id),
+    staleTime: 30_000,
+  });
+  const openedKey = addressedKey.data;
+  const detailFailure = addressedKey.isError ? keyListFailure(addressedKey.error) : null;
 
   return (
     <section className="grid min-w-0 gap-4" aria-label={copy("nav.keys")} aria-busy={view.busy}>
@@ -717,7 +738,12 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
             goHash(hashForDetail({ resource: "key", id: keyDetail.id, tab }));
           }}
         >
-          <p>{keyDetail.id}</p>
+          <p className="ui-identifier">{keyDetail.id}</p>
+          {["settings", "overview"].includes(keyDetail.tab) && addressedKey.isPending ? <div className="ui-panel" aria-label={copy("ui.loading.keys")} /> : null}
+          {["settings", "overview"].includes(keyDetail.tab) && detailFailure && !isGarageDown(detailFailure) ? <div className="ui-alert">
+            <p>{detailFailure.message}</p>{detailFailure.code ? <p>{detailFailure.code}</p> : null}
+            <button className="ui-button" onClick={() => { void addressedKey.refetch(); }}>{copy("ui.retry")}</button>
+          </div> : null}
           {keyDetail.tab === "buckets" ? <KeyBuckets keyId={keyDetail.id} /> : null}
           {keyDetail.tab === "settings" && openedKey && canManage ? (
             <>

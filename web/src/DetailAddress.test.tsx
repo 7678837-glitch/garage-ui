@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
+import { Buckets } from "./Buckets";
+import { Keys } from "./Keys";
 
 afterEach(() => {
   cleanup();
@@ -184,4 +186,56 @@ test("a bucket, a key, and a node each open on the detail tab in the address", a
   expect(screen.getByRole("tab", { name: "Statistics" }).getAttribute("aria-selected")).toBe(
     "false",
   );
+});
+
+function renderStorage(resource: "bucket" | "key") {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>{resource === "bucket" ? <Buckets canManage /> : <Keys canManage />}</QueryClientProvider>);
+}
+
+test.each(["id", "accessKeyId"])("cold key settings load the addressed %s response beyond the first list page", async (idField) => {
+  window.location.hash = "#key/GK101/settings";
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    if (url.pathname === "/api/keys") return json({ items: [{ id: "GK1", name: "first" }], hasMore: true });
+    if (url.pathname === "/api/keys/GK101") return json({ [idField]: "GK101", name: "Addressed key", permissions: { createBucket: true }, buckets: [] });
+    return json({ message: "Unexpected endpoint" }, 500);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  renderStorage("key");
+  expect((await screen.findByLabelText("Name for GK101") as HTMLInputElement).value).toBe("Addressed key");
+  expect((screen.getByRole("checkbox", { name: "Allow create bucket for GK101" }) as HTMLInputElement).checked).toBe(true);
+  expect(fetcher.mock.calls.filter(([input]) => String(input).includes("offset=")).length).toBe(1);
+});
+
+test("cold bucket settings load addressed quotas beyond the first list page without losing integer precision", async () => {
+  window.location.hash = "#bucket/bkt101/settings";
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    if (url.pathname === "/api/buckets") return json({ items: [{ id: "bkt1" }], hasMore: true });
+    if (url.pathname === "/api/buckets/bkt101") return new Response('{"id":"bkt101","quotas":{"maxSize":9007199254740993,"maxObjects":12}}');
+    return json({ message: "Unexpected endpoint" }, 500);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  renderStorage("bucket");
+  expect((await screen.findByLabelText("Max size for bkt101") as HTMLInputElement).value).toBe("9007199254740993");
+  expect(fetcher.mock.calls.filter(([input]) => String(input).includes("offset=")).length).toBe(1);
+});
+
+test.each(["bucket", "key"] as const)("cold %s settings show loading, not-found and retry", async (resource) => {
+  window.location.hash = `#${resource}/missing/settings`;
+  let finish: ((response: Response) => void) | undefined;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    if (url.pathname === `/api/${resource}s`) return json({ items: [], hasMore: false });
+    return new Promise<Response>((resolve) => { finish = resolve; });
+  }));
+  renderStorage(resource);
+  expect(screen.getByLabelText(resource === "bucket" ? "Loading buckets" : "Loading keys")).toBeTruthy();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  finish?.(json({ message: "Resource not found", code: "not_found" }, 404));
+  expect(await screen.findByText("Resource not found")).toBeTruthy();
+  expect(screen.getByText("not_found")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await vi.waitFor(() => expect(screen.getByLabelText(resource === "bucket" ? "Loading buckets" : "Loading keys")).toBeTruthy());
 });
