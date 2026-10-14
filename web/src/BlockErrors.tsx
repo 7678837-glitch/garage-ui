@@ -1,10 +1,11 @@
+import { OperationNodeSelection } from "./ClusterNodes";
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
 import { isGarageDown } from "./garageDown";
 import { blockErrorsNodeId, useLocationHash } from "./Nav";
-import { copy, fill } from "./i18n";
+import { copy, fill, translate } from "./i18n";
 
 function unavailableMessage(): string {
   return copy("ui.block.errors.are.unavailable");
@@ -143,8 +144,8 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
     <>
       {info.isError && !isGarageDown(info.error) ? <p>{message}</p> : null}
       {info.data ? (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm" aria-label={copy("ui.block.information")}>
+        <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Block error list")}>
+          <table className="ui-table" aria-label={copy("ui.block.information")}>
             <thead>
               <tr>
                 <th className="py-2 pr-3 font-medium" scope="col">
@@ -177,11 +178,14 @@ function BlockInfoPanel({ nodeId, blockHash }: { nodeId: string; blockHash: stri
 function BlockErrorList({ nodeId }: { nodeId: string }) {
   const [purgeHash, setPurgeHash] = useState<string | null>(null);
   const [infoHash, setInfoHash] = useState<string | null>(null);
+  const client = useQueryClient();
+  const refresh = () => client.invalidateQueries({ queryKey: ["nodes", nodeId] });
   const blockErrors = useQuery({
     queryKey: ["nodes", nodeId, "block-errors"],
     queryFn: () => loadBlockErrors(nodeId),
   });
   const retry = useMutation({
+    onSuccess: refresh,
     mutationFn: (command: RetryBlocks) =>
       api(`/api/nodes/${encodeURIComponent(nodeId)}/blocks/retry`, {
         method: "POST",
@@ -189,6 +193,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       }),
   });
   const purge = useMutation({
+    onSuccess: async () => { await refresh(); setPurgeHash(null); },
     mutationFn: (hash: string) =>
       api(`/api/nodes/${encodeURIComponent(nodeId)}/blocks/purge`, {
         method: "POST",
@@ -205,7 +210,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label={copy("nav.blockErrors")} aria-busy={view.busy}>
+    <section className="ui-page" aria-label={copy("nav.blockErrors")} aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
       {view.busy ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.block.errors")} />
@@ -216,7 +221,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void blockErrors.refetch();
@@ -231,17 +236,20 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       {purge.error instanceof Error && !isGarageDown(purge.error) ? (
         <p>{purge.error.message}</p>
       ) : null}
+      {retry.isPending || purge.isPending ? <p role="status">{copy("ui.working")}</p> : null}
+      {retry.isSuccess || purge.isSuccess ? <p role="status">{copy("ui.saved")}</p> : null}
       {view.empty ? <p>{copy("ui.there.are.no.block.errors")}</p> : null}
       {rows.length > 0 ? (
         <>
           <button
-            className="w-fit border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
+            disabled={retry.isPending}
             onClick={() => retry.mutate({ all: true })}
           >
             {copy("ui.retry.all")}</button>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
+          <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Block error list")}>
+            <table className="ui-table">
               <thead>
                 <tr>
                   <th className="py-2 pr-3 font-medium" scope="col">
@@ -272,16 +280,18 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                     <td className="py-2 pr-3">{row.nextTryInSecs}</td>
                     <td className="py-2 pr-3">
                       <button
-                        className="border border-ink px-3 py-1 text-left"
+                        className="ui-button"
                         type="button"
-                        onClick={() => retry.mutate({ blockHashes: [row.blockHash] })}
+                        disabled={retry.isPending}
+            onClick={() => retry.mutate({ blockHashes: [row.blockHash] })}
                       >
                         {fill(copy("ui.retry.2"), { blockHash: row.blockHash })}</button>
                     </td>
                     <td className="py-2">
                       <button
-                        className="border border-ink px-3 py-1 text-left"
+                        className="ui-button ui-button-danger"
                         type="button"
+                        disabled={purge.isPending}
                         onClick={() => {
                           setPurgeHash(row.blockHash);
                         }}
@@ -290,7 +300,7 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
                     </td>
                     <td className="py-2 pl-3">
                       <button
-                        className="border border-ink px-3 py-1 text-left"
+                        className="ui-button"
                         type="button"
                         onClick={() => {
                           setInfoHash(row.blockHash);
@@ -308,16 +318,16 @@ function BlockErrorList({ nodeId }: { nodeId: string }) {
       ) : null}
       {purgeHash !== null ? (
         <ConfirmDialog
+          pending={purge.isPending}
           action="clear-block"
           name={purgeHash}
           scope={nodeId}
-          consequence={copy("ui.object.data.will.be.lost")}
+          consequence={`${copy("ui.object.data.will.be.lost")}${purge.error instanceof Error ? ` ${purge.error.message}` : ""}`}
           onCancel={() => {
             setPurgeHash(null);
           }}
           onConfirm={() => {
             const hash = purgeHash;
-            setPurgeHash(null);
             purge.mutate(hash);
           }}
         />
@@ -331,9 +341,9 @@ export function BlockErrors() {
   const nodeId = blockErrorsNodeId(hash);
   if (nodeId === null) {
     return (
-      <section className="grid gap-4" aria-label={copy("nav.blockErrors")} aria-busy={false}>
+      <section className="ui-page" aria-label={copy("nav.blockErrors")} aria-busy={false}>
         <h2 className="text-lg font-semibold">{copy("nav.blockErrors")}</h2>
-        <p>{copy("ui.no.node.is.selected")}</p>
+        <OperationNodeSelection route="block-errors" />
       </section>
     );
   }

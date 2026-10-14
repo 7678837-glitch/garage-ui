@@ -790,5 +790,16 @@ test("says no node is selected", () => {
       <Workers />
     </QueryClientProvider>,
   );
-  expect(screen.getByText("No node is selected.").textContent).toBe("No node is selected.");
+  expect(screen.getByRole("heading", {name:"Select node"})).toBeTruthy();
 });
+
+ test("ordinary workers entry offers node navigation", async () => {
+  window.location.hash = "#workers";
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ layoutVersion: 1, nodes: [{id: "n1", hostname: "alpha", isUp: true, draining: false}] }), {status:200})));
+  const client = new QueryClient({defaultOptions: {queries: {retry:false}}});
+  render(<QueryClientProvider client={client}><Workers /></QueryClientProvider>);
+  const link = await screen.findByRole("link", {name: "alpha"});
+  expect(link.getAttribute("href")).toBe("#workers/n1");
+  fireEvent.click(link);
+  expect(window.location.hash).toBe("#workers/n1");
+ });

@@ -61,9 +61,11 @@ function decimalToByteString(text: string, scale: number): string | null {
 export function CapacityField({
   bytes,
   submit,
+  pending = false,
 }: {
   bytes: string;
   submit: (bytes: string) => void;
+  pending?: boolean;
 }) {
   const [unit, setUnit] = useState<DecimalUnit>("TB");
   const [amount, setAmount] = useState<Amount>({ kind: "original" });
@@ -83,7 +85,7 @@ export function CapacityField({
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!sourceValid) {
+    if (!sourceValid || pending) {
       return;
     }
     if (amount.kind === "original") {
@@ -101,11 +103,11 @@ export function CapacityField({
   }
 
   return (
-    <form className="grid gap-3" aria-label={copy("ui.node.capacity")} onSubmit={onSubmit}>
-      <label className="block">
+    <form className="ui-form" aria-label={copy("ui.node.capacity")} onSubmit={onSubmit}>
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.capacity")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           inputMode="decimal"
           autoComplete="off"
           value={shown}
@@ -115,10 +117,10 @@ export function CapacityField({
           }}
         />
       </label>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.unit")}</span>
         <select
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={unit}
           onChange={(event) => {
             const next = event.target.value;
@@ -137,8 +139,8 @@ export function CapacityField({
         </select>
       </label>
       {alertText ? <p role="alert">{alertText}</p> : null}
-      <button className="border border-ink px-3 py-1 text-left" type="submit">
-        {copy("ui.save")}</button>
+      <button className="ui-button ui-button-primary" type="submit" disabled={pending}>
+        {pending ? copy("ui.working") : copy("ui.save")}</button>
     </form>
   );
 }

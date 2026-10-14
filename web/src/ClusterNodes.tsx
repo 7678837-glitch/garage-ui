@@ -7,7 +7,7 @@ import { DetailTabs } from "./DetailTabs";
 import { isGarageDown } from "./garageDown";
 import { detailAddressFromHash, hashForDetail, nodeTabs, useLocationHash } from "./Nav";
 import { releaseHash } from "./unsaved";
-import { copy, fill } from "./i18n";
+import { copy, fill, translate } from "./i18n";
 
 const HIDDEN = new Set([
   "layoutVersion",
@@ -33,14 +33,14 @@ function historyFailedMessage(): string {
   return copy("ui.layout.history.failed");
 }
 
-type LayoutPreview = { phase: "idle" } | { phase: "ready" } | { phase: "failed"; message: string };
+type LayoutPreview = { phase: "idle" | "loading" } | { phase: "ready" } | { phase: "failed"; message: string };
 
 type LayoutVersionRow = { version: number; status: string };
 
 type LayoutTrackerRow = { id: string; ack: number; sync: number; syncAck: number };
 
 type LayoutHistory =
-  | { phase: "idle" }
+  | { phase: "idle" | "loading" }
   | { phase: "ready"; versions: LayoutVersionRow[]; trackers: LayoutTrackerRow[] }
   | { phase: "failed"; message: string };
 
@@ -529,14 +529,14 @@ function snapshotMetadata(id: string): Promise<unknown> {
   });
 }
 
-function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => void }) {
+function NodeBlockPurge({ id, onAsk, pending = false }: { id: string; onAsk: (hash: string) => void; pending?: boolean }) {
   const [hash, setHash] = useState("");
   return (
     <>
       <label className="block break-all">
         <span className="text-sm">{fill(copy("ui.block.hash.for"), { id: id })}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={hash}
           onChange={(event) => {
             setHash(event.target.value);
@@ -544,11 +544,12 @@ function NodeBlockPurge({ id, onAsk }: { id: string; onAsk: (hash: string) => vo
         />
       </label>
       <button
-        className="max-w-full break-all border border-ink px-3 py-1 text-left"
+        className="ui-button ui-button-danger max-w-full break-all"
+        disabled={pending}
         type="button"
         onClick={() => {
           const next = hash.trim();
-          if (next.length === 0) {
+          if (next.length === 0 || pending) {
             return;
           }
           onAsk(next);
@@ -690,6 +691,35 @@ function orderedNodes(rows: NodeLine[], sort: NodeSort): NodeLine[] {
   });
 }
 
+export function OperationNodeSelection({ route, all = false }: {
+  route: "workers" | "block-errors";
+  all?: boolean;
+}) {
+  const [, assignHash] = useLocationHash();
+  const nodes = useQuery({ queryKey: ["cluster", "status"], queryFn: loadNodes });
+  function navigate(event: React.MouseEvent<HTMLAnchorElement>, next: string) {
+    event.preventDefault();
+    if (releaseHash(next)) assignHash(next);
+  }
+  return (
+    <section className="ui-panel ui-page" aria-label={copy("common.selectNode")} aria-busy={nodes.isPending}>
+      <h3>{copy("common.selectNode")}</h3>
+      {nodes.isPending ? <p role="status">{copy("ui.loading.nodes")}</p> : null}
+      {nodes.error instanceof Error && !isGarageDown(nodes.error) ? <p role="alert">{nodes.error.message}</p> : null}
+      {shownCode(nodes.error) ? <p className="ui-identifier">{shownCode(nodes.error)}</p> : null}
+      {nodes.isError ? <button className="ui-button" onClick={() => { void nodes.refetch(); }}>{copy("ui.retry.nodes")}</button> : null}
+      <div className="ui-actions">
+        {all ? <a className="ui-button" href="#workers/*" onClick={(event) => navigate(event, "#workers/*")}>{translate("All nodes")}</a> : null}
+        {nodes.data?.nodes.map(node => {
+          const next = `#${route}/${encodeURIComponent(node.id)}`;
+          return <a className="ui-button" key={node.id} href={next} title={node.id} onClick={(event) => navigate(event, next)}>{node.hostname ?? node.id}</a>;
+        })}
+      </div>
+      {nodes.isSuccess && nodes.data.nodes.length === 0 ? <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p> : null}
+    </section>
+  );
+}
+
 export function ClusterNodes() {
   const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
@@ -705,12 +735,38 @@ export function ClusterNodes() {
     queryKey: ["cluster", "status"],
     queryFn: loadNodes,
   });
+  async function refreshLayout() {
+    await client.invalidateQueries({ queryKey: ["cluster"] });
+    const [preview, history] = await Promise.all([
+      previewLayout().catch((error: unknown) => ({
+        phase: "failed" as const,
+        message: error instanceof Error ? error.message : previewFailedMessage(),
+      })),
+      loadLayoutHistory().catch((error: unknown) => ({
+        phase: "failed" as const,
+        message: error instanceof Error ? error.message : historyFailedMessage(),
+      })),
+    ]);
+    setLayoutPreview(preview);
+    setLayoutHistory(history);
+  }
+  async function refreshMaintenance() {
+    await Promise.all([client.invalidateQueries({ queryKey: ["cluster"] }), client.invalidateQueries({ queryKey: ["nodes"] })]);
+  }
   const stage = useMutation({
+    onSuccess: refreshLayout,
     mutationFn: ({ id, capacity }: { id: string; capacity: string }) => stageCapacity(id, capacity),
   });
-  const apply = useMutation({ mutationFn: applyLayout });
-  const revert = useMutation({ mutationFn: revertLayout });
+  const apply = useMutation({
+    mutationFn: applyLayout,
+    onSuccess: async () => {
+      await refreshLayout();
+      setApplyOpen(false);
+    },
+  });
+  const revert = useMutation({ mutationFn: revertLayout, onSuccess: refreshLayout });
   const skip = useMutation({
+    onSuccess: async () => { await refreshLayout(); setSkipStep(null); },
     mutationFn: ({ version, missing }: { version: string; missing: boolean }) =>
       skipDeadNodes(version, missing),
   });
@@ -719,10 +775,12 @@ export function ClusterNodes() {
   const [skipStep, setSkipStep] = useState<"risk" | "loss" | null>(null);
   const [purgeTarget, setPurgeTarget] = useState<PendingBlockPurge | null>(null);
   const purge = useMutation({
+    onSuccess: async () => { await refreshMaintenance(); setPurgeTarget(null); },
     mutationFn: (target: PendingBlockPurge) => purgeBlocks(target.id, target.hash),
   });
   const snapshot = useMutation({
     mutationFn: snapshotMetadata,
+    onSuccess: refreshMaintenance,
   });
   const connect = useMutation({
     mutationFn: connectNode,
@@ -742,6 +800,9 @@ export function ClusterNodes() {
   const rows = nodes.isSuccess ? nodes.data.nodes : [];
   const layoutVersion = nodes.isSuccess ? nodes.data.layoutVersion : null;
   const nextLayoutVersion = layoutVersion === null ? null : incrementDigits(layoutVersion);
+  const writes = [stage, apply, revert, skip, purge, snapshot];
+  const writing = writes.some(mutation => mutation.isPending);
+  const layoutWriting = stage.isPending || apply.isPending || revert.isPending || skip.isPending;
   const shown = nodes.isSuccess
     ? orderedNodes(
         rows.filter((node) => nodeMatches(node, query.filter)),
@@ -767,8 +828,16 @@ export function ClusterNodes() {
       ? null
       : (rows.find((node) => node.id === nodeDetail.id) ?? null);
   return (
-    <section className="grid min-w-0 gap-4" aria-label={copy("ui.cluster.nodes")}>
-      <h2 className="text-lg font-semibold">{copy("ui.nodes")}</h2>
+    <section className="ui-page min-w-0" aria-label={copy("ui.cluster.nodes")}>
+      <header className="ui-page-header">
+        <h2>{copy("ui.nodes")}</h2>
+        {layoutVersion !== null ? <p className="ui-muted">{translate("Layout version")}: <span className="ui-identifier">{layoutVersion}</span></p> : null}
+      </header>
+      <div aria-live="polite">
+        {writing ? <p role="status">{copy("ui.working")}</p> : null}
+        {writes.map((mutation, index) => mutation.error instanceof Error && !isGarageDown(mutation.error) ? <p key={index} role="alert">{mutation.error.message}</p> : null)}
+        {!writing && writes.some(mutation => mutation !== snapshot && mutation.isSuccess) ? <p role="status">{copy("ui.saved")}</p> : null}
+      </div>
       {nodeDetail ? (
         <DetailTabs
           label={fill(copy("ui.node"), { id: nodeDetail.id })}
@@ -779,7 +848,8 @@ export function ClusterNodes() {
             goHash(hashForDetail({ resource: "node", id: nodeDetail.id, tab }));
           }}
         >
-          <p>{nodeDetail.id}</p>
+          <p className="ui-identifier">{nodeDetail.id}</p>
+          <div className="ui-actions"><a className="ui-button" href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a><a className="ui-button" href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></div>
           {openedNode && nodeDetail.tab === "information" ? (
             <>
               {openedNode.hostname !== null ? <p>{openedNode.hostname}</p> : null}
@@ -788,10 +858,11 @@ export function ClusterNodes() {
               <p>{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</p>
               {openedNode.draining ? <p>{copy("ui.draining")}</p> : null}
               <button
-                className="border border-ink px-3 py-1 text-left"
+                className="ui-button"
+                disabled={snapshot.isPending}
                 type="button"
                 onClick={() => {
-                  snapshot.mutate(openedNode.id);
+                  if (!snapshot.isPending) snapshot.mutate(openedNode.id);
                 }}
               >
                 {copy("ui.snapshot.metadata")}</button>
@@ -803,145 +874,27 @@ export function ClusterNodes() {
           {openedNode && nodeDetail.tab === "statistics" && openedNode.capacity !== null ? (
             <p>{openedNode.capacity}</p>
           ) : null}
-          {openedNode && nodeDetail.tab === "maintenance" && openedNode.capacity !== null ? (
-            <CapacityField
+          {openedNode && nodeDetail.tab === "maintenance" ? (
+            <div className="ui-panel ui-page">
+            {openedNode.capacity !== null ? <CapacityField
+              pending={layoutWriting}
               bytes={openedNode.capacity}
               submit={(capacity) => {
-                stage.mutate({ id: openedNode.id, capacity });
+                if (!layoutWriting) stage.mutate({ id: openedNode.id, capacity });
               }}
-            />
+            /> : null}
+            <NodeBlockPurge pending={purge.isPending} id={openedNode.id} onAsk={(hash) => setPurgeTarget({id:openedNode.id,hash})} />
+            </div>
           ) : null}
         </DetailTabs>
       ) : null}
       {nodeDetail === null ? (
         <>
-      <div className="grid gap-2">
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          onClick={() => {
-            snapshot.mutate("*");
-          }}
-        >
-          {copy("ui.snapshot.every.node")}</button>
-        {snapshot.isSuccess && snapshot.variables === "*" ? (
-          <p>{copy("ui.metadata.snapshot.started")}</p>
-        ) : null}
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          onClick={() => {
-            void previewLayout().then(setLayoutPreview);
-          }}
-        >
-          {copy("ui.preview.layout")}</button>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          disabled={layoutPreview.phase !== "ready" || nextLayoutVersion === null}
-          onClick={() => {
-            if (layoutPreview.phase !== "ready" || nextLayoutVersion === null) {
-              return;
-            }
-            setApplyOpen(true);
-          }}
-        >
-          {copy("ui.apply.layout")}</button>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          onClick={() => {
-            revert.mutate();
-          }}
-        >
-          {copy("ui.revert.staged.changes")}</button>
-        <label className="block text-sm">
-          <input
-            type="checkbox"
-            checked={allowMissingData}
-            onChange={(event) => {
-              setAllowMissingData(event.target.checked);
-            }}
-          />
-          {copy("ui.allow.missing.data")}</label>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          disabled={layoutVersion === null}
-          onClick={() => {
-            if (layoutVersion === null) {
-              return;
-            }
-            setSkipStep("risk");
-          }}
-        >
-          {copy("ui.skip.dead.nodes")}</button>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="button"
-          onClick={() => {
-            void loadLayoutHistory().then(setLayoutHistory);
-          }}
-        >
-          {copy("ui.layout.history")}</button>
-        {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
-        {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
-        {layoutHistory.phase === "ready" ? (
-          <>
-            <ul>
-              {layoutHistory.versions.map((row, index) => (
-                <li key={index}>
-                  <p>{row.version}</p>
-                  <p>{row.status}</p>
-                </li>
-              ))}
-            </ul>
-            <ul>
-              {layoutHistory.trackers.map((row) => (
-                <li key={row.id}>
-                  <p>{row.id}</p>
-                  <p>{row.ack}</p>
-                  <p>{row.sync}</p>
-                  <p>{row.syncAck}</p>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </div>
-      <form className="grid gap-3" onSubmit={submit}>
-        <label className="block">
-          <span className="text-sm">{copy("ui.node.address")}</span>
-          <input
-            className="mt-1 w-full border border-line px-2 py-1"
-            value={address}
-            onChange={(event) => setAddress(event.target.value)}
-          />
-        </label>
-        <button
-          className="border border-ink px-3 py-1 text-left"
-          type="submit"
-          disabled={trimmed.length === 0 || connect.isPending}
-        >
-          {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
-        </button>
-      </form>
-      {connect.isError ? <p>{fill(copy("ui.connect"), { connectFailure: connectFailure })}</p> : null}
-      {connect.isSuccess && lines !== null && lines.length === 0 ? <p>{copy("ui.connected")}</p> : null}
-      {lines !== null && lines.length > 0 ? (
-        <ul className="min-w-0">
-          {lines.map((line, index) => (
-            <li key={index} className="break-all">
-              {line}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="grid max-w-sm gap-3">
-        <label className="block">
+      <div className="ui-toolbar">
+        <label className="ui-field">
           <span className="text-sm">{copy("ui.filter.nodes")}</span>
           <input
-            className="mt-1 w-full border border-line px-2 py-1"
+            className="ui-input"
             value={query.filter}
             onChange={(event) => {
               const next = { filter: event.target.value, sort: query.sort };
@@ -950,10 +903,10 @@ export function ClusterNodes() {
             }}
           />
         </label>
-        <label className="block">
+        <label className="ui-field">
           <span className="text-sm">{copy("ui.sort.nodes")}</span>
           <select
-            className="mt-1 w-full border border-line px-2 py-1"
+            className="ui-input"
             value={query.sort}
             onChange={(event) => {
               const next = {
@@ -980,7 +933,7 @@ export function ClusterNodes() {
           <p>{message}</p>
           {code ? <p>{code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void nodes.refetch();
@@ -993,70 +946,224 @@ export function ClusterNodes() {
         <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p>
       ) : null}
       {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
-        <ul className="grid min-w-0 gap-3 text-sm">
+        <div className="ui-table-container" role="region" aria-label={translate("Node list")} tabIndex={0}>
+          <table className="ui-table">
+            <thead><tr>
+              <th scope="col">{copy("ui.hostname")}</th>
+              <th scope="col">Id</th>
+              <th scope="col">{copy("ui.status")}</th>
+              <th scope="col">{copy("ui.capacity")}</th>
+              <th scope="col">{copy("tab.maintenance")}</th>
+            </tr></thead>
+            <tbody>
           {shown.map((node) => (
-            <li key={node.id} className="min-w-0">
-              <p className="break-all">{node.id}</p>
-              {node.hostname !== null ? <p className="break-all">{node.hostname}</p> : null}
-              {node.addr !== null ? <p className="break-all">{node.addr}</p> : null}
-              {node.garageVersion !== null ? <p>{node.garageVersion}</p> : null}
-              <p>{node.isUp ? copy("ui.up") : copy("ui.down")}</p>
-              {node.draining ? <p>{copy("ui.draining")}</p> : null}
+            <tr key={node.id}>
+              <td><a aria-label={fill(copy("ui.node"), {id:node.id})} href={hashForDetail({resource:"node",id:node.id,tab:"information"})}>{node.hostname ?? "—"}</a></td>
+              <td>
+                <p className="ui-identifier" title={node.id}>{node.id}</p>
+                {node.addr !== null ? <p className="ui-muted ui-identifier">{node.addr}</p> : null}
+                {node.garageVersion !== null ? <p className="ui-muted">{node.garageVersion}</p> : null}
+              </td>
+              <td>
+                <p className="ui-status">{node.isUp ? copy("ui.up") : copy("ui.down")}</p>
+                {node.draining ? <p>{copy("ui.draining")}</p> : null}
+              </td>
+              <td className="ui-identifier">{node.capacity ?? "—"}</td>
+              <td><details className="ui-disclosure">
+                <summary>{copy("tab.maintenance")}</summary>
+                <div className="ui-actions">
+                  <a className="ui-button" href={`#workers/${encodeURIComponent(node.id)}`}>{copy("nav.workers")}</a>
+                  <a className="ui-button" href={`#block-errors/${encodeURIComponent(node.id)}`}>{copy("nav.blockErrors")}</a>
+                </div>
               {node.capacity !== null ? (
                 <CapacityField
+                  pending={layoutWriting}
                   bytes={node.capacity}
                   submit={(capacity) => {
-                    stage.mutate({ id: node.id, capacity });
+                    if (!layoutWriting) stage.mutate({ id: node.id, capacity });
                   }}
                 />
               ) : null}
               <NodeBlockPurge
+                pending={purge.isPending}
                 id={node.id}
                 onAsk={(hash) => {
                   setPurgeTarget({ id: node.id, hash });
                 }}
               />
+              </details></td>
+            </tr>
+          ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>      <div className="grid gap-2">
+        <button
+          className="ui-button"
+          disabled={snapshot.isPending}
+          type="button"
+          onClick={() => {
+            if (!snapshot.isPending) snapshot.mutate("*");
+          }}
+        >
+          {copy("ui.snapshot.every.node")}</button>
+        {snapshot.isSuccess && snapshot.variables === "*" ? (
+          <p>{copy("ui.metadata.snapshot.started")}</p>
+        ) : null}
+        <button
+          className="ui-button"
+          type="button"
+          onClick={() => {
+            setLayoutPreview({phase:"loading"});
+            void previewLayout().then(setLayoutPreview).catch((error: unknown) => setLayoutPreview({phase:"failed",message:error instanceof Error ? error.message : previewFailedMessage()}));
+          }}
+        >
+          {copy("ui.preview.layout")}</button>
+        <button
+          className="ui-button ui-button-danger"
+          type="button"
+          disabled={layoutWriting || layoutPreview.phase !== "ready" || nextLayoutVersion === null}
+          onClick={() => {
+            if (layoutPreview.phase !== "ready" || nextLayoutVersion === null) {
+              return;
+            }
+            setApplyOpen(true);
+          }}
+        >
+          {copy("ui.apply.layout")}</button>
+        <button
+          className="ui-button"
+          disabled={layoutWriting}
+          type="button"
+          onClick={() => {
+            if (!layoutWriting) revert.mutate();
+          }}
+        >
+          {copy("ui.revert.staged.changes")}</button>
+        <label className="block text-sm">
+          <input
+            type="checkbox"
+            checked={allowMissingData}
+            onChange={(event) => {
+              setAllowMissingData(event.target.checked);
+            }}
+          />
+          {copy("ui.allow.missing.data")}</label>
+        <button
+          className="ui-button ui-button-danger"
+          type="button"
+          disabled={layoutWriting || layoutVersion === null}
+          onClick={() => {
+            if (layoutVersion === null) {
+              return;
+            }
+            setSkipStep("risk");
+          }}
+        >
+          {copy("ui.skip.dead.nodes")}</button>
+        <button
+          className="ui-button"
+          type="button"
+          onClick={() => {
+            setLayoutHistory({phase:"loading"});
+            void loadLayoutHistory().then(setLayoutHistory).catch((error: unknown) => setLayoutHistory({phase:"failed",message:error instanceof Error ? error.message : historyFailedMessage()}));
+          }}
+        >
+          {copy("ui.layout.history")}</button>
+        {layoutPreview.phase === "loading" || layoutHistory.phase === "loading" ? <p role="status">{copy("ui.working")}</p> : null}
+        {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
+        {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
+        {layoutHistory.phase === "ready" ? (
+          <>
+            <ul>
+              {layoutHistory.versions.map((row, index) => (
+                <li key={index}>
+                  <p>{row.version}</p>
+                  <p>{row.status}</p>
+                </li>
+              ))}
+            </ul>
+            <ul>
+              {layoutHistory.trackers.map((row) => (
+                <li key={row.id}>
+                  <p>{row.id}</p>
+                  <p>{row.ack}</p>
+                  <p>{row.sync}</p>
+                  <p>{row.syncAck}</p>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
+      <form className="ui-form" onSubmit={submit}>
+        <label className="ui-field">
+          <span className="text-sm">{copy("ui.node.address")}</span>
+          <input
+            className="ui-input"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+        </label>
+        <button
+          className="ui-button ui-button-primary"
+          type="submit"
+          disabled={trimmed.length === 0 || connect.isPending}
+        >
+          {connect.isPending ? copy("ui.connecting") : copy("ui.connect.node")}
+        </button>
+      </form>
+      {connect.isError ? <p>{fill(copy("ui.connect"), { connectFailure: connectFailure })}</p> : null}
+      {connect.isSuccess && lines !== null && lines.length === 0 ? <p>{copy("ui.connected")}</p> : null}
+      {lines !== null && lines.length > 0 ? (
+        <ul className="min-w-0">
+          {lines.map((line, index) => (
+            <li key={index} className="break-all">
+              {line}
             </li>
           ))}
         </ul>
       ) : null}
+</details> : null}
       {purgeTarget !== null ? (
         <ConfirmDialog
+          pending={purge.isPending}
           action="clear-block"
           name={purgeTarget.hash}
           scope={purgeTarget.id}
-          consequence={copy("ui.object.data.will.be.lost")}
+          consequence={purge.error instanceof Error ? `${copy("ui.object.data.will.be.lost")} ${purge.error.message}` : copy("ui.object.data.will.be.lost")}
           onCancel={() => {
             setPurgeTarget(null);
           }}
           onConfirm={() => {
             const target = purgeTarget;
-            setPurgeTarget(null);
             purge.mutate(target);
           }}
         />
       ) : null}
       {applyOpen && nextLayoutVersion !== null ? (
         <ConfirmDialog
+          pending={apply.isPending}
           action="apply-layout"
           name={nextLayoutVersion}
           scope="cluster"
-          consequence={copy("ui.this.applies.the.staged.layout")}
+          consequence={apply.error instanceof Error ? `${copy("ui.this.applies.the.staged.layout")} ${apply.error.message}` : copy("ui.this.applies.the.staged.layout")}
           onCancel={() => {
             setApplyOpen(false);
           }}
           onConfirm={() => {
-            setApplyOpen(false);
             apply.mutate();
           }}
         />
       ) : null}
       {skipStep === "risk" && layoutVersion !== null ? (
         <ConfirmDialog
+          pending={skip.isPending}
           action="skip-dead-node"
           name={layoutVersion}
           scope="cluster"
-          consequence={copy("ui.this.forces.layout.progress.past.dead.nodes")}
+          consequence={skip.error instanceof Error ? `${copy("ui.this.forces.layout.progress.past.dead.nodes")} ${skip.error.message}` : copy("ui.this.forces.layout.progress.past.dead.nodes")}
           onCancel={() => {
             setSkipStep(null);
           }}
@@ -1066,23 +1173,22 @@ export function ClusterNodes() {
               setSkipStep("loss");
               return;
             }
-            setSkipStep(null);
             skip.mutate({ version, missing: false });
           }}
         />
       ) : null}
       {skipStep === "loss" && layoutVersion !== null ? (
         <ConfirmDialog
+          pending={skip.isPending}
           action="skip-dead-node"
           name={layoutVersion}
           scope="cluster"
-          consequence={copy("ui.data.may.be.lost")}
+          consequence={skip.error instanceof Error ? `${copy("ui.data.may.be.lost")} ${skip.error.message}` : copy("ui.data.may.be.lost")}
           onCancel={() => {
             setSkipStep(null);
           }}
           onConfirm={() => {
             const version = layoutVersion;
-            setSkipStep(null);
             skip.mutate({ version, missing: true });
           }}
         />

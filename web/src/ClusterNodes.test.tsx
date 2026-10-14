@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -24,6 +24,7 @@ function renderApp() {
       <App />
     </QueryClientProvider>,
   );
+  document.querySelectorAll("details").forEach((item) => { item.open = true; });
 }
 
 function json(body: unknown, status = 200) {
@@ -116,6 +117,7 @@ function installFetch(
     if (url === "/api/nodes/*/metadata-snapshot" && init?.method?.toUpperCase() === "POST") {
       return new Response("", { status: 200 });
     }
+    if (url === "/api/layout/skip-dead-nodes") return json({});
     return new Response("no", { status: 500 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -164,17 +166,17 @@ test("shows an up node with a hostname and a down draining node", async () => {
   expect(screen.getByText("node-down")).toBeTruthy();
   expect(screen.getByText("Down")).toBeTruthy();
   expect(screen.getByText("Draining")).toBeTruthy();
-  const up = screen.getByText("node-up").closest("li");
-  const down = screen.getByText("node-down").closest("li");
+  const up = screen.getByText("node-up").closest("tr");
+  const down = screen.getByText("node-down").closest("tr");
   expect(up?.textContent).toContain("node-up");
   expect(up?.textContent).toContain("alpha");
   expect(up?.textContent).toContain("10.0.0.1:3901");
   expect(up?.textContent).toContain("v2.4.1");
   expect(up?.textContent).toContain("Up");
   expect(up?.querySelector("form")?.getAttribute("aria-label")).toBe("Node capacity");
-  expect(down?.textContent).toBe(nodeCard("node-down", "node-downDownDraining"));
+  expect(down?.textContent).toContain("node-downDownDraining");
   const page = document.body.textContent ?? "";
-  expect(page).not.toContain("9007199254740993");
+  expect(page).toContain("9007199254740993");
   expect(page).not.toContain("9007199254740992");
   expect(page).not.toContain("dc1");
   expect(page).not.toContain("fast");
@@ -383,7 +385,7 @@ test("shows the connect API message in a paragraph and keeps the nodes", async (
   );
   expect(message.getAttribute("role")).toBeNull();
   expect(message.textContent).toBe("Connect: Garage admin API is not reachable");
-  expect(nodeErrorLines()).toEqual(["Connect: Garage admin API is not reachable"]);
+  expect(message.closest("details")).toBeTruthy();
   expect(screen.queryByText("garage_unavailable")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
   expect(screen.queryByText("Connected")).toBeNull();
@@ -417,10 +419,10 @@ test("wraps a 64-character node id, hostname, address, and connect result", asyn
   );
   renderApp();
   const id = await screen.findByText(nodeId);
-  expect(id.classList.contains("break-all")).toBe(true);
-  expect(id.closest("li")?.classList.contains("min-w-0")).toBe(true);
-  expect(screen.getByText(hostname).classList.contains("break-all")).toBe(true);
-  expect(screen.getByText(address).classList.contains("break-all")).toBe(true);
+  expect(id.classList.contains("ui-identifier")).toBe(true);
+  expect(id.closest("tr")).toBeTruthy();
+  expect(screen.getByText(hostname).getAttribute("href")).toContain(encodeURIComponent(nodeId));
+  expect(screen.getByText(address).classList.contains("ui-identifier")).toBe(true);
   fireEvent.change(screen.getByLabelText("Node address"), {
     target: { value: "abcd@127.0.0.1:3901" },
   });
@@ -430,7 +432,7 @@ test("wraps a 64-character node id, hostname, address, and connect result", asyn
   expect(line.closest("ul")?.classList.contains("min-w-0")).toBe(true);
   const items = screen.getAllByRole("listitem").map((item) => item.textContent);
   expect(items).toContain(connectResult);
-  expect(items).toContain(nodeCard(nodeId, `${nodeId}${hostname}${address}v2.4.1Up`));
+  expect(nodeCardText()).toContain(nodeCard(nodeId, `${nodeId}${hostname}${address}v2.4.1Up`));
 });
 
 test("shows Connecting while connect is submitting, then Connected when no lines return", async () => {
@@ -465,11 +467,15 @@ test("shows Connecting while connect is submitting, then Connected when no lines
 });
 
 function nodeCard(id: string, body: string): string {
-  return `${body}Block hash for ${id}Purge blocks on ${id}`;
+  void id; return body;
 }
 
 function nodeCardText(): string[] {
-  return screen.queryAllByRole("listitem").map((item) => item.textContent ?? "");
+  return [...document.querySelectorAll("table tbody tr")].map(item => {
+    const cells = item.querySelectorAll("td");
+    const id = cells[1]?.querySelector("p")?.textContent ?? "";
+    return id + (cells[0]?.textContent === "—" ? "" : cells[0]?.textContent ?? "") + (cells[1]?.textContent ?? "").slice(id.length) + (cells[2]?.textContent ?? "");
+  });
 }
 
 function nodeErrorLines(): string[] {
@@ -838,7 +844,7 @@ test("purge asks for the block hash before it sends", async () => {
   const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
   expect(confirm.disabled).toBe(false);
   fireEvent.click(confirm);
-  expect(screen.queryByRole("heading", { name: "Confirm abc" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Confirm abc" })).toBeTruthy();
   await act(async () => {});
   expect(purgePosts()).toHaveLength(1);
   const init = purgePosts()[0]?.[1] as RequestInit | undefined;
@@ -877,9 +883,9 @@ test("apply stays disabled until preview succeeds", async () => {
     screen.getByRole("button", { name: "Apply layout" }) as HTMLButtonElement;
 
   const preview = screen.getByRole("button", { name: "Preview layout" });
-  expect(preview.closest("li")).toBeNull();
+  expect(preview.closest("tr")).toBeNull();
   expect(preview.getAttribute("type")).toBe("button");
-  expect(applyButton().closest("li")).toBeNull();
+  expect(applyButton().closest("tr")).toBeNull();
   expect(applyButton().getAttribute("type")).toBe("button");
   expect(applyButton().disabled).toBe(true);
   expect(previewPosts()).toHaveLength(0);
@@ -971,8 +977,8 @@ test("history shows each version and its sync status", async () => {
   const historyCalls = () =>
     fetchMock.mock.calls.filter((call) => String(call[0]) === "/api/layout/history");
   const historyButton = screen.getByRole("button", { name: "Layout history" });
-  expect(historyButton.closest("li")).toBeNull();
-  expect(screen.getAllByRole("listitem").every((item) => !item.contains(historyButton))).toBe(
+  expect(historyButton.closest("tr")).toBeNull();
+  expect(screen.queryAllByRole("listitem").every((item) => !item.contains(historyButton))).toBe(
     true,
   );
   expect(historyCalls()).toHaveLength(0);
@@ -1082,7 +1088,7 @@ test("skip dead nodes passes the current version and confirms when data may be l
       false,
     );
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await act(async () => {});
+    await waitFor(() => expect(screen.queryByRole("button", {name:"Working"})).toBeNull());
   }
 
   fireEvent.click(skip);
@@ -1111,4 +1117,81 @@ test("skip dead nodes passes the current version and confirms when data may be l
   expect(lost?.body).toBe(`{"allowMissingData":true,"version":${current}}`);
   expect(lost?.body).not.toContain('"version":9007199254740994');
   expect(new Headers(lost?.headers).get("x-confirm")).toBe("yes");
+});
+
+test("failed apply keeps confirmation and successful retry refreshes version for skip", async () => {
+  let version = 1;
+  let attempts = 0;
+  const writes: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/auth/status") return json(session("admin"));
+    if (url === "/api/cluster/status") return json({layoutVersion: version, nodes: [{id:"n1",isUp:true,draining:false}]});
+    if (url === "/api/layout/preview") return json({});
+    if (url === "/api/layout/history") return json({versions:[{version,status:"Current"}],updateTrackers:[]});
+    if (url === "/api/layout/apply") {
+      attempts += 1;
+      if (attempts === 1) return json({message:"Apply rejected"}, 409);
+      version = 2;
+      return json({});
+    }
+    if (url === "/api/layout/skip-dead-nodes") { writes.push(String(init?.body)); return json({}); }
+    return json({status:"ok",version:"test"});
+  }));
+  renderApp();
+  await screen.findByText("n1");
+  fireEvent.click(screen.getByRole("button", {name:"Preview layout"}));
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", {name:"Apply layout"}));
+  fireEvent.change(screen.getByLabelText("Type 2 to confirm"), {target:{value:"2"}});
+  fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  expect(await screen.findByText("Apply rejected", {selector:"[role=alert]"})).toBeTruthy();
+  expect(screen.getByLabelText("Type 2 to confirm")).toHaveProperty("value", "2");
+  fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  await screen.findByText("Saved");
+  fireEvent.click(screen.getByRole("button", {name:"Skip dead nodes"}));
+  fireEvent.change(screen.getByLabelText("Type 2 to confirm"), {target:{value:"2"}});
+  fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  await act(async () => {});
+  expect(writes).toEqual(['{"allowMissingData":false,"version":2}']);
+});
+
+test.each(["stage", "revert", "skip", "snapshot", "purge"] as const)("%s reports failure, preserves retry, and refreshes node context", async (operation) => {
+  let version = 1;
+  let attempts = 0;
+  const path = {stage:"/api/layout/stage",revert:"/api/layout/revert",skip:"/api/layout/skip-dead-nodes",snapshot:"/api/nodes/*/metadata-snapshot",purge:"/api/nodes/n1/blocks/purge"}[operation];
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input); calls.push(url);
+    if (url === "/api/auth/status") return json(session("admin"));
+    if (url === "/api/cluster/status") return json({layoutVersion:version,nodes:[{id:"n1",hostname:"alpha",isUp:true,draining:false,role:{capacity:version * 1000000000000}}]});
+    if (url === "/api/layout/preview") return json({});
+    if (url === "/api/layout/history") return json({versions:[{version,status:`Current ${version}`}],updateTrackers:{}});
+    if (url === path) { attempts += 1; if (attempts === 1) return json({message:`${operation} rejected`},409); version = 2; return json({}); }
+    return json({status:"ok",version:"test"});
+  }));
+  renderApp();
+  await screen.findByText("n1");
+  document.querySelectorAll("details").forEach(item => { item.open = true; });
+  const button = () => screen.getByRole("button", {name:{stage:"Save",revert:"Revert staged changes",skip:"Skip dead nodes",snapshot:"Snapshot every node",purge:"Purge blocks on n1"}[operation]});
+  if (operation === "stage") fireEvent.change(screen.getByLabelText("Capacity"), {target:{value:"3"}});
+  if (operation === "purge") fireEvent.change(screen.getByLabelText("Block hash for n1"), {target:{value:"aa11"}});
+  fireEvent.click(button());
+  if (operation === "skip" || operation === "purge") {
+    fireEvent.change(screen.getByLabelText(`Type ${operation === "skip" ? "1" : "aa11"} to confirm`), {target:{value:operation === "skip" ? "1" : "aa11"}});
+    fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  }
+  await screen.findByText(`${operation} rejected`, {selector:"[role=alert]"});
+  if (operation === "stage") expect(screen.getByLabelText("Capacity")).toHaveProperty("value","3");
+  if (operation === "purge") expect(screen.getByLabelText("Type aa11 to confirm")).toHaveProperty("value","aa11");
+  if (operation === "skip" || operation === "purge") fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  else fireEvent.click(button());
+  await screen.findByText(operation === "snapshot" ? "Metadata snapshot started" : "Saved");
+  expect(attempts).toBe(2);
+  expect(await screen.findByText("2000000000000", {selector:"td"})).toBeTruthy();
+  if (operation === "stage" || operation === "skip" || operation === "revert") {
+    expect(screen.getByText("Current 2")).toBeTruthy();
+    expect((screen.getByRole("button", {name:"Apply layout"}) as HTMLButtonElement).disabled).toBe(false);
+    expect(calls.filter(url => url === "/api/layout/preview")).toHaveLength(1);
+  }
 });

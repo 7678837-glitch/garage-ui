@@ -375,5 +375,37 @@ test("says no node is selected", () => {
       <BlockErrors />
     </QueryClientProvider>,
   );
-  expect(screen.getByText("No node is selected.").textContent).toBe("No node is selected.");
+  expect(screen.getByRole("heading", {name:"Select node"})).toBeTruthy();
+});
+
+ test("ordinary block-errors entry offers node navigation", async () => {
+  window.location.hash = "#block-errors";
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ layoutVersion: 1, nodes: [{id: "n1", hostname: "alpha", isUp: true, draining: false}] }), {status:200})));
+  const client = new QueryClient({defaultOptions: {queries: {retry:false}}});
+  render(<QueryClientProvider client={client}><BlockErrors /></QueryClientProvider>);
+  const link = await screen.findByRole("link", {name: "alpha"});
+  expect(link.getAttribute("href")).toBe("#block-errors/n1");
+  fireEvent.click(link);
+  expect(window.location.hash).toBe("#block-errors/n1");
+ });
+
+test("purge failure keeps the typed hash and success refreshes the visible errors", async () => {
+  window.location.hash = "#block-errors/n1";
+  let attempts = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/blocks/purge")) { attempts += 1; return new Response(JSON.stringify(attempts === 1 ? {message:"Purge rejected"} : {}), {status:attempts === 1 ? 409 : 200}); }
+    return new Response(JSON.stringify(attempts === 2 ? [] : [{blockHash:"aa11",refcount:2,errorCount:3,lastTrySecsAgo:4,nextTryInSecs:5}]), {status:200});
+  }));
+  const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+  render(<QueryClientProvider client={client}><BlockErrors /></QueryClientProvider>);
+  await screen.findByText("aa11");
+  fireEvent.click(screen.getByRole("button", {name:"Purge aa11"}));
+  fireEvent.change(screen.getByLabelText("Type aa11 to confirm"), {target:{value:"aa11"}});
+  fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  await screen.findByText("Purge rejected", {selector:"section > p"});
+  expect(screen.getByLabelText("Type aa11 to confirm")).toHaveProperty("value","aa11");
+  fireEvent.click(screen.getByRole("button", {name:"Confirm"}));
+  await screen.findByText("There are no block errors.");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(attempts).toBe(2);
 });

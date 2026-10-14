@@ -348,7 +348,7 @@ export function ClusterHealth() {
   const statisticsCode = shownCode(statistics.error);
 
   return (
-    <section className="grid gap-4" aria-label={copy("ui.cluster.health")}>
+    <section className="ui-page" aria-label={copy("ui.cluster.health")}>
       <h2 className="text-lg font-semibold">{copy("ui.cluster.health")}</h2>
       {health.isPending ? (
         <div className="h-16 border border-line" aria-label={copy("ui.loading.cluster.health")} />
@@ -358,7 +358,7 @@ export function ClusterHealth() {
           <p>{healthMessage}</p>
           {healthCode ? <p>{healthCode}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void health.refetch();
@@ -368,25 +368,26 @@ export function ClusterHealth() {
         </>
       ) : null}
       {health.isSuccess ? (
-        <dl className="grid gap-2 text-sm">
+        <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
           <div>
             <dt className="font-medium">{copy("ui.status")}</dt>
-            <dd>{health.data.status}</dd>
+            <dd className="mt-1 text-lg font-semibold">{health.data.status}</dd>
           </div>
           {COUNTS.map(([key, label]) => (
             <div key={key}>
               <dt className="font-medium">{translate(label)}</dt>
-              <dd>{health.data[key]}</dd>
+              <dd className="mt-1 text-lg font-semibold">{health.data[key]}</dd>
             </div>
           ))}
         </dl>
       ) : null}
+      {statistics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {statistics.isError && !isGarageDown(statistics.error) ? (
         <>
           <p>{fill(copy("ui.statistics"), { statisticsMessage: statisticsMessage })}</p>
           {statisticsCode ? <p>{statisticsCode}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void statistics.refetch();
@@ -397,11 +398,11 @@ export function ClusterHealth() {
       ) : null}
       {statistics.isSuccess ? (
         <>
-          <dl className="grid gap-2 text-sm">
+          <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
             {STATISTICS.map(([key, label, display, unset]) => (
               <div key={key}>
                 <dt className="font-medium">{translate(label)}</dt>
-                <dd>{shownStatistic(statistics.data[key], display, unset, language)}</dd>
+                <dd className="mt-1 text-lg font-semibold">{shownStatistic(statistics.data[key], display, unset, language)}</dd>
               </div>
             ))}
           </dl>
@@ -410,13 +411,15 @@ export function ClusterHealth() {
           ) : null}
         </>
       ) : null}
+      {metrics.isPending ? <p role="status">{copy("ui.working")}</p> : null}
+      {metrics.isError && !isGarageDown(metrics.error) ? <div className="ui-alert"><p role="alert">{metrics.error instanceof Error ? metrics.error.message : copy("ui.cluster.metrics.are.unavailable")}</p><button className="ui-button" onClick={() => { void metrics.refetch(); }}>{copy("ui.retry")}</button></div> : null}
       {metrics.isSuccess ? (
         <>
-          <dl className="grid gap-2 text-sm">
+          <dl className="ui-panel grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-4">
             {METRICS.map(([key, label]) => (
               <div key={key}>
                 <dt className="font-medium">{translate(label)}</dt>
-                <dd>{metrics.data[key]}</dd>
+                <dd className="mt-1 text-lg font-semibold">{metrics.data[key]}</dd>
               </div>
             ))}
           </dl>

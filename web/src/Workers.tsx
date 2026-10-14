@@ -1,4 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { OperationNodeSelection } from "./ClusterNodes";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
@@ -184,16 +185,17 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const save = useMutation({
+    onSuccess: () => setOpen(false),
     mutationFn: (assignment: VariableAssignment) => saveWorkerVariable(nodeId, assignment),
   });
-  const ready = variable.length > 0 && value.length > 0;
+  const ready = variable.length > 0 && value.length > 0 && !save.isPending;
 
   return (
-    <div className="grid max-w-sm gap-3">
-      <label className="block">
+    <div className="ui-form max-w-sm">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.variable")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={variable}
           autoComplete="off"
           spellCheck={false}
@@ -202,10 +204,10 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
           }}
         />
       </label>
-      <label className="block">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.value")}</span>
         <input
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={value}
           autoComplete="off"
           spellCheck={false}
@@ -215,7 +217,7 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
         />
       </label>
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
         disabled={!ready}
         onClick={() => {
@@ -226,19 +228,21 @@ function WorkerVariable({ nodeId }: { nodeId: string }) {
         }}
       >
         {copy("ui.save.variable")}</button>
+      {save.error instanceof Error ? <p role="alert">{save.error.message}</p> : null}
+      {save.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {save.data !== undefined ? <p>{save.data}</p> : null}
       {open ? (
         <ConfirmDialog
+          pending={save.isPending}
           action="worker-variable"
           name={variable}
           scope={value}
-          consequence={copy("ui.this.changes.a.worker.variable.on.the.node")}
+          consequence={`${copy("ui.this.changes.a.worker.variable.on.the.node")}${save.error instanceof Error ? ` ${save.error.message}` : ""}`}
           onCancel={() => {
             setOpen(false);
           }}
           onConfirm={() => {
             const assignment = { variable, value };
-            setOpen(false);
             save.mutate(assignment);
           }}
         />
@@ -305,19 +309,21 @@ function postRepair(nodeId: string, body: RepairBody): Promise<unknown> {
 }
 
 function NodeRepair({ nodeId }: { nodeId: string }) {
+  const client = useQueryClient();
   const [option, setOption] = useState<RepairOption>(REPAIR_OPTIONS[0]);
   const [open, setOpen] = useState(false);
   const repair = useMutation({
     mutationFn: (body: RepairBody) => postRepair(nodeId, body),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["nodes", nodeId] }); setOpen(false); },
   });
   const failure = repair.error instanceof Error ? repair.error.message : copy("ui.repair.failed");
 
   return (
-    <div className="grid max-w-sm gap-3">
-      <label className="block">
+    <div className="ui-form max-w-sm">
+      <label className="ui-field">
         <span className="text-sm">{copy("ui.repair.type")}</span>
         <select
-          className="mt-1 w-full border border-line px-2 py-1"
+          className="ui-input"
           value={option.value}
           onChange={(event) => {
             const next = REPAIR_OPTIONS.find((item) => item.value === event.target.value);
@@ -335,27 +341,29 @@ function NodeRepair({ nodeId }: { nodeId: string }) {
         </select>
       </label>
       <button
-        className="border border-ink px-3 py-1 text-left"
+        className="ui-button"
         type="button"
+        disabled={repair.isPending}
         onClick={() => {
           setOpen(true);
         }}
       >
         {copy("ui.start.repair")}</button>
+      {repair.isPending ? <p role="status">{copy("ui.working")}</p> : null}
       {repair.isError ? <p>{failure}</p> : null}
       {repair.isSuccess ? <p>{copy("ui.repair.started")}</p> : null}
       {open ? (
         <ConfirmDialog
+          pending={repair.isPending}
           action="repair"
           name={nodeId}
           scope={translate(option.label)}
-          consequence={copy("ui.this.starts.a.repair.on.the.node")}
+          consequence={`${copy("ui.this.starts.a.repair.on.the.node")}${repair.error instanceof Error ? ` ${repair.error.message}` : ""}`}
           onCancel={() => {
             setOpen(false);
           }}
           onConfirm={() => {
             const body = option.body;
-            setOpen(false);
             repair.mutate(body);
           }}
         />
@@ -392,11 +400,9 @@ function WorkersList({ nodeId }: { nodeId: string }) {
   };
 
   return (
-    <section className="grid gap-4" aria-label={copy("nav.workers")} aria-busy={view.busy}>
+    <section className="ui-page" aria-label={copy("nav.workers")} aria-busy={view.busy}>
       <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
-      <NodeRepair nodeId={nodeId} />
-      <WorkerVariable nodeId={nodeId} />
-      <div className="flex flex-wrap gap-4 text-sm">
+      <div className="ui-toolbar text-sm">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -425,7 +431,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           <p>{view.failure.message}</p>
           {view.failure.code ? <p>{view.failure.code}</p> : null}
           <button
-            className="border border-ink px-3 py-1 text-left"
+            className="ui-button"
             type="button"
             onClick={() => {
               void workers.refetch();
@@ -439,8 +445,8 @@ function WorkersList({ nodeId }: { nodeId: string }) {
         group.rows.length === 0 ? null : (
           <div key={group.nodeId} className="grid gap-2">
             {nodeId === "*" ? <p>{group.nodeId}</p> : null}
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-sm">
+            <div className="ui-table-container" role="region" tabIndex={0} aria-label={translate("Worker list")}>
+              <table className="ui-table">
                 <thead>
                   <tr>
                     <th className="py-2 pr-3 font-medium" scope="col">
@@ -465,7 +471,7 @@ function WorkersList({ nodeId }: { nodeId: string }) {
                       <td className="py-2 pr-3">{worker.progress}</td>
                       <td className="py-2">
                         <button
-                          className="border border-ink px-3 py-1 text-left"
+                          className="ui-button"
                           type="button"
                           onClick={() => {
                             setSelected({ nodeId: group.nodeId, workerId: worker.id });
@@ -481,6 +487,8 @@ function WorkersList({ nodeId }: { nodeId: string }) {
           </div>
         ),
       )}
+      <details className="ui-disclosure"><summary>{copy("ui.start.repair")}</summary><NodeRepair nodeId={nodeId} /></details>
+      <details className="ui-disclosure"><summary>{copy("ui.variable")}</summary><WorkerVariable nodeId={nodeId} /></details>
       {selected !== null ? (
         <WorkerDetail nodeId={selected.nodeId} workerId={selected.workerId} />
       ) : null}
@@ -493,9 +501,9 @@ export function Workers() {
   const nodeId = workersNodeId(hash);
   if (nodeId === null) {
     return (
-      <section className="grid gap-4" aria-label={copy("nav.workers")} aria-busy={false}>
+      <section className="ui-page" aria-label={copy("nav.workers")} aria-busy={false}>
         <h2 className="text-lg font-semibold">{copy("nav.workers")}</h2>
-        <p>{copy("ui.no.node.is.selected")}</p>
+        <OperationNodeSelection route="workers" all />
       </section>
     );
   }
