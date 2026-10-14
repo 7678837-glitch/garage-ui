@@ -113,7 +113,6 @@ const initialBrowse: BrowseState = {
   anchor: null,
 };
 
-const wrap = "min-w-0 max-w-full break-all";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1108,7 +1107,7 @@ export function Objects({
       {!embedded ? <ResourceIdentity id={bucketId} /> : null}
       <nav aria-label={copy("ui.prefix")} className="ui-actions ui-objects-prefix">
         <Button size="2" variant="soft" color="gray"
-          className={`${wrap} ui-identifier whitespace-normal text-left`}
+          className="ui-identifier"
           type="button"
           aria-label={`${copy("common.rootPrefix")} (${bucketId})`}
           onClick={() => {
@@ -1120,7 +1119,7 @@ export function Objects({
         {prefixSegments(prefix).map((segment) => (
           <Button size="2" variant="soft" color="gray"
             key={segment.prefix}
-            className={`${wrap} ui-identifier whitespace-normal text-left`}
+            className="ui-identifier"
             type="button"
             aria-label={`${segment.label} (${segment.prefix})`}
             onClick={() => {
@@ -1230,7 +1229,7 @@ export function Objects({
               onValueChange={setKeyChoice}
               disabled={chooseKey.isPending}
             >
-              <Select.Trigger aria-label={copy("ui.bucket.key")} placeholder={copy("ui.select.a.key")} />
+              <Select.Trigger className="ui-objects-key-picker" aria-label={copy("ui.bucket.key")} placeholder={copy("ui.select.a.key")} />
               <Select.Content>
                 {(keyChoices.data ?? []).map((id) => (
                   <Select.Item key={id} value={id}>{id}</Select.Item>
@@ -1276,7 +1275,7 @@ export function Objects({
           >
             {copy("ui.copy.path")}</Button>
           {canWrite ? (
-            <Button size="2" variant="soft" color="red"
+            <Button size="2" variant="soft" color="red" highContrast
               type="button"
               onClick={() => {
                 // One key still uses DELETE. Two or more keys POST objects:delete. One click must not call the batch route.

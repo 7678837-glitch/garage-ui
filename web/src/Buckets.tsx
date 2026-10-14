@@ -1546,8 +1546,6 @@ function RemoveAliasButton({ bucketId, alias }: { bucketId: string; alias: Alias
   return (
     <>
       <Button size="2" color="gray" variant="soft"
-        className={wrap}
-        style={{ whiteSpace: "normal", height: "auto", minHeight: "var(--control-height)", paddingBlock: "var(--space-small)" }}
         type="button"
         disabled={remove.isPending}
         onClick={() => {
@@ -1811,8 +1809,8 @@ export function Buckets({
               <UsageText bucket={openedBucket} />
             </SettingsSection>
             <SettingsSection title={copy("ui.aliases")}>
-              {openedBucket.aliases.map((alias, index) => <div className="ui-actions" key={index}>
-                <span className={wrap}>{alias.name}</span>
+              {openedBucket.aliases.map((alias, index) => <div className="ui-actions ui-bucket-alias" key={index}>
+                <span>{alias.name}</span>
                 {canManage ? <RemoveAliasButton bucketId={openedBucket.id} alias={alias} /> : null}
               </div>)}
               {canManage ? <AliasControls bucketId={openedBucket.id} /> : null}

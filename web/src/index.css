@@ -124,13 +124,16 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
 .ui-settings-section { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 24px; padding-block: 24px; border-top: 1px solid var(--separator); min-width: 0; }
 .ui-settings-section h3 { font-size: 15px; line-height: 22px; font-weight: 600; }
 .ui-settings-section header p { margin-top: 8px; font-weight: 400; }
-.ui-settings-controls { min-width: 0; display: grid; align-content: start; gap: 12px; }
+.ui-settings-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 12px; }
 .ui-settings-controls > .rt-Button { justify-self: start; }
 .ui-settings-controls .ui-form { justify-items: stretch; }
 .ui-settings-controls .ui-form > div { min-width: 0; }
 .ui-settings-controls .ui-form .rt-Button { justify-self: start; }
 .ui-settings-controls pre { min-width: 0; max-width: 100%; overflow-x: auto; }
 .ui-settings-controls .ui-field { width: 100%; overflow-wrap: anywhere; }
+.ui-bucket-alias, .ui-objects-prefix { min-width: 0; }
+.ui-bucket-alias > :is(span, .rt-Button), .ui-objects-prefix > .rt-Button { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.ui-bucket-alias > .rt-Button, .ui-objects-prefix > .rt-Button { box-sizing: border-box; flex-shrink: 1; white-space: normal; height: auto; min-height: var(--control-height); padding-block: var(--space-small); }
 .ui-settings-danger h3 { color: var(--danger); }
 .ui-data-label { display: none; }
 .ui-data-value { min-width: 0; overflow-wrap: anywhere; }
@@ -212,6 +215,8 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
 
 .ui-objects-list-actions { display: flex; align-items: center; justify-content: space-between; padding-inline: 8px; border-bottom: 1px solid var(--separator); }
 .ui-objects-prefix { align-items: baseline; gap: 4px; }
+.ui-objects-prefix > .rt-Button { text-align: left; }
+.ui-objects-key-picker:where([data-placeholder]) .rt-SelectTriggerInner { color: var(--gray-12); }
 .ui-objects-tools > .ui-objects-search { flex: 1 1 24ch; min-width: min(100%, 24ch); order: 1; }
 .ui-objects-search > .ui-field { flex: 1 1 0; min-width: 0; }
 .ui-objects-tools > .ui-objects-sort { flex: 0 0 auto; min-width: 0; order: 2; }
