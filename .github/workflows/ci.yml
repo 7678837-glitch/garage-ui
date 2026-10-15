@@ -17,7 +17,7 @@ jobs:
       version: ${{ steps.identity.outputs.version }}
       commit: ${{ steps.identity.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Read original workflow run
@@ -63,7 +63,7 @@ jobs:
           }
           (Path(os.environ["RUNNER_TEMP"]) / "build-identity.json").write_text(json.dumps(receipt, indent=2) + "\n")
           PY_IDENTITY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-identity-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/build-identity.json
@@ -75,14 +75,14 @@ jobs:
       BUILD_VERSION: ${{ needs.identity.outputs.version }}
       GIT_COMMIT: ${{ needs.identity.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
         with:
           components: rustfmt, clippy
       - name: frontend
@@ -124,9 +124,9 @@ jobs:
         run: scripts/check-secret-scan.sh
       - name: Worktree and full-history secret scan
         run: scripts/secret-scan.sh
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: deploy/Dockerfile
@@ -150,13 +150,13 @@ jobs:
       GARAGE_VERSION: ${{ matrix.garage-version }}
       GARAGE_BROWSER: chromium
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
       - name: Pull the Garage image for Rust CORS checks
         run: docker pull --platform linux/amd64 dxflrs/garage:v2.4.1
       - name: Install browser dependencies
