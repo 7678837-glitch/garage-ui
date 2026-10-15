@@ -44,7 +44,7 @@ scripts/build.sh
 
 This installs frontend dependencies with the frozen lockfile, builds `web/dist`, and builds the host release binary. The backend build requires `web/dist/index.html`, including when running Rust tests; build the frontend first in a clean checkout.
 
-The shipped UI uses React 18, Vite, Radix Themes 3.3, and `radix-ui` 1.8.1. Reuse the installed Radix controls and the theme tokens in `web/src/theme.tsx` and `web/src/index.css` before adding local styling. Keep native file inputs for upload and the existing confirmation flow for destructive actions. The production Rust binary embeds `web/dist`; Bun runs only during builds and local development, so changes must not require a browser CDN, Node.js runtime, or separately deployed frontend.
+The shipped UI uses React, Vite, Radix Themes, and `radix-ui`; [web/package.json](web/package.json) and the lockfile own the dependency versions. Reuse the installed Radix controls and the theme tokens in `web/src/theme.tsx` and `web/src/index.css` before adding local styling. Keep native file inputs for upload and the existing confirmation flow for destructive actions. The production Rust binary embeds `web/dist`; Bun runs only during builds and local development, so changes must not require a browser CDN, Node.js runtime, or separately deployed frontend.
 
 For frontend iteration, run the backend with the Garage configuration described in [Build and run](README.md#build-and-run), then run this in another terminal:
 
@@ -119,7 +119,7 @@ scripts/e2e-check.sh
 GARAGE_VERSION=v2.3.0 scripts/e2e-check.sh
 ```
 
-The [runner](scripts/e2e-check.sh) defaults to Garage v2.4.1 and `disposable-smoke.spec.ts`. It requires Bun 1.4.2 (`BUN_BIN` can select its executable), Docker, installed Playwright browsers, and the prerequisites above. It never installs dependencies, pulls images, or builds the application. It resolves the selected local image to its ID, creates a single-node Garage fixture on random loopback Admin/S3 ports, and uses a fresh UI data directory. Cleanup removes only the fixture container and volume with its exact ownership label plus its temporary directory; cleanup failures identify the resources to inspect. Do not run two browser checks concurrently on port 3909.
+The [runner](scripts/e2e-check.sh) defaults to Garage v2.4.1 and `disposable-smoke.spec.ts`. It requires the Bun version pinned in [web/package.json](web/package.json) (`BUN_BIN` can select its executable), Docker, installed Playwright browsers, and the prerequisites above. It never installs dependencies, pulls images, or builds the application. It resolves the selected local image to its ID, creates a single-node Garage fixture on random loopback Admin/S3 ports, and uses a fresh UI data directory. Cleanup removes only the fixture container and volume with its exact ownership label plus its temporary directory; cleanup failures identify the resources to inspect. Do not run two browser checks concurrently on port 3909.
 
 Pass an affected spec or a separate configuration when appropriate:
 

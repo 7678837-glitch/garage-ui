@@ -6,7 +6,7 @@ This development version requires a source build. Do not assume that a public co
 
 ## Build the application
 
-Install the versions pinned by the repository: Rust **1.99.0** and Bun **1.4.2**. Clone the development branch, then build from the repository root:
+Install the Rust toolchain from [rust-toolchain.toml](https://github.com/xjoker/garage-ui/blob/dev/rust-toolchain.toml) and the Bun version from [web/package.json](https://github.com/xjoker/garage-ui/blob/dev/web/package.json). Clone the development branch, then build from the repository root:
 
 ```sh
 git clone --branch dev https://github.com/xjoker/garage-ui.git

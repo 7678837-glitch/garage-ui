@@ -21,8 +21,8 @@ To connect a node, enter the Garage node address in **Node address**, choose **C
 Layout changes affect data placement. Work from the live layout version shown by the UI.
 
 1. Select the relevant node capacity control, enter the capacity and unit, and **Save**. Capacity must resolve to a whole number of bytes.
-2. Choose **Preview layout** and inspect the staged result.
-3. Choose **Apply layout** only after the preview represents the intended cluster. Review the confirmation. The UI applies changes at the next layout version.
+2. Review the staged node capacities and choose **Preview layout**. A successful Garage preview enables **Apply layout**; the current UI does not display the returned preview text or computation statistics. Inspect those through Garage's own administrative tools when needed before proceeding.
+3. Choose **Apply layout** only when the staged changes represent the intended cluster. Review the confirmation. The UI applies changes at the next layout version.
 4. Recheck layout and health; applying the request is not evidence that all data movement has finished.
 
 Choose **Revert staged changes** to discard pending layout changes. This concerns staging; it does not undo an already applied layout. **Layout history** exposes previous versions and sync trackers to help inspect progress.

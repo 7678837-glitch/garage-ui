@@ -4,7 +4,7 @@ For the complete contributor workflow, read the repository's [Contributing guide
 
 ## Build a change locally
 
-The repository pins Rust 1.99.0 and Bun 1.4.2. The build script also requires Python 3 available as `python3` for version validation. Build the browser assets before the Rust binary:
+Install the Rust toolchain pinned in [rust-toolchain.toml](https://github.com/xjoker/garage-ui/blob/dev/rust-toolchain.toml) and the Bun version in [web/package.json](https://github.com/xjoker/garage-ui/blob/dev/web/package.json). The build script also requires Python 3 available as `python3` for version validation. Build the browser assets before the Rust binary:
 
 ```sh
 scripts/build.sh
@@ -14,7 +14,7 @@ Use a separate UI data directory and a test Garage cluster for changes that writ
 
 ## Improve this guide
 
-The canonical guide pages live in [docs/wiki](https://github.com/xjoker/garage-ui/tree/dev/docs/wiki). Keep instructions tied to the actual source behavior: exact labels, commands, defaults, expected results, and relevant failure cases. Requirements in [docs](https://github.com/xjoker/garage-ui/tree/dev/docs) can describe work that is still pending.
+The canonical guide pages live in [docs/wiki](https://github.com/xjoker/garage-ui/tree/dev/docs/wiki). Keep instructions tied to the actual source behavior: exact labels, commands, defaults, expected results, and relevant failure cases. Requirements in [docs](https://github.com/xjoker/garage-ui/tree/dev/docs) are acceptance targets. Check the [delivery roadmap](https://github.com/xjoker/garage-ui/blob/dev/docs/roadmap.md) and its revision-specific evidence before labeling a requirement as complete or outstanding.
 
 Write repository material in English. The Simplified Chinese locale catalog and non-ASCII test fixtures are intentional exceptions. Make a change focused enough to review independently, and explain which behavior you actually verified.
 
