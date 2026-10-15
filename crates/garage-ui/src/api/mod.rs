@@ -73,7 +73,7 @@ pub fn routes(app: App) -> Router<App> {
         .layer(DefaultBodyLimit::max(json_limit));
     let upload = Router::new()
         .route("/api/objects", post(upload_object))
-        .route("/api/buckets/{id}/objects/{*key}", put(put_bucket_object))
+        .route("/api/buckets/{id}/object", put(put_bucket_object))
         .layer(middleware::from_fn_with_state(app.clone(), csrf))
         .layer(DefaultBodyLimit::max(upload_limit));
     json_routes

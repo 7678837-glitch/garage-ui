@@ -595,24 +595,6 @@ export function App() {
   );
 }
 
-const UNRESERVED = /[A-Za-z0-9._~-]/;
-
-export function encodeObjectKey(key: string): string {
-  return key.split("/").map(encodeSegment).join("/");
-}
-
-export function decodeObjectKey(encoded: string): string {
-  const bytes: number[] = [];
-  const segments = encoded.split("/");
-  segments.forEach((segment, index) => {
-    if (index > 0) {
-      bytes.push(0x2f);
-    }
-    decodeSegment(segment, bytes);
-  });
-  return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
-}
-
 export function folderNameAllowed(name: string): boolean {
   if (name.includes("/")) {
     return false;
@@ -624,32 +606,4 @@ export function folderNameAllowed(name: string): boolean {
     }
   }
   return true;
-}
-
-function encodeSegment(segment: string): string {
-  let out = "";
-  for (const byte of new TextEncoder().encode(segment)) {
-    const character = String.fromCharCode(byte);
-    if (UNRESERVED.test(character)) {
-      out += character;
-    } else {
-      out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-    }
-  }
-  return out;
-}
-
-function decodeSegment(segment: string, bytes: number[]) {
-  for (let index = 0; index < segment.length; index += 1) {
-    if (segment[index] !== "%") {
-      bytes.push(segment.charCodeAt(index));
-      continue;
-    }
-    const hex = segment.slice(index + 1, index + 3);
-    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) {
-      throw new Error("bad object key");
-    }
-    bytes.push(Number.parseInt(hex, 16));
-    index += 2;
-  }
 }

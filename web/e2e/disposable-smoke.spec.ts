@@ -89,7 +89,7 @@ for (const width of [360, 1280]) {
       try {
         if (bucketId) {
           if (keyId) {
-            const removed = await page.request.delete(`/api/buckets/${bucketId}/objects/${filename}`, { headers });
+            const removed = await page.request.delete(`/api/buckets/${bucketId}/object?key=${encodeURIComponent(filename)}`, { headers });
             expect([200, 204, 404]).toContain(removed.status());
           }
           expect((await page.request.delete(`/api/buckets/${bucketId}`, { headers })).status()).toBe(200);

@@ -46,8 +46,9 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible();
     const upload = objects.getByRole("region", { name: "Upload", exact: true });
     const writes: string[] = [];
-    const objectPath = `/api/buckets/${bucketId}/objects/${fileName}`;
-    page.on("request", (sent) => { if (sent.method() === "PUT" && new URL(sent.url()).pathname === objectPath) writes.push(objectPath); });
+    const objectPath = `/api/buckets/${bucketId}/object`;
+    const isObject = (raw: string) => { const url = new URL(raw); return url.pathname === objectPath && url.searchParams.get("key") === fileName; };
+    page.on("request", (sent) => { if (sent.method() === "PUT" && isObject(sent.url())) writes.push(objectPath); });
     const original = "Original real object body.";
     const hiddenReplacement = "Confirmed overwrite while the original row is hidden.";
     const previewReplacement = "Confirmed overwrite automatically refreshes this open preview.";
@@ -63,7 +64,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
     await objects.getByRole("button", { name: `${prefix}/`, exact: true }).click();
     await expect(objects.getByRole("button", { name: fileName, exact: true })).toHaveCount(0);
     await openUpload(objects);
-    const checked = page.waitForResponse((result) => result.request().method() === "GET" && new URL(result.url()).pathname === objectPath);
+    const checked = page.waitForResponse((result) => result.request().method() === "GET" && isObject(result.url()));
     await objects.getByLabel("Choose files").setInputFiles({ name: fileName, mimeType: "text/plain", buffer: Buffer.from(hiddenReplacement) });
     expect((await checked).status()).toBe(200);
     await expect(upload.getByRole("button", { name: "Overwrite", exact: true })).toBeVisible();
@@ -102,7 +103,7 @@ test("confirms a hidden existing destination and refreshes an open preview after
           const binding = await cleanup.put(`/api/buckets/${bucketId}/credential`, { headers, data: { access_key_id: keyId } });
           expect(binding.status()).toBe(200);
           expect(await binding.json()).toMatchObject({ access_key_id: keyId });
-          for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${key.split("/").map(encodeURIComponent).join("/")}`, { headers })).status());
+          for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/object?key=${encodeURIComponent(key)}`, { headers })).status());
         }
         const removed = await cleanup.delete(`/api/buckets/${bucketId}`, { headers });
         expect(removed.status()).toBe(200);

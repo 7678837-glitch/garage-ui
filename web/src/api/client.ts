@@ -108,24 +108,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-// Same unreserved set as App.encodeObjectKey. encodeURIComponent leaves !'()*, so object paths would not match.
-const UNRESERVED = /[A-Za-z0-9._~-]/;
-
-function encodeKey(key: string): string {
-  return key.split("/").map(encodeSegment).join("/");
-}
-
-function encodeSegment(segment: string): string {
-  let out = "";
-  for (const byte of new TextEncoder().encode(segment)) {
-    const character = String.fromCharCode(byte);
-    if (UNRESERVED.test(character)) {
-      out += character;
-    } else {
-      out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-    }
-  }
-  return out;
+// The key goes in the query because browsers collapse `.` and `..` path segments, so a key like
+// `dir/../x` would otherwise address `x`.
+export function objectPath(bucketId: string, key: string, extra: Record<string, string> = {}): string {
+  return `/api/buckets/${encodeURIComponent(bucketId)}/object?${new URLSearchParams({ key, ...extra }).toString()}`;
 }
 
 export function putObject(input: {
@@ -138,10 +124,7 @@ export function putObject(input: {
   const requestGeneration = captureAuthGeneration();
   const xhr = new XMLHttpRequest();
   let aborted = false;
-  xhr.open(
-    "PUT",
-    `/api/buckets/${encodeURIComponent(input.bucketId)}/objects/${encodeKey(input.key)}`,
-  );
+  xhr.open("PUT", objectPath(input.bucketId, input.key));
   xhr.withCredentials = true;
   xhr.setRequestHeader("content-type", input.contentType);
   xhr.setRequestHeader("x-csrf-token", csrfToken());

@@ -162,8 +162,7 @@ function uploadRow(upload: Locator, name: string): Locator {
 }
 
 function objectUrl(bucketId: string, key: string): string {
-  const encoded = key.split("/").map(encodeURIComponent).join("/");
-  return `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encoded}`;
+  return `/api/buckets/${encodeURIComponent(bucketId)}/object?key=${encodeURIComponent(key)}`;
 }
 
 async function logIn(page: Page): Promise<void> {
@@ -264,7 +263,7 @@ async function cleanup(page: Page, alias: string, bucketId: string, keyId: strin
   const headers = await csrfHeader(page);
   if (bucketId.length > 0) {
     await page.request
-      .delete(`${objectUrl(bucketId, "gone/")}?recursive=true`, { headers })
+      .delete(`${objectUrl(bucketId, "gone/")}&recursive=true`, { headers })
       .catch(() => undefined);
     for (const name of ["batch-a.txt", "batch-b.txt"]) {
       await page.request.delete(objectUrl(bucketId, name), { headers }).catch(() => undefined);

@@ -41,7 +41,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                "/api/buckets/a%26b%3Dc/inspect?key=photos%2Fa%3Db",
                 None,
                 Some(&admin),
             ),
@@ -66,7 +66,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                "/api/buckets/a%26b%3Dc/inspect?key=photos%2Fa%3Db",
                 None,
                 Some(&viewer),
             ),
@@ -80,7 +80,7 @@
             &garage_less,
             request(
                 "GET",
-                "/api/buckets/a%26b%3Dc/inspect/photos/a%3Db",
+                "/api/buckets/a%26b%3Dc/inspect?key=photos%2Fa%3Db",
                 None,
                 None,
             ),
@@ -671,7 +671,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 body,
                 Some("5"),
                 &session,
@@ -701,7 +701,7 @@
         let dir = crate::util::temp_dir();
         let app = object_app(&dir, &mock.url, true).await;
         let (session, _) = login(&app).await;
-        let uri = "/api/buckets/bkt-1/objects/photos/a.txt";
+        let uri = "/api/buckets/bkt-1/object?key=photos/a.txt";
         let mut typed = put_bytes(uri, b"hello", Some("5"), &session);
         typed
             .headers_mut()
@@ -755,7 +755,7 @@
         let dir = crate::util::temp_dir();
         let app = object_app(&dir, &mock.url, true).await;
         let (session, _) = login(&app).await;
-        let uri = "/api/buckets/bkt-1/objects/photos/a.txt";
+        let uri = "/api/buckets/bkt-1/object?key=photos/a.txt";
         let missing = exchange(&app, put_bytes(uri, b"hello", None, &session)).await;
         assert_error(
             &missing,
@@ -789,7 +789,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &session,
@@ -823,7 +823,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &session,
@@ -859,7 +859,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &session,
@@ -894,7 +894,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 b"note",
                 Some("4"),
                 &session,
@@ -1195,7 +1195,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 None,
                 Some(&session),
             ),
@@ -1213,7 +1213,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/missing",
+                "/api/buckets/bkt-1/object?key=missing",
                 None,
                 Some(&session),
             ),
@@ -1303,7 +1303,7 @@
         let uploaded = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 b"hello",
                 Some("5"),
                 &session,
@@ -1320,7 +1320,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 None,
                 Some(&session),
             ),
@@ -1413,7 +1413,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                "/api/buckets/bkt-1/object?key=docs/2024&recursive=true",
                 None,
                 Some(&session),
             ),
@@ -1511,7 +1511,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                "/api/buckets/bkt-1/object?key=docs/2024&recursive=true",
                 None,
                 Some(&session),
             ),
@@ -1536,7 +1536,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 None,
                 Some(&session),
             ),
@@ -1569,7 +1569,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                "/api/buckets/bkt-1/object?key=docs/2024&recursive=true",
                 None,
                 Some(&session),
             ),
@@ -1603,7 +1603,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt?recursive=false",
+                "/api/buckets/bkt-1/object?key=photos/a.txt&recursive=false",
                 None,
                 Some(&session),
             ),
@@ -1661,7 +1661,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 None,
                 Some(&viewer),
             ),
@@ -1677,7 +1677,7 @@
         assert_eq!(row.result, "denied");
         assert_eq!(row.reason, "forbidden");
         assert_eq!(row.method, "DELETE");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 403);
 
@@ -1686,7 +1686,7 @@
         let put = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 body,
                 Some("5"),
                 &admin,
@@ -1702,7 +1702,7 @@
         assert_eq!(row.result, "success");
         assert_eq!(row.reason, "ok");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 201);
         assert!(!audit_text(row).contains("hello"), "{}", audit_text(row));
@@ -1712,7 +1712,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 None,
                 Some(&admin),
             ),
@@ -1727,7 +1727,7 @@
         assert_eq!(row.result, "success");
         assert_eq!(row.reason, "ok");
         assert_eq!(row.method, "DELETE");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 204);
 
@@ -1801,7 +1801,7 @@
             &app,
             request(
                 "DELETE",
-                "/api/buckets/bkt-1/objects/docs/2024?recursive=true",
+                "/api/buckets/bkt-1/object?key=docs/2024&recursive=true",
                 None,
                 Some(&admin),
             ),
@@ -1816,7 +1816,7 @@
         assert_eq!(row.result, "success");
         assert_eq!(row.reason, "ok");
         assert_eq!(row.method, "DELETE");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/docs/2024");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/docs/2024");
         assert_eq!(row.status, 200);
         assert!(
@@ -1830,7 +1830,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 None,
                 Some(&admin),
             ),
@@ -1958,7 +1958,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 None,
                 Some(&session),
             ),
@@ -1991,7 +1991,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/page.html?preview=1",
+                "/api/buckets/bkt-1/object?key=page.html&preview=1",
                 None,
                 Some(&session),
             ),
@@ -2040,7 +2040,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 None,
                 Some(&session),
             ),
@@ -2066,7 +2066,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photos/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=photos/note.txt&download=1",
                 None,
                 Some(&session),
             ),
@@ -2129,7 +2129,7 @@
         let preview = exchange(
             &app,
             ranged_get(
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 "bytes=1-3",
                 &session,
             ),
@@ -2164,7 +2164,7 @@
         let download = exchange(
             &app,
             ranged_get(
-                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=note.txt&download=1",
                 "bytes=1-",
                 &session,
             ),
@@ -2191,7 +2191,7 @@
         let rejected = exchange(
             &app,
             ranged_get(
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 "bytes=0-1, bytes=2-4",
                 &session,
             ),
@@ -2207,7 +2207,7 @@
         let meta = exchange(
             &app,
             ranged_get(
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 "bytes=0-1",
                 &session,
             ),
@@ -2309,7 +2309,7 @@
             Duration::from_secs(5),
             router(app).oneshot(request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photos/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=photos/note.txt&download=1",
                 None,
                 Some(&session),
             )),
@@ -2360,7 +2360,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/missing?preview=1",
+                "/api/buckets/bkt-1/object?key=missing&preview=1",
                 None,
                 Some(&session),
             ),
@@ -2383,7 +2383,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=note.txt&download=1",
                 None,
                 Some(&session),
             ),
@@ -2409,7 +2409,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 None,
                 Some(&viewer),
             ),
@@ -2426,12 +2426,12 @@
         let app = object_app(&dir, &mock.url, true).await;
         let (session, _) = login(&app).await;
         for uri in [
-            "/api/buckets/bkt-1/objects/note.txt?preview=1&download=1",
-            "/api/buckets/bkt-1/objects/note.txt?preview=2",
-            "/api/buckets/bkt-1/objects/note.txt?download=0",
-            "/api/buckets/bkt-1/objects/note.txt?thumbnail=0",
-            "/api/buckets/bkt-1/objects/note.txt?thumbnail=1&preview=1",
-            "/api/buckets/bkt-1/objects/note.txt?thumbnail=1&download=1",
+            "/api/buckets/bkt-1/object?key=note.txt&preview=1&download=1",
+            "/api/buckets/bkt-1/object?key=note.txt&preview=2",
+            "/api/buckets/bkt-1/object?key=note.txt&download=0",
+            "/api/buckets/bkt-1/object?key=note.txt&thumbnail=0",
+            "/api/buckets/bkt-1/object?key=note.txt&thumbnail=1&preview=1",
+            "/api/buckets/bkt-1/object?key=note.txt&thumbnail=1&download=1",
         ] {
             let response = exchange(&app, request("GET", uri, None, Some(&session))).await;
             assert_error(
@@ -2576,7 +2576,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 None,
                 Some(&viewer),
             ),
@@ -2599,7 +2599,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 None,
                 Some(&viewer),
             ),
@@ -2611,7 +2611,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=note.txt&download=1",
                 None,
                 Some(&viewer),
             ),
@@ -2623,7 +2623,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?thumbnail=1",
+                "/api/buckets/bkt-1/object?key=note.txt&thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -2665,7 +2665,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 None,
                 Some(&viewer),
             ),
@@ -2694,7 +2694,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?preview=1",
+                "/api/buckets/bkt-1/object?key=note.txt&preview=1",
                 None,
                 Some(&viewer),
             ),
@@ -2766,7 +2766,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=note.txt&download=1",
                 None,
                 Some(&viewer),
             ),
@@ -2788,7 +2788,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
+                "/api/buckets/bkt-1/object?key=photo.png&thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -2826,7 +2826,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt?download=1",
+                "/api/buckets/bkt-1/object?key=note.txt&download=1",
                 None,
                 Some(&viewer),
             ),
@@ -2839,7 +2839,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
+                "/api/buckets/bkt-1/object?key=photo.png&thumbnail=1",
                 None,
                 Some(&viewer),
             ),
@@ -3018,7 +3018,7 @@
                 &app,
                 request(
                     "GET",
-                    &format!("/api/buckets/bkt-1/objects/{}", encode_key(key)),
+                    &format!("/api/buckets/bkt-1/object?key={}", encode_key(key)),
                     None,
                     Some(&session),
                 ),
@@ -3050,7 +3050,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/missing",
+                "/api/buckets/bkt-1/object?key=missing",
                 None,
                 Some(&session),
             ),
@@ -3069,7 +3069,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/note.txt",
+                "/api/buckets/bkt-1/object?key=note.txt",
                 None,
                 Some(&session),
             ),
@@ -3094,7 +3094,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/photo.png?thumbnail=1",
+                "/api/buckets/bkt-1/object?key=photo.png&thumbnail=1",
                 None,
                 Some(&session),
             ),
@@ -3752,7 +3752,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 None,
                 &admin,
@@ -3772,7 +3772,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "length_required");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 400);
         assert!(!audit_text(row).contains("hello"));
@@ -3787,7 +3787,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("9999999999"),
                 &admin,
@@ -3807,7 +3807,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "payload_too_large");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 413);
         assert!(!audit_text(row).contains("hello"));
@@ -3926,7 +3926,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &admin,
@@ -3941,7 +3941,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "not_found");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 404);
         assert!(!audit_text(row).contains("hello"));
@@ -3965,7 +3965,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &admin,
@@ -3985,7 +3985,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "garage_unavailable");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 502);
         assert!(!audit_text(row).contains("hello"));
@@ -4009,7 +4009,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &admin,
@@ -4030,7 +4030,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "upstream_error");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 500);
         assert!(!audit_text(row).contains("hello"));
@@ -4046,7 +4046,7 @@
         let response = exchange(
             &app,
             put_bytes(
-                "/api/buckets/bkt-1/objects/photos/a.txt",
+                "/api/buckets/bkt-1/object?key=photos/a.txt",
                 b"hello",
                 Some("5"),
                 &admin,
@@ -4067,7 +4067,7 @@
         assert_eq!(row.result, "error");
         assert_eq!(row.reason, "no_usable_key");
         assert_eq!(row.method, "PUT");
-        assert_eq!(row.path, "/api/buckets/bkt-1/objects/photos/a.txt");
+        assert_eq!(row.path, "/api/buckets/bkt-1/object");
         assert_eq!(row.target, "bkt-1/photos/a.txt");
         assert_eq!(row.status, 412);
         assert!(!audit_text(row).contains("hello"));
@@ -4084,7 +4084,7 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/dir/thumbnail",
+                "/api/buckets/bkt-1/object?key=dir/thumbnail",
                 None,
                 Some(&viewer),
             ),
@@ -4100,7 +4100,7 @@
                 &app,
                 request(
                     "GET",
-                    &format!("/api/buckets/bkt-1/objects/dir/thumbnail?{intent}=1"),
+                    &format!("/api/buckets/bkt-1/object?key=dir/thumbnail&{intent}=1"),
                     None,
                     Some(&admin),
                 ),
@@ -4120,11 +4120,108 @@
             &app,
             request(
                 "GET",
-                "/api/buckets/bkt-1/objects/dir/thumbnail?thumbnail=1",
+                "/api/buckets/bkt-1/object?key=dir/thumbnail&thumbnail=1",
                 None,
                 None,
             ),
         )
         .await;
         assert_eq!(unauthenticated.status, StatusCode::UNAUTHORIZED);
+    }
+
+    fn dot_segment_reply(line: &str) -> String {
+        if line.starts_with("DELETE ") {
+            return delete_ok();
+        }
+        if line.starts_with("PUT ") {
+            return put_ok("etag-1");
+        }
+        object_get_reply(line)
+    }
+
+    #[tokio::test]
+    async fn dot_segment_keys_reach_s3_unchanged_through_the_query_form() {
+        let mock = S3Mock::start(dot_segment_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        let key = "dir%2F..%2Fvictim.txt";
+
+        let removed = exchange(
+            &app,
+            request(
+                "DELETE",
+                &format!("/api/buckets/bkt-1/object?key={key}"),
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+        let downloaded = exchange(
+            &app,
+            request(
+                "GET",
+                &format!("/api/buckets/bkt-1/object?key={key}&download=1"),
+                None,
+                Some(&session),
+            ),
+        )
+        .await;
+        assert_eq!(downloaded.status, StatusCode::OK, "{}", downloaded.body);
+        let uploaded = exchange(
+            &app,
+            put_bytes(
+                &format!("/api/buckets/bkt-1/object?key={key}"),
+                b"hello",
+                Some("5"),
+                &session,
+            ),
+        )
+        .await;
+        assert_eq!(uploaded.status, StatusCode::CREATED, "{}", uploaded.body);
+
+        let seen = mock.requests();
+        assert!(seen.len() >= 3, "{seen:?}");
+        for line in &seen {
+            assert_eq!(object_key_of(line), "dir/../victim.txt", "{line}");
+        }
+        assert!(seen.iter().any(|line| line.starts_with("DELETE ")));
+        assert!(seen.iter().any(|line| line.starts_with("PUT ")));
+    }
+
+    #[tokio::test]
+    async fn object_routes_reject_a_missing_or_empty_key() {
+        let mock = S3Mock::start(dot_segment_reply).await;
+        let dir = crate::util::temp_dir();
+        let app = object_app(&dir, &mock.url, true).await;
+        let (session, _) = login(&app).await;
+        for (method, uri) in [
+            ("GET", "/api/buckets/bkt-1/object"),
+            ("GET", "/api/buckets/bkt-1/object?key="),
+            ("DELETE", "/api/buckets/bkt-1/object?download=1"),
+            ("DELETE", "/api/buckets/bkt-1/object?key="),
+            ("GET", "/api/buckets/bkt-1/inspect"),
+            ("GET", "/api/buckets/bkt-1/inspect?key="),
+        ] {
+            let response = exchange(&app, request(method, uri, None, Some(&session))).await;
+            assert_eq!(
+                response.status,
+                StatusCode::BAD_REQUEST,
+                "{uri} {}",
+                response.body
+            );
+            assert!(
+                response.body.contains("key_required"),
+                "{uri} {}",
+                response.body
+            );
+        }
+        let put = exchange(
+            &app,
+            put_bytes("/api/buckets/bkt-1/object", b"x", Some("1"), &session),
+        )
+        .await;
+        assert_eq!(put.status, StatusCode::BAD_REQUEST, "{}", put.body);
+        assert!(mock.requests().is_empty(), "{:?}", mock.requests());
     }

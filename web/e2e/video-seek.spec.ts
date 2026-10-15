@@ -49,7 +49,7 @@ test("seeks a video preview to one second and plays it", async ({ page }) => {
   let objectPuts = 0;
 
   page.on("request", (request) => {
-    if (request.method() === "PUT" && request.url().includes("/objects/clip.mp4")) {
+    if (request.method() === "PUT" && new URL(request.url()).pathname.endsWith("/object") && new URL(request.url()).searchParams.get("key") === "clip.mp4") {
       objectPuts += 1;
     }
   });
@@ -583,7 +583,7 @@ async function emptyBucket(page: Page, bucketId: string): Promise<void> {
       if (!key) {
         throw new Error("object list entry has no key");
       }
-      const path = entry.kind === "prefix" ? `${objectUrl(bucketId, key)}?recursive=true` : objectUrl(bucketId, key);
+      const path = entry.kind === "prefix" ? `${objectUrl(bucketId, key)}&recursive=true` : objectUrl(bucketId, key);
       const removed = await page.request.delete(path, { headers });
       if (removed.status() !== 200 && removed.status() !== 204) {
         throw new Error(`object delete failed with status ${removed.status()} ${await removed.text()}`);
@@ -594,11 +594,7 @@ async function emptyBucket(page: Page, bucketId: string): Promise<void> {
 }
 
 function objectUrl(bucketId: string, key: string): string {
-  const encoded = key
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encoded}`;
+  return `/api/buckets/${encodeURIComponent(bucketId)}/object?key=${encodeURIComponent(key)}`;
 }
 
 async function csrfHeader(page: Page): Promise<Record<string, string>> {

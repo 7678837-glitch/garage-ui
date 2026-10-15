@@ -404,18 +404,11 @@ function uploadRow(upload: Locator, name: string): Locator {
 }
 
 function objectUrl(bucketId: string, key: string): string {
-  return `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeKey(key)}`;
+  return `/api/buckets/${encodeURIComponent(bucketId)}/object?key=${encodeURIComponent(key)}`;
 }
 
 function objectListPattern(bucketId: string): string {
   return `**/api/buckets/${encodeURIComponent(bucketId)}/objects?*`;
-}
-
-function encodeKey(key: string): string {
-  return key
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
 }
 
 async function listedKeys(objects: Locator): Promise<string[]> {
@@ -668,7 +661,7 @@ async function emptyBucket(page: Page, bucketId: string): Promise<void> {
         throw new Error("object list entry has no key");
       }
       const path =
-        entry.kind === "prefix" ? `${objectUrl(bucketId, key)}?recursive=true` : objectUrl(bucketId, key);
+        entry.kind === "prefix" ? `${objectUrl(bucketId, key)}&recursive=true` : objectUrl(bucketId, key);
       const removed = await page.request.delete(path, { headers });
       if (removed.status() !== 200 && removed.status() !== 204) {
         throw new Error(`object delete failed with status ${removed.status()}`);

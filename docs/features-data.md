@@ -13,7 +13,7 @@ Acceptance: A bucket with only a local alias appears in the list and can be open
 ## 5.2 Browsing objects
 
 - Requirement: Prefix navigation and breadcrumbs, split on `/`. Pagination (default 100, maximum 1000, continuation token). An S3 list returns keys only in lexicographic order and supports only a prefix filter, so the order across pages is fixed as key lexicographic order. Sort by size or by time applies only to the page already loaded, and the UI states "this page only". Substring search inside a prefix (at least 2 characters, at most 200 hits, at most 20 pages scanned). Safe preview. Object metadata and `InspectObject` diagnostics (A). Diagnostics are outside the minimum-version scope. The minimum version has no diagnostics entry.
-- API: `GET /api/buckets/{id}/objects?prefix&limit&next`; `GET /api/buckets/{id}/objects/{key}` (metadata, view, download); `GET /api/buckets/{id}/search?q&prefix`; `GET /api/buckets/{id}/inspect/{key}` (A).
+- API: `GET /api/buckets/{id}/objects?prefix&limit&next`; `GET /api/buckets/{id}/object?key=<key>` (metadata, view, download); `GET /api/buckets/{id}/search?q&prefix`; `GET /api/buckets/{id}/inspect?key=<key>` (A).
 - Garage: S3 `ListObjectsV2`, `HeadObject`, `GetObject`; Admin `InspectObject`.
 
 Acceptance: 5000 objects can be browsed page by page. When a search is truncated, the response includes a reason field. Preview meets 3.3 of [security.md](security.md).
@@ -21,7 +21,7 @@ Acceptance: 5000 objects can be browsed page by page. When a search is truncated
 ## 5.3 Upload
 
 - Requirement: Drag and drop, or pick multiple files. Folder upload keeps relative paths. The upload queue runs 3 at a time, can be cancelled, can be retried, and shows progress. A same-name object prompts for overwrite confirmation. A large file uses multipart upload automatically. The per-file limit is configurable.
-- API: `PUT /api/buckets/{id}/objects/{key}` (A). Multipart: POST to start, PUT for a part, POST to complete, DELETE to abort (A).
+- API: `PUT /api/buckets/{id}/object?key=<key>` (A). Multipart: POST to start, PUT for a part, POST to complete, DELETE to abort (A).
 - Garage: S3 `PutObject`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`.
 
 Acceptance: While a 1 GB file is uploading, server resident memory grows by at most 64 MB. After cancel, the multipart upload is aborted.
@@ -29,7 +29,7 @@ Acceptance: While a 1 GB file is uploading, server resident memory grows by at m
 ## 5.4 Delete
 
 - Requirement: Delete one object, batch-delete a multi-selection (at most 1000 keys per call), and recursively delete a folder (see 4.3 of [correctness.md](correctness.md)). Each one requires a confirmation dialog.
-- API: `DELETE /api/buckets/{id}/objects/{key}[?recursive=true]`; `POST /api/buckets/{id}/objects:delete` (`keys[]`) (A).
+- API: `DELETE /api/buckets/{id}/object?key=<key>[&recursive=true]`; `POST /api/buckets/{id}/objects:delete` (`keys[]`) (A).
 - Garage: S3 `DeleteObject`, `DeleteObjects`, `ListObjectsV2`.
 
 Acceptance: A batch of 1001 keys returns 400. A partial failure is returned object by object.

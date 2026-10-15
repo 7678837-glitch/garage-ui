@@ -386,15 +386,15 @@ for (const width of [1280, 360]) {
         await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
         await expect(menu).toHaveAttribute("aria-expanded", "false");
       }
-      const removedObject = await page.request.delete(`/api/buckets/${bucket.id}/objects/preview.txt`, { headers });
+      const removedObject = await page.request.delete(`/api/buckets/${bucket.id}/object?key=preview.txt`, { headers });
       expect(removedObject.ok()).toBe(true);
       } finally {
         if (previewUploaded) {
           for (const key of extraKeys) {
-            const cleanup = await page.request.delete(`/api/buckets/${bucket.id}/objects/${key}`, { headers });
+            const cleanup = await page.request.delete(`/api/buckets/${bucket.id}/object?key=${encodeURIComponent(key)}`, { headers });
             expect([200, 204, 404]).toContain(cleanup.status());
           }
-          const objectCleanup = await page.request.delete(`/api/buckets/${bucket.id}/objects/preview.txt`, { headers });
+          const objectCleanup = await page.request.delete(`/api/buckets/${bucket.id}/object?key=preview.txt`, { headers });
           expect([200, 204, 404]).toContain(objectCleanup.status());
         }
         const removedBucket = await page.request.delete(`/api/buckets/${bucket.id}`, { headers });

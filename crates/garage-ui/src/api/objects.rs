@@ -722,11 +722,13 @@ async fn reject_object<T>(
 pub(crate) async fn put_bucket_object(
     State(app): State<App>,
     Authed(current): Authed,
-    Path((id, key)): Path<(String, String)>,
+    Path(id): Path<String>,
+    Query(query): Query<KeyQuery>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
-    let path = format!("/api/buckets/{id}/objects/{key}");
+    let key = required_key(query.key)?;
+    let path = format!("/api/buckets/{id}/object");
     let target = format!("{id}/{key}");
     if let Err(error) = require(&current.user, Op::WriteObjects) {
         return reject_object(&app, &current, "denied", "PUT", &path, &target, error).await;
@@ -829,11 +831,13 @@ pub(crate) async fn search_bucket_objects(
 pub(crate) async fn inspect_object(
     State(app): State<App>,
     Authed(current): Authed,
-    Path((id, key)): Path<(String, String)>,
+    Path(id): Path<String>,
+    Query(query): Query<KeyQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::InspectObject)?;
-    let query = format!(
+    let key = required_key(query.key)?;
+    let garage_query = format!(
         "bucketId={}&key={}",
         percent_encode(&id),
         percent_encode(&key)
@@ -844,7 +848,7 @@ pub(crate) async fn inspect_object(
         &current.ip,
         &Method::GET,
         "v2/InspectObject",
-        Some(&query),
+        Some(&garage_query),
         &[],
         &headers,
     )
@@ -856,6 +860,7 @@ pub(crate) struct ObjectViewQuery {
     preview: Option<String>,
     download: Option<String>,
     thumbnail: Option<String>,
+    key: Option<String>,
 }
 
 enum ObjectIntent {
@@ -976,11 +981,13 @@ fn stream_object(
 pub(crate) async fn object_metadata(
     State(app): State<App>,
     Authed(current): Authed,
-    Path((id, key)): Path<(String, String)>,
+    Path(id): Path<String>,
     Query(query): Query<ObjectViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    match object_intent(&query)? {
+    let intent = object_intent(&query)?;
+    let key = required_key(query.key)?;
+    match intent {
         ObjectIntent::Thumbnail => {
             require(&current.user, Op::ReadObjects)?;
             thumb::deliver(&app, &id, &key).await
@@ -1007,15 +1014,29 @@ pub(crate) async fn object_metadata(
 #[derive(Deserialize)]
 pub(crate) struct DeleteObjectQuery {
     recursive: Option<bool>,
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct KeyQuery {
+    key: Option<String>,
+}
+
+// Object keys travel in the query because browsers collapse `.` and `..` path segments, which
+// would turn the key `dir/../x` into `x` before the request leaves the client.
+fn required_key(key: Option<String>) -> Result<String, ApiError> {
+    key.filter(|key| !key.is_empty())
+        .ok_or_else(|| ApiError::bad_request("key_required", "Object key is required"))
 }
 
 pub(crate) async fn delete_bucket_object(
     State(app): State<App>,
     Authed(current): Authed,
-    Path((id, key)): Path<(String, String)>,
+    Path(id): Path<String>,
     Query(query): Query<DeleteObjectQuery>,
 ) -> Result<Response, ApiError> {
-    let path = format!("/api/buckets/{id}/objects/{key}");
+    let key = required_key(query.key)?;
+    let path = format!("/api/buckets/{id}/object");
     let target = format!("{id}/{key}");
     if let Err(error) = require(&current.user, Op::WriteObjects) {
         return reject_object(&app, &current, "denied", "DELETE", &path, &target, error).await;
@@ -1133,11 +1154,11 @@ pub(crate) fn routes() -> Router<App> {
             post(delete_bucket_objects),
         )
         .route(
-            "/api/buckets/{id}/objects/{*key}",
+            "/api/buckets/{id}/object",
             get(object_metadata).delete(delete_bucket_object),
         )
         .route("/api/buckets/{id}/search", get(search_bucket_objects))
-        .route("/api/buckets/{id}/inspect/{*key}", get(inspect_object))
+        .route("/api/buckets/{id}/inspect", get(inspect_object))
         .route("/api/objects/preview", get(preview_object))
         .route("/api/objects/download", get(download_object))
         .route(

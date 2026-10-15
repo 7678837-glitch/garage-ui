@@ -2,7 +2,7 @@ import { GarageTheme } from "./theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
-import { App, decodeObjectKey, encodeObjectKey, folderNameAllowed } from "./App";
+import { App, folderNameAllowed } from "./App";
 import { setFormDirty } from "./unsaved";
 import { api } from "./api/client";
 
@@ -1263,13 +1263,7 @@ function methodOf(call: readonly unknown[]): string {
   return typeof init.method === "string" ? init.method : "GET";
 }
 
-test("encodes each object key segment and allows the spec folder names", () => {
-  expect(encodeObjectKey("a?b#c%20d=e")).toBe("a%3Fb%23c%2520d%3De");
-  expect(decodeObjectKey("a%3Fb%23c%2520d%3De")).toBe("a?b#c%20d=e");
-  expect(encodeObjectKey("报告.txt")).toBe("%E6%8A%A5%E5%91%8A.txt");
-  expect(decodeObjectKey("%E6%8A%A5%E5%91%8A.txt")).toBe("报告.txt");
-  expect(encodeObjectKey("dir/报告.txt")).toBe("dir/%E6%8A%A5%E5%91%8A.txt");
-  expect(decodeObjectKey("dir/%E6%8A%A5%E5%91%8A.txt")).toBe("dir/报告.txt");
+test("allows the spec folder names", () => {
   expect(folderNameAllowed("a?b#c%20d=e")).toBe(true);
   expect(folderNameAllowed("报告.txt")).toBe(true);
   expect(folderNameAllowed("a b")).toBe(true);
@@ -1303,7 +1297,7 @@ function objectBrowserResponse(role: "admin" | "viewer", canDownload: boolean) {
     if (url.includes("/healthz")) {
       return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
     }
-    if (url.includes("/objects/a.txt")) {
+    if (url.includes("key=a.txt")) {
       if (url.includes("preview=1")) {
         return new Response("plain body of a.txt", { status: 200 });
       }
@@ -1378,7 +1372,7 @@ test("a viewer with download sees preview and download but not write controls", 
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect((await screen.findByText("plain body of a.txt")).tagName).toBe("PRE");
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
-    "/api/buckets/bucket-bea/objects/a.txt?download=1",
+    "/api/buckets/bucket-bea/object?key=a.txt&download=1",
   );
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("target")).toBe("_blank");
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("rel")).toBe("noopener");
@@ -1530,7 +1524,7 @@ test("an admin with the download bit off still sees upload, delete, preview, and
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect((await screen.findByText("plain body of a.txt")).tagName).toBe("PRE");
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
-    "/api/buckets/bucket-bea/objects/a.txt?download=1",
+    "/api/buckets/bucket-bea/object?key=a.txt&download=1",
   );
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
 });

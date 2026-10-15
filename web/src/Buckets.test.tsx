@@ -1462,7 +1462,7 @@ test("bucket detail objects discard A's list and deletion selection while B is l
     if ((init?.method ?? "GET") !== "GET") writes.push(url);
     if (url.startsWith("/api/buckets/A/objects?")) return json({ prefix: "", entries: [{ kind: "object", key: "report.txt", size: 1, lastModified: "2026-10-11T00:00:00Z", etag: "a" }], next: null });
     if (url.startsWith("/api/buckets/B/objects?")) return new Promise<Response>((resolve) => { releaseB = resolve; });
-    if (url === "/api/buckets/A/objects/report.txt") return json({ key: "report.txt", size: 1, contentType: "application/octet-stream" });
+    if (url === "/api/buckets/A/object?key=report.txt") return json({ key: "report.txt", size: 1, contentType: "application/octet-stream" });
     return json({ items: [{ id: "A" }, { id: "B" }], hasMore: false });
   }));
   renderBuckets(true);
@@ -1494,7 +1494,7 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/objects?")) return json({ prefix: "", entries: [], next: null });
-    if (url.endsWith("/objects/new.txt")) return json({ message: "Object not found", code: "not_found" }, 404);
+    if (url.endsWith("/object?key=new.txt")) return json({ message: "Object not found", code: "not_found" }, 404);
     return json({ items: [{ id: "A" }, { id: "B" }], hasMore: false });
   }));
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -1510,7 +1510,7 @@ test("bucket object departure preserves an active upload on stay and cancels it 
   await changeBucketHash("#bucket/B/objects");
   expect(requests[0]?.aborted).toBe(true);
   expect(screen.queryByText("new.txt")).toBeNull();
-  expect(requests[0]?.url).toBe("/api/buckets/A/objects/new.txt");
+  expect(requests[0]?.url).toBe("/api/buckets/A/object?key=new.txt");
 });
 
 

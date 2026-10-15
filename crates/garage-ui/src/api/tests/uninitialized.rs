@@ -245,7 +245,7 @@
         let closed = [
             ("POST", "/api/garage/v2/api/setup"),
             ("GET", "/api/garage/v2/api/auth/status"),
-            ("GET", "/api/buckets/bkt/inspect/notes/api/auth/status"),
+            ("GET", "/api/buckets/bkt/inspect?key=notes%2Fapi%2Fauth%2Fstatus"),
             ("POST", "/api/setup/extra"),
             ("GET", "/admin/api/auth/status"),
             ("HEAD", "/api/auth/status"),

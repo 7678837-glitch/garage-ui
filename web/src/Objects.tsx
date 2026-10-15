@@ -1,9 +1,8 @@
 import { Button, Checkbox, Dialog, DropdownMenu, Select, Table, TextArea, TextField } from "@radix-ui/themes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
-import { encodeObjectKey } from "./App";
 import { CapacityText, CompactCapacityText, ReadableInstantText, copy, fill, translate, useI18n } from "./i18n";
-import { ApiError, api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
+import { ApiError, api, captureAuthGeneration, noteUnauthenticated, objectPath } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { bucketUrl } from "./BucketPermissions";
 import { ConfirmDialog } from "./confirm";
@@ -312,7 +311,7 @@ function searchPath(bucketId: string, prefix: string, q: string): string {
 }
 
 function metadataPath(bucketId: string, key: string): string {
-  return `${bucketUrl(bucketId)}/objects/${encodeObjectKey(key)}`;
+  return objectPath(bucketId, key);
 }
 
 const BITMAP_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico"]);
@@ -328,7 +327,7 @@ function bitmapKey(key: string): boolean {
 }
 
 function thumbnailPath(bucketId: string, key: string): string {
-  return `${metadataPath(bucketId, key)}?thumbnail=1`;
+  return objectPath(bucketId, key, { thumbnail: "1" });
 }
 
 function ObjectThumb({ src }: { src: string }) {
@@ -354,7 +353,7 @@ function ObjectThumb({ src }: { src: string }) {
 }
 
 function inspectPath(bucketId: string, key: string): string {
-  return `${bucketUrl(bucketId)}/inspect/${encodeObjectKey(key)}`;
+  return `${bucketUrl(bucketId)}/inspect?${new URLSearchParams({ key }).toString()}`;
 }
 
 function archiveHref(bucketId: string, value: unknown): string {
@@ -366,7 +365,7 @@ function archiveHref(bucketId: string, value: unknown): string {
 }
 
 function previewPath(bucketId: string, key: string): string {
-  return `${metadataPath(bucketId, key)}?preview=1`;
+  return objectPath(bucketId, key, { preview: "1" });
 }
 
 type InlineKind = "image" | "text" | "pdf" | "video" | "audio";
@@ -855,10 +854,7 @@ export function Objects({
 
   const removeObject = useMutation({
     mutationFn: async (key: string) => {
-      await api(
-        `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeObjectKey(key)}`,
-        { method: "DELETE" },
-      );
+      await api(objectPath(bucketId, key), { method: "DELETE" });
     },
     onSuccess: async (_data, key) => {
       setPendingDelete(null);
@@ -869,7 +865,7 @@ export function Objects({
   const removePrefix = useMutation({
     mutationFn: async (prefix: string) => {
       const body = await api<unknown>(
-        `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeObjectKey(prefix)}?recursive=true`,
+        objectPath(bucketId, prefix, { recursive: "true" }),
         { method: "DELETE" },
       );
       let failed: DeleteFailure[];
@@ -1317,7 +1313,7 @@ export function Objects({
           ) : null}
           {canTransfer && singleKey !== null ? (
             <Button size="2" variant="soft" color="gray" asChild>
-              <a href={`${metadataPath(bucketId, singleKey)}?download=1`} target="_blank" rel="noopener">
+              <a href={objectPath(bucketId, singleKey, { download: "1" })} target="_blank" rel="noopener">
                 {copy("ui.download")}
               </a>
             </Button>

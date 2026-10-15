@@ -2,8 +2,7 @@ import { Button } from "@radix-ui/themes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { setFormDirty } from "./unsaved";
-import { ApiError, api, putObject } from "./api/client";
-import { encodeObjectKey } from "./App";
+import { ApiError, api, objectPath, putObject } from "./api/client";
 import { useI18n, copy, translate } from "./i18n";
 
 // React 18 input types omit webkitdirectory. Directory selection only checks that the attribute is present.
@@ -266,7 +265,7 @@ export function UploadPanel({
         const controller = new AbortController();
         const abort = () => controller.abort();
         abortRef.current.set(row.id, abort);
-        void api<unknown>(`/api/buckets/${encodeURIComponent(targetBucket)}/objects/${encodeObjectKey(row.name)}`, { signal: controller.signal }).then(
+        void api<unknown>(objectPath(targetBucket, row.name), { signal: controller.signal }).then(
           () => completeCheck("exists"),
           (error: unknown) => {
             if (error instanceof ApiError && error.code === "not_found") completeCheck("absent");

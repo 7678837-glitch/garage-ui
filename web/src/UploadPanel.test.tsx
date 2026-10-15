@@ -111,9 +111,9 @@ test("keeps a fourth file queued until an upload slot frees", async () => {
   choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
   await act(async () => {});
   expect(FakeRequest.sent.map((request) => request.url)).toEqual([
-    "/api/buckets/bkt-1/objects/a.txt",
-    "/api/buckets/bkt-1/objects/b.txt",
-    "/api/buckets/bkt-1/objects/c.txt",
+    "/api/buckets/bkt-1/object?key=a.txt",
+    "/api/buckets/bkt-1/object?key=b.txt",
+    "/api/buckets/bkt-1/object?key=c.txt",
   ]);
   expect(row("a.txt").textContent).toContain("Uploading");
   expect(row("a.txt").textContent).toContain("0%");
@@ -128,10 +128,10 @@ test("keeps a fourth file queued until an upload slot frees", async () => {
     FakeRequest.sent[0]?.succeed();
   });
   expect(FakeRequest.sent.map((request) => request.url)).toEqual([
-    "/api/buckets/bkt-1/objects/a.txt",
-    "/api/buckets/bkt-1/objects/b.txt",
-    "/api/buckets/bkt-1/objects/c.txt",
-    "/api/buckets/bkt-1/objects/d.txt",
+    "/api/buckets/bkt-1/object?key=a.txt",
+    "/api/buckets/bkt-1/object?key=b.txt",
+    "/api/buckets/bkt-1/object?key=c.txt",
+    "/api/buckets/bkt-1/object?key=d.txt",
   ]);
   expect(row("a.txt").textContent).toContain("Done");
   expect(row("d.txt").textContent).toContain("Uploading");
@@ -154,7 +154,7 @@ test("cancel stops an upload and retry sends it again", async () => {
   expect(row("a.txt").textContent).not.toContain("Done");
   fireEvent.click(within(row("a.txt")).getByRole("button", { name: "Retry" }));
   await act(async () => {});
-  expect(FakeRequest.sent[3]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[3]?.url).toBe("/api/buckets/bkt-1/object?key=a.txt");
   expect(row("a.txt").textContent).toContain("Uploading");
   await act(async () => {
     FakeRequest.sent[1]?.fail();
@@ -162,7 +162,7 @@ test("cancel stops an upload and retry sends it again", async () => {
   expect(row("b.txt").textContent).toContain("Failed");
   fireEvent.click(within(row("b.txt")).getByRole("button", { name: "Retry" }));
   await act(async () => {});
-  expect(FakeRequest.sent[4]?.url).toBe("/api/buckets/bkt-1/objects/b.txt");
+  expect(FakeRequest.sent[4]?.url).toBe("/api/buckets/bkt-1/object?key=b.txt");
   expect(row("b.txt").textContent).toContain("Uploading");
 });
 
@@ -188,7 +188,7 @@ test("skip lets the other file with that name upload", async () => {
   expect(screen.getAllByText("same.txt")).toHaveLength(1);
   await act(async () => {});
   expect(FakeRequest.sent.map((request) => request.url)).toEqual([
-    "/api/buckets/bkt-1/objects/same.txt",
+    "/api/buckets/bkt-1/object?key=same.txt",
   ]);
 });
 
@@ -202,7 +202,7 @@ test("overwrite sends the file bytes for that key", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
   const sent = FakeRequest.sent[0];
   expect(sent?.method).toBe("PUT");
-  expect(sent?.url).toBe("/api/buckets/bkt%201/objects/pre/a%20b%21.txt");
+  expect(sent?.url).toBe("/api/buckets/bkt%201/object?key=pre%2Fa+b%21.txt");
   expect(sent?.withCredentials).toBe(true);
   expect(sent?.headers.get("x-csrf-token")).toBe("csrf-token");
   expect(sent?.headers.get("content-type")).toBe("text/plain");
@@ -229,7 +229,7 @@ test("overwrite sends one copy and overwrite all sends the rest", async () => {
   expect(screen.getAllByRole("button", { name: "Skip" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Overwrite all" }));
   expect(FakeRequest.sent).toHaveLength(2);
-  expect(FakeRequest.sent[1]?.url).toBe("/api/buckets/bkt-1/objects/same.txt");
+  expect(FakeRequest.sent[1]?.url).toBe("/api/buckets/bkt-1/object?key=same.txt");
   expect(screen.queryByRole("button", { name: "Overwrite" })).toBeNull();
 });
 
@@ -342,7 +342,7 @@ test("uploads a chosen folder file at its relative path", async () => {
   fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=docs%2Fa.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("docs/a.txt").textContent).toContain("Uploading");
 });
@@ -355,7 +355,7 @@ test("asks before uploading a folder path that already exists", async () => {
   expect(FakeRequest.sent).toHaveLength(0);
   expect(row("docs/a.txt").textContent).toContain("Queued");
   fireEvent.click(within(row("docs/a.txt")).getByRole("button", { name: "Overwrite" }));
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=docs%2Fa.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
@@ -365,7 +365,7 @@ test("uploads a folder file at its name when the relative path is empty", async 
   fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
@@ -375,7 +375,7 @@ test("uploads a chosen file at its name when the relative path is empty", async 
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("a.txt").textContent).toContain("Uploading");
 });
@@ -404,7 +404,7 @@ test("a dropped file keeps its file name when a relative path is set", async () 
   });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/a.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=a.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
@@ -416,7 +416,7 @@ test("accepts a dropped file", async () => {
   });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=drop.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
   expect(row("drop.txt").textContent).toContain("Uploading");
 });
@@ -470,7 +470,7 @@ test("a dropped file item keeps its file name", async () => {
   );
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/plain.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=plain.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
@@ -485,7 +485,7 @@ test("a drop without webkitGetAsEntry keeps the file name", async () => {
   });
   await act(async () => {});
   expect(FakeRequest.sent).toHaveLength(1);
-  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/drop.txt");
+  expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=drop.txt");
   expect(FakeRequest.sent[0]?.body).toBe(file);
 });
 
@@ -513,7 +513,7 @@ test("uploads a dropped directory under its relative path", async () => {
     [decoy],
   );
   await waitFor(() => {
-    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/a.txt");
+    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=docs%2Fa.txt");
   });
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.body).toBe(file);
@@ -552,7 +552,7 @@ test("uploads a nested dropped directory under its relative path", async () => {
     },
   ]);
   await waitFor(() => {
-    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/objects/docs/sub/a.txt");
+    expect(FakeRequest.sent[0]?.url).toBe("/api/buckets/bkt-1/object?key=docs%2Fsub%2Fa.txt");
   });
   expect(FakeRequest.sent).toHaveLength(1);
   expect(FakeRequest.sent[0]?.body).toBe(file);
@@ -606,7 +606,7 @@ test("unmount aborts requests without starting queued files", async () => {
 test("successful upload refreshes rendered search results while collapsed jobs remain mounted", async () => {
   let searches = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-    if (String(input).includes("/objects/")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
+    if (String(input).includes("/object?")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
     if (String(input).includes("/search?")) {
       searches += 1;
       return new Response(JSON.stringify({ matches: searches > 1 ? [{ key: "new.txt", size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" }] : [], truncated: false }), { status: 200 });
@@ -681,7 +681,7 @@ test("staying during prefix navigation retains page, selection and active upload
   const entry = (key: string) => ({ kind: "object", key, size: 1, etag: "e", lastModified: "2026-10-11T00:00:00Z" });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), "http://ui.local");
-    if (url.pathname.includes("/objects/")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
+    if (url.pathname.endsWith("/object")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
     const prefix = url.searchParams.get("prefix") ?? "";
     const entries = prefix === "folder/" ? [entry("folder/destination.txt")] : url.searchParams.has("next") ? [entry("second.txt"), { kind: "prefix", prefix: "folder/" }] : [entry("first.txt")];
     return new Response(JSON.stringify({ prefix, entries, next: prefix === "" && !url.searchParams.has("next") ? "page-2" : null }), { status: 200 });
@@ -742,7 +742,7 @@ test("checks an unlisted destination and requires overwrite before sending bytes
   await act(async () => {});
   await waitFor(() => expect(within(row("z?.txt")).getByRole("button", { name: "Overwrite" })).toBeTruthy());
   expect(FakeRequest.sent).toHaveLength(0);
-  expect(fetch).toHaveBeenCalledWith("/api/buckets/bkt%201/objects/z%3F.txt", expect.objectContaining({ method: "GET", credentials: "include", signal: expect.any(AbortSignal) }));
+  expect(fetch).toHaveBeenCalledWith("/api/buckets/bkt%201/object?key=z%3F.txt", expect.objectContaining({ method: "GET", credentials: "include", signal: expect.any(AbortSignal) }));
   fireEvent.click(within(row("z?.txt")).getByRole("button", { name: "Overwrite" }));
   expect(FakeRequest.sent).toHaveLength(1);
 });

@@ -247,14 +247,7 @@ async function revealRow(scope: Locator, text: string): Promise<Locator> {
 
 
 function objectUrl(bucketId: string, key: string): string {
-  return `/api/buckets/${encodeURIComponent(bucketId)}/objects/${encodeKey(key)}`;
-}
-
-function encodeKey(key: string): string {
-  return key
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  return `/api/buckets/${encodeURIComponent(bucketId)}/object?key=${encodeURIComponent(key)}`;
 }
 
 async function csrfHeader(page: Page): Promise<Record<string, string>> {
@@ -287,7 +280,7 @@ async function release(page: Page, alias: string, bucketId: string, keyId: strin
   if (bucketId.length > 0) {
     for (const prefix of ["pix/", "bad/"]) {
       await page.request
-        .delete(`${objectUrl(bucketId, prefix)}?recursive=true`, { headers })
+        .delete(`${objectUrl(bucketId, prefix)}&recursive=true`, { headers })
         .catch(() => undefined);
     }
     await page.request.delete(`/api/buckets/${encodeURIComponent(bucketId)}`, { headers }).catch(() => undefined);

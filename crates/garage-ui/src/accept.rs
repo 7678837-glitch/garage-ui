@@ -1174,7 +1174,7 @@ async fn preview_download_and_zip_follow_the_download_bit() {
         &app,
         request(
             "GET",
-            "/api/buckets/bkt-1/objects/page.html?thumbnail=1",
+            "/api/buckets/bkt-1/object?key=page.html&thumbnail=1",
             None,
             Some(&vera),
         ),
@@ -1253,7 +1253,7 @@ async fn preview_download_and_zip_follow_the_download_bit() {
         &app,
         request(
             "GET",
-            "/api/buckets/bkt-1/objects/page.html?thumbnail=1",
+            "/api/buckets/bkt-1/object?key=page.html&thumbnail=1",
             None,
             Some(&vera),
         ),
@@ -2259,7 +2259,7 @@ async fn thumbnail_content_type_matches_png_bytes() {
         Duration::from_secs(10),
         router(app).oneshot(request(
             "GET",
-            "/api/buckets/bkt-1/objects/dot.png?thumbnail=1",
+            "/api/buckets/bkt-1/object?key=dot.png&thumbnail=1",
             None,
             Some(&session),
         )),

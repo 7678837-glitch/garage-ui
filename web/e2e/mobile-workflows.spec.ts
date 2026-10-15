@@ -50,7 +50,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       await objects.getByRole("button", { name: "Use this key", exact: true }).click();
       await expect(objects.getByText("There are no objects. Upload the first object.", { exact: true })).toBeVisible();
       for (const file of files) {
-        expect((await page.request.put(`/api/buckets/${bucketId}/objects/${file.key.split("/").map(encodeURIComponent).join("/")}`, { headers: { ...headers, "content-type": file.type, "content-length": String(file.body.length) }, data: file.body })).status()).toBe(201);
+        expect((await page.request.put(`/api/buckets/${bucketId}/object?key=${encodeURIComponent(file.key)}`, { headers: { ...headers, "content-type": file.type, "content-length": String(file.body.length) }, data: file.body })).status()).toBe(201);
         uploaded.push(file.key);
       }
       await page.reload();
@@ -108,7 +108,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
       await expect(preview.locator("pre")).toHaveText(files[4].body.toString());
       await expect(preview.getByRole("heading", { name: longName, exact: true })).toHaveText(longName);
       const writes: string[] = [];
-      page.on("request", (sent) => { if (sent.method() === "PUT" && new URL(sent.url()).pathname.endsWith("/objects/notes.txt")) writes.push(sent.url()); });
+      page.on("request", (sent) => { if (sent.method() === "PUT" && new URL(sent.url()).pathname.endsWith("/object") && new URL(sent.url()).searchParams.get("key") === "notes.txt") writes.push(sent.url()); });
       await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Explicitly confirmed mobile overwrite.") });
       const upload = objects.getByRole("region", { name: "Upload", exact: true });
@@ -181,7 +181,7 @@ for (const [width, theme] of [[360, "Light"], [390, "Dark"]] as const) {
             const binding = await cleanup.put(`/api/buckets/${bucketId}/credential`, { headers, data: { access_key_id: keyId } });
             expect(binding.status()).toBe(200);
             expect(await binding.json()).toMatchObject({ access_key_id: keyId });
-            for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/objects/${key.split("/").map(encodeURIComponent).join("/")}`, { headers })).status());
+            for (const key of uploaded) expect([200, 204, 404]).toContain((await cleanup.delete(`/api/buckets/${bucketId}/object?key=${encodeURIComponent(key)}`, { headers })).status());
           }
           expect((await cleanup.delete(`/api/buckets/${bucketId}`, { headers })).status()).toBe(200);
           console.log(`Mobile fixture bucket cleanup ${bucketId}: 200`);

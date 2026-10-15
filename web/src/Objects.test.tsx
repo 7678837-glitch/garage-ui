@@ -138,7 +138,7 @@ function stubBucketObjects(rows: ListedObject[], previewBody = "preview-body") {
       if (url.includes("preview=1")) {
         return new Response(previewBody, { status: 200 });
       }
-      const row = rows.find((item) => url.includes(`/objects/${item.encodedKey}`));
+      const row = rows.find((item) => url.includes(`key=${item.encodedKey}`));
       if (row) {
         return json({
           key: row.key,
@@ -192,7 +192,7 @@ test("keeps upload collapsed until opened and preserves jobs when closed", async
       if (url.pathname === "/api/buckets/bkt-1/objects") {
         return json(page([{ kind: "prefix", prefix: "photos/" }, photo]));
       }
-      if (url.pathname === "/api/buckets/bkt-1/objects/photos/") return json({ code: "not_found" }, 404);
+      if (url.pathname === "/api/buckets/bkt-1/object" && url.searchParams.get("key") === "photos/") return json({ code: "not_found" }, 404);
       return json({ message: "unexpected" }, 500);
     }),
   );
@@ -262,7 +262,7 @@ test("opens a bucket, shows the chosen object's type, and returns to the table",
           page([{ kind: "prefix", prefix: "photos/" }, photo]),
         );
       }
-      if (url.pathname === "/api/buckets/bkt-1/objects/photos/a.txt") {
+      if (url.pathname === "/api/buckets/bkt-1/object" && url.searchParams.get("key") === "photos/a.txt") {
         return json({
           key: "photos/a.txt",
           size: 12,
@@ -604,7 +604,7 @@ test("encodes each key segment when loading metadata", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "dir/a?b.txt" }));
   expect(await screen.findByText("Content type text/plain")).toBeTruthy();
   const meta = calls.find((call) => call.includes("a%3Fb.txt"));
-  expect(meta).toBe("/api/buckets/bkt-1/objects/dir/a%3Fb.txt");
+  expect(meta).toBe("/api/buckets/bkt-1/object?key=dir%2Fa%3Fb.txt");
 });
 
 function box(name: string, includeHidden = false): HTMLElement {
@@ -787,7 +787,7 @@ test("shows Download only for one selected object and does not offer Preview", a
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   expectNoViewer();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select dir/a?b.txt" }));
-  expectDownload("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
+  expectDownload("/api/buckets/b%20k/object?key=dir%2Fa%3Fb.txt&download=1");
   expect(calls.some((call) => call.includes("preview=1") || call.includes("download=1"))).toBe(
     false,
   );
@@ -832,7 +832,7 @@ test("shows Download ZIP for two selected objects and requests the archive once"
   expect(screen.queryByRole("button", { name: "Download ZIP" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download ZIP" })).toBeNull();
   expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
-    "/api/buckets/bkt-1/objects/a.txt?download=1",
+    "/api/buckets/bkt-1/object?key=a.txt&download=1",
   );
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
@@ -899,7 +899,7 @@ test("cancels an object delete without a request, then removes the row after 204
   expect(box("Select keep.txt").getAttribute("aria-checked")).toBe("false");
   const deletes = calls.filter((call) => call.method === "DELETE");
   expect(deletes).toEqual([
-    { url: "/api/buckets/b%20k/objects/dir/a%3Fb.txt", method: "DELETE" },
+    { url: "/api/buckets/b%20k/object?key=dir%2Fa%3Fb.txt", method: "DELETE" },
   ]);
 });
 
@@ -909,7 +909,7 @@ test("keeps the object and shows the error when delete is forbidden", async () =
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (method === "DELETE") {
-        expect(String(input)).toBe("/api/buckets/bkt-1/objects/a.txt");
+        expect(String(input)).toBe("/api/buckets/bkt-1/object?key=a.txt");
         return json({ message: "Not allowed to delete this object" }, 403);
       }
       return json(page([objectRow("a.txt", 1, "2026-10-11T00:00:00Z")]));
@@ -1106,7 +1106,7 @@ test("requires the typed prefix before recursive delete, then drops the row afte
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("menuitem", { name: /^Delete folder/ })).toBeNull();
   expect(calls.filter((call) => call.method === "DELETE")).toEqual([
-    { url: "/api/buckets/bkt-1/objects/a%3Fb/?recursive=true", method: "DELETE" },
+    { url: "/api/buckets/bkt-1/object?key=a%3Fb%2F&recursive=true", method: "DELETE" },
   ]);
 });
 
@@ -1116,7 +1116,7 @@ test("keeps the prefix row and shows the error when folder delete is forbidden",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (method === "DELETE") {
-        expect(String(input)).toBe("/api/buckets/bkt-1/objects/photos/?recursive=true");
+        expect(String(input)).toBe("/api/buckets/bkt-1/object?key=photos%2F&recursive=true");
         return json({ message: "Not allowed to delete this prefix" }, 403);
       }
       return json(
@@ -1154,7 +1154,7 @@ test("hides upload, delete, preview, and download when the viewer cannot transfe
       if (raw.includes("preview=1")) {
         return new Response("secret bytes", { status: 200 });
       }
-      if (raw.includes("/objects/a.txt")) {
+      if (raw.includes("key=a.txt")) {
         return json({
           key: "a.txt",
           size: 1,
@@ -1203,7 +1203,7 @@ test("shows the text viewer and Download for one object without write controls",
       if (url.includes("preview=1")) {
         return new Response("readable note", { status: 200 });
       }
-      if (url.includes("/objects/a.txt")) {
+      if (url.includes("key=a.txt")) {
         return json({
           key: "a.txt",
           size: 1,
@@ -1230,7 +1230,7 @@ test("shows the text viewer and Download for one object without write controls",
   expect(screen.queryByRole("link", { name: "Preview" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Download" })).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
-  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
   const note = await screen.findByText("readable note");
   expect(note.tagName).toBe("PRE");
   expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
@@ -1253,7 +1253,7 @@ test("shows Working while an object delete is submitting", async () => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (method === "DELETE") {
-        expect(String(input)).toBe("/api/buckets/bkt-1/objects/a.txt");
+        expect(String(input)).toBe("/api/buckets/bkt-1/object?key=a.txt");
         return new Promise<Response>((resolve) => {
           release = resolve;
         });
@@ -1387,7 +1387,7 @@ test("renders one text object inline from the preview URL without truncating it"
     [
       {
         key: "dir/a?b.txt",
-        encodedKey: "dir/a%3Fb.txt",
+        encodedKey: "dir%2Fa%3Fb.txt",
         contentType,
         size: 4,
       },
@@ -1396,7 +1396,7 @@ test("renders one text object inline from the preview URL without truncating it"
   );
   renderObjects("b k");
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select dir/a?b.txt" }));
-  expectDownload("/api/buckets/b%20k/objects/dir/a%3Fb.txt?download=1");
+  expectDownload("/api/buckets/b%20k/object?key=dir%2Fa%3Fb.txt&download=1");
   const details = await expectFields(contentType, 4);
   await waitFor(() => {
     expect(details.querySelector("pre")?.textContent).toBe(body);
@@ -1407,8 +1407,8 @@ test("renders one text object inline from the preview URL without truncating it"
   }
   expect(pre.textContent).toBe(body);
   expect(pre.querySelector("script")).toBeNull();
-  const previewUrl = "/api/buckets/b%20k/objects/dir/a%3Fb.txt?preview=1";
-  const metadataUrl = "/api/buckets/b%20k/objects/dir/a%3Fb.txt";
+  const previewUrl = "/api/buckets/b%20k/object?key=dir%2Fa%3Fb.txt&preview=1";
+  const metadataUrl = "/api/buckets/b%20k/object?key=dir%2Fa%3Fb.txt";
   const metadataAt = calls.findIndex((call) => call.url === metadataUrl);
   const previewAt = calls.findIndex((call) => call.url === previewUrl);
   expect(metadataAt).toBeGreaterThanOrEqual(0);
@@ -1444,7 +1444,7 @@ test("large text loads the beginning and the previous load is cancelled", async 
           pending.set(url, resolve);
         });
       }
-      const key = ["a.txt", "b.txt", "c.txt"].find((item) => url.endsWith(`/objects/${item}`));
+      const key = ["a.txt", "b.txt", "c.txt"].find((item) => url.endsWith(`/object?key=${item}`));
       if (key) {
         return json({
           key,
@@ -1466,9 +1466,9 @@ test("large text loads the beginning and the previous load is cancelled", async 
   renderObjects();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
   await waitFor(() => {
-    expect(previewCalls.some((call) => call.url.endsWith("/objects/a.txt?preview=1"))).toBe(true);
+    expect(previewCalls.some((call) => call.url.endsWith("/object?key=a.txt&preview=1"))).toBe(true);
   });
-  const first = previewCalls.find((call) => call.url.endsWith("/objects/a.txt?preview=1"));
+  const first = previewCalls.find((call) => call.url.endsWith("/object?key=a.txt&preview=1"));
   if (!first) {
     throw new Error("missing text preview");
   }
@@ -1482,12 +1482,12 @@ test("large text loads the beginning and the previous load is cancelled", async 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select a.txt" }));
   await waitFor(() => {
-    expect(previewCalls.some((call) => call.url.endsWith("/objects/b.txt?preview=1"))).toBe(true);
+    expect(previewCalls.some((call) => call.url.endsWith("/object?key=b.txt&preview=1"))).toBe(true);
   });
   expect(first.signal.aborted).toBe(true);
-  expect(previewCalls.filter((call) => call.url.endsWith("/objects/a.txt?preview=1")).length).toBe(1);
+  expect(previewCalls.filter((call) => call.url.endsWith("/object?key=a.txt&preview=1")).length).toBe(1);
 
-  const second = previewCalls.find((call) => call.url.endsWith("/objects/b.txt?preview=1"));
+  const second = previewCalls.find((call) => call.url.endsWith("/object?key=b.txt&preview=1"));
   if (!second) {
     throw new Error("missing text preview");
   }
@@ -1502,14 +1502,14 @@ test("large text loads the beginning and the previous load is cancelled", async 
   const note = screen.getByText("Showing the first 256 KiB.");
   expect(note.tagName).toBe("P");
   expect(note.textContent).toBe("Showing the first 256 KiB.");
-  expect(previewCalls.filter((call) => call.url.endsWith("/objects/b.txt?preview=1")).length).toBe(1);
+  expect(previewCalls.filter((call) => call.url.endsWith("/object?key=b.txt&preview=1")).length).toBe(1);
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select c.txt" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select b.txt" }));
   await waitFor(() => {
-    expect(previewCalls.some((call) => call.url.endsWith("/objects/c.txt?preview=1"))).toBe(true);
+    expect(previewCalls.some((call) => call.url.endsWith("/object?key=c.txt&preview=1"))).toBe(true);
   });
-  const third = previewCalls.find((call) => call.url.endsWith("/objects/c.txt?preview=1"));
+  const third = previewCalls.find((call) => call.url.endsWith("/object?key=c.txt&preview=1"));
   if (!third) {
     throw new Error("missing text preview");
   }
@@ -1522,7 +1522,7 @@ test("large text loads the beginning and the previous load is cancelled", async 
   releaseThird(new Response("whole", { status: 200 }));
   expect((await screen.findByText("whole")).tagName).toBe("PRE");
   expect(screen.queryByText("Showing the first 256 KiB.")).toBeNull();
-  expect(previewCalls.filter((call) => call.url.endsWith("/objects/c.txt?preview=1")).length).toBe(1);
+  expect(previewCalls.filter((call) => call.url.endsWith("/object?key=c.txt&preview=1")).length).toBe(1);
 });
 
 const imageTypes = [
@@ -1543,10 +1543,10 @@ for (const contentType of imageTypes) {
     ]);
     renderObjects();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
     const details = await expectFields(contentType, 9);
     const image = within(details).getByRole("img", { name: "a.txt" });
-    expect(image.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(image.getAttribute("src")).toBe("/api/buckets/bkt-1/object?key=a.txt&preview=1");
     expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
   });
 }
@@ -1557,11 +1557,11 @@ test("renders one PDF in a sandboxed frame that does not grant same origin", asy
   ]);
   renderObjects();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
   const details = await expectFields("application/pdf", 9);
   const frame = within(details).getByTitle("a.txt");
   expect(frame.tagName).toBe("IFRAME");
-  expect(frame.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+  expect(frame.getAttribute("src")).toBe("/api/buckets/bkt-1/object?key=a.txt&preview=1");
   expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
   expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
   expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
@@ -1574,13 +1574,13 @@ for (const contentType of ["video/mp4", "video/webm"]) {
     ]);
     renderObjects();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
     const details = await expectFields(contentType, 9);
     const video = details.querySelector("video");
     if (!(video instanceof HTMLVideoElement)) {
       throw new Error(`missing video for ${contentType}`);
     }
-    expect(video.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(video.getAttribute("src")).toBe("/api/buckets/bkt-1/object?key=a.txt&preview=1");
     expect(video.hasAttribute("controls")).toBe(true);
     expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
   });
@@ -1593,13 +1593,13 @@ for (const contentType of ["audio/mpeg", "audio/ogg", "audio/wav"]) {
     ]);
     renderObjects();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
     const details = await expectFields(contentType, 9);
     const audio = details.querySelector("audio");
     if (!(audio instanceof HTMLAudioElement)) {
       throw new Error(`missing audio for ${contentType}`);
     }
-    expect(audio.getAttribute("src")).toBe("/api/buckets/bkt-1/objects/a.txt?preview=1");
+    expect(audio.getAttribute("src")).toBe("/api/buckets/bkt-1/object?key=a.txt&preview=1");
     expect(audio.hasAttribute("controls")).toBe(true);
     expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
   });
@@ -1618,7 +1618,7 @@ for (const contentType of [
     ]);
     renderObjects();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-    expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+    expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
     const details = await expectFields(contentType, 9);
     expect(details.querySelector("img, pre, iframe, video, audio")).toBeNull();
     expect(calls.some((call) => call.url.includes("preview=1"))).toBe(false);
@@ -1634,7 +1634,7 @@ test("keeps Download and hides the viewer until object metadata loads", async ()
       if (url.includes("preview=1")) {
         return new Response("loaded body", { status: 200 });
       }
-      if (url.includes("/objects/a.txt")) {
+      if (url.includes("key=a.txt")) {
         return new Promise<Response>((resolve) => {
           release = resolve;
         });
@@ -1644,7 +1644,7 @@ test("keeps Download and hides the viewer until object metadata loads", async ()
   );
   renderObjects();
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.txt" }));
-  expectDownload("/api/buckets/bkt-1/objects/a.txt?download=1");
+  expectDownload("/api/buckets/bkt-1/object?key=a.txt&download=1");
   expect(screen.queryByRole("region", { name: "Object details" })).toBeNull();
   expectNoViewer();
   release(
@@ -1719,7 +1719,7 @@ test("shares one object after an admin chooses the bucket key", async () => {
 
 test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   window.location.hash = "#buckets/bkt-1/photos/";
-  const inspectUrl = "/api/buckets/bkt-1/inspect/photos/cat.jpg";
+  const inspectUrl = "/api/buckets/bkt-1/inspect";
   const calls: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -1729,7 +1729,7 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
       if (url.pathname === "/api/buckets/bkt-1/objects") {
         return json(page([objectRow("photos/cat.jpg", 1, "2026-10-11T00:00:00Z")], null, "photos/"));
       }
-      if (url.pathname === inspectUrl) {
+      if (url.pathname === inspectUrl && url.searchParams.get("key") === "photos/cat.jpg") {
         return json({
           bucketId: "bkt-1",
           key: "photos/cat.jpg",
@@ -1752,11 +1752,11 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   renderObjects();
   expect(await screen.findByRole("button", { name: "photos/cat.jpg" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Details (photos/cat.jpg)" })).toBeTruthy();
-  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
+  expect(calls.filter((call) => call.url.includes("/inspect"))).toEqual([]);
   cleanup();
   renderObjects("bkt-1", { canWrite: true, canTransfer: true, canManage: true });
   const inspect = await screen.findByRole("button", { name: "Details (photos/cat.jpg)" });
-  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([]);
+  expect(calls.filter((call) => call.url.includes("/inspect"))).toEqual([]);
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
   fireEvent.click(inspect);
   expect((await screen.findByText("u1")).textContent).toBe("u1");
@@ -1769,7 +1769,7 @@ test("an admin inspecting photos/cat.jpg sees version u1", async () => {
   expect(screen.getByText("deleteMarker no").textContent).toBe("deleteMarker no");
   expect(screen.getByText("inline yes").textContent).toBe("inline yes");
   expect(window.location.hash).toBe("#buckets/bkt-1/photos/");
-  expect(calls.filter((call) => call.url.includes("/inspect/"))).toEqual([
+  expect(calls.filter((call) => call.url.includes("/inspect"))).toEqual([
     { url: inspectUrl, method: "GET" },
   ]);
 });
@@ -1805,15 +1805,15 @@ test("left and right keys select the previous and next object in the same direct
         );
       }
       const sizes: Record<string, number> = {
-        "/api/buckets/bkt-1/objects/photos/a.txt": 1,
-        "/api/buckets/bkt-1/objects/photos/b.txt": 2,
-        "/api/buckets/bkt-1/objects/photos/c.txt": 3,
+        "photos/a.txt": 1,
+        "photos/b.txt": 2,
+        "photos/c.txt": 3,
       };
-      const size = sizes[url.pathname];
+      const key = url.searchParams.get("key") ?? "";
+      const size = sizes[key];
       if (size === undefined) {
         return json({ message: "unexpected" }, 500);
       }
-      const key = url.pathname.slice("/api/buckets/bkt-1/objects/".length);
       return json({
         key,
         size,
@@ -1841,7 +1841,7 @@ test("left and right keys select the previous and next object in the same direct
       expect(box(`Select ${item}`).getAttribute("aria-checked")).toBe(String(item === key));
     }
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
-      `/api/buckets/bkt-1/objects/${key}?download=1`,
+      `/api/buckets/bkt-1/object?${new URLSearchParams({ key, download: "1" }).toString()}`,
     );
   }
 
@@ -1925,9 +1925,8 @@ test("shows a thumbnail for an allowlisted bitmap and does not request one witho
     if (!(img instanceof HTMLImageElement)) {
       throw new Error(`missing thumbnail ${key}`);
     }
-    const encoded = key.split("/").map((segment) => encodeURIComponent(segment)).join("/");
     expect(img.getAttribute("src")).toBe(
-      `/api/buckets/${encodeURIComponent("bkt 1")}/objects/${encoded}?thumbnail=1`,
+      `/api/buckets/${encodeURIComponent("bkt 1")}/object?${new URLSearchParams({ key, thumbnail: "1" }).toString()}`,
     );
   }
   for (const key of plain) {
@@ -2037,7 +2036,7 @@ test("explicit filename feedback receives focus before metadata resolves and on 
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/auth/status") return json({ can_share: false });
-    if (url === "/api/buckets/bkt-1/objects/a.txt") return new Promise<Response>((resolve) => { release = resolve; });
+    if (url === "/api/buckets/bkt-1/object?key=a.txt") return new Promise<Response>((resolve) => { release = resolve; });
     if (url.includes("preview=1")) return new Response("safe text body", { status: 200 });
     return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z"), objectRow("b.txt", 5, "2026-10-11T00:00:00Z")]));
   }));
@@ -2069,7 +2068,7 @@ test("explicit inspect feedback is focused while loading and shows a failure in 
   let release: (response: Response) => void = () => {};
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/inspect/")) return new Promise<Response>((resolve) => { release = resolve; });
+    if (url.includes("/inspect?")) return new Promise<Response>((resolve) => { release = resolve; });
     if (url === "/api/auth/status") return json({ can_share: false });
     return json(page([objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]));
   }));
@@ -2139,8 +2138,8 @@ test("deleting an object clears its explicit preview while retaining another ins
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === "DELETE") { deleted = true; return new Response(null, { status: 204 }); }
-    if (url.includes("/inspect/")) return json({ bucketId: "bkt-1", key: "b.txt", versions: [] });
-    if (url.endsWith("/objects/a.txt")) return json({ key: "a.txt", size: 4, etag: "e", lastModified: "2026-10-11T00:00:00Z", contentType: "text/plain" });
+    if (url.includes("/inspect?")) return json({ bucketId: "bkt-1", key: "b.txt", versions: [] });
+    if (url.endsWith("/object?key=a.txt")) return json({ key: "a.txt", size: 4, etag: "e", lastModified: "2026-10-11T00:00:00Z", contentType: "text/plain" });
     if (url.includes("preview=1")) return new Response("deleted body", { status: 200 });
     return json(page([...(deleted ? [] : [objectRow("a.txt", 4, "2026-10-11T00:00:00Z")]), objectRow("b.txt", 4, "2026-10-11T00:00:00Z")]));
   }));
@@ -2263,4 +2262,34 @@ test("share dialog locks duration and dismissal during the request, then restore
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
+});
+
+test("sends a dot-segment key as the key query parameter for delete and download", async () => {
+  const key = "dir/../victim.txt";
+  const calls: { url: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url: String(input), method });
+      if (method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return json(page([objectRow(key, 1, "2026-10-11T00:00:00Z")]));
+    }),
+  );
+  renderObjects("b k");
+  fireEvent.click(await screen.findByRole("checkbox", { name: `Select ${key}` }));
+  const download = new URL(screen.getByRole("link", { name: "Download" }).getAttribute("href") ?? "", "http://x");
+  expect(download.pathname).toBe("/api/buckets/b%20k/object");
+  expect(download.searchParams.get("key")).toBe(key);
+  expect(download.searchParams.get("download")).toBe("1");
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => {
+    expect(calls.some((call) => call.method === "DELETE")).toBe(true);
+  });
+  const removed = new URL(calls.find((call) => call.method === "DELETE")?.url ?? "", "http://x");
+  expect(removed.pathname).toBe("/api/buckets/b%20k/object");
+  expect(removed.searchParams.get("key")).toBe(key);
 });
