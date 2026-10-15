@@ -8,7 +8,7 @@ Choose **Light**, **Dark**, or **System** under **Theme**. **System** follows th
 
 Choose **English** or **Chinese** under **Language**; the Chinese UI is Simplified Chinese. Language changes labels and localized number/date presentation. Resource IDs, object keys, and stored data stay intact. Capacity and timestamp displays offer exact values where precision matters.
 
-In **Settings**, **About** shows the UI version and Garage version/capability information. Use those values when reporting a problem; an unpublished release draft may describe a different source commit from your local build.
+In **Settings**, **About** shows the UI version and Garage version/capability information. Use those values when reporting a problem, along with the exact `/healthz` commit described in [Deployment](Deployment.md#verify-the-deployed-source-revision).
 
 ## Navigate with a keyboard
 

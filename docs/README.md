@@ -2,7 +2,7 @@
 
 ## Operator guide
 
-Start with the [Garage UI operator and user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior.
+Start with the [Garage UI operator and user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior. The canonical Markdown sources live in `docs/wiki/`; update those files when correcting the published Wiki. Contributor build and verification commands belong in [Contributing](../CONTRIBUTING.md), while this guide covers operator and end-user tasks.
 
 ## Verification evidence
 
@@ -18,7 +18,7 @@ See the [delivery status and roadmap](roadmap.md) for implemented areas and defe
 
 This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. The original text stays. When the two sides conflict, this directory wins.
 
-For local development and AI-assisted contributions, see [Contributing](../CONTRIBUTING.md). These chapters define requirements and acceptance targets, not a completed-feature checklist or a verification receipt. Consult the relevant implementation and record results for the exact source commit. GitHub Actions are disabled during development; the CI requirements below do not imply that remote checks are running.
+For local development and AI-assisted contributions, see [Contributing](../CONTRIBUTING.md). These chapters define requirements and acceptance targets, not a completed-feature checklist or a verification receipt. Consult the relevant implementation and record results for the exact source commit. The CI workflow remains disabled during development; the CI requirements below do not imply that CI checks are running.
 
 Endpoint names and field names still follow the Admin API v2 definition in the Garage source. This directory contains no implementation code.
 

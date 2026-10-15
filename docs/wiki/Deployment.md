@@ -111,3 +111,11 @@ UI backups preserve local accounts, sessions, audit, ZIP tokens, and bucket-key 
 ## Upgrade deliberately
 
 Back up state, build the intended source revision, and restart with the same data volume and configuration. Check **Settings → About** and the exact `/healthz` commit, then verify login, health, and an appropriate storage operation against the intended Garage. A version number or a running container alone does not prove the correct browser bundle or cluster connection is in use.
+
+## Prepare release artifacts
+
+Release preparation is a maintainer task. Follow the [development and release identity rules](https://github.com/xjoker/garage-ui/blob/dev/docs/engineering.md#79-release-and-images) before running `scripts/release.sh`. Local artifact preparation does not publish a release or push images.
+
+The repository's [release workflow](https://github.com/xjoker/garage-ui/blob/dev/.github/workflows/release.yml) is manual-only. When explicitly dispatched, it builds unsigned Linux binaries, an SPDX SBOM, and SHA-256 checksums, then creates a fresh unpublished draft for the selected source commit. It refuses to update an existing draft or published release with the same version. It does not automatically publish releases, push tags, or publish container images. Checksums verify file integrity; these artifacts are unsigned. Publication and signing require manual review.
+
+The CI workflow remains disabled during development. A workflow file is not evidence that a build has run; consult revision-specific verification and [Releases](https://github.com/xjoker/garage-ui/releases) for artifacts actually available to users.

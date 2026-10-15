@@ -1,6 +1,6 @@
 # Contributing
 
-Garage UI is under active development. GitHub Actions are disabled until development is finished; do not re-enable them as part of a contribution or treat missing remote checks as passing checks. The version in `VERSION` can also identify an unpublished release draft; verification of that draft does not cover later development commits.
+Garage UI is under active development. The CI workflow remains disabled until development is finished; do not re-enable it as part of a contribution or treat missing CI checks as passing checks. Read the [development and release identity rules](docs/engineering.md#79-release-and-images) before preparing artifacts; verification applies to the recorded source commit.
 
 ## Read before changing code
 
@@ -85,19 +85,42 @@ Commit the pinned OpenAPI input and corresponding generated types together. For 
 
 ### Browser integration tests
 
-The current [Playwright configuration](web/playwright.config.ts) expects a debug binary at `target/debug/garage-ui` and exclusive access to port 3909. It starts a fresh UI data directory, creates fixture users, and does not reuse an existing UI server. Build the frontend and debug binary before running it:
+The main, [setup-wizard](web/e2e/wizard.config.ts), and [TLS-warning](web/e2e/tls.config.ts) configurations support Chromium, Firefox, and WebKit. Chromium is the default. Use `GARAGE_BROWSER=all` to run all three, or `--project=firefox` / `--project=webkit` to select one. Each run needs exclusive access to `127.0.0.1:3909`; the harness never reuses an existing UI server.
+
+For a fresh checkout, install the pinned Rust toolchain and Bun first, then prepare the locked dependencies, browser binaries, frontend assets, debug binary, and local Garage images:
 
 ```sh
 cd web
+bun install --frozen-lockfile
+bunx playwright install chromium firefox webkit
 bun run build
 cd ..
 cargo build -p garage-ui --bin garage-ui
-cd web
-GARAGE_VERSION=v2.4.1 bun run test:e2e -- e2e/buckets-keys.spec.ts
-GARAGE_VERSION=v2.3.0 bun run test:e2e -- e2e/buckets-keys.spec.ts
+docker pull dxflrs/garage:v2.4.1
+docker pull dxflrs/garage:v2.3.0
 ```
 
-Use the affected spec rather than the example when appropriate. A custom `CARGO_TARGET_DIR` does not change Playwright's hardcoded binary path. The harness requires running disposable Garage fixtures defined in [garage-target.ts](web/e2e/garage-target.ts): `garage-wave1-v241` on admin/S3 ports 3953/3950 and `garage-wave1-v230` on 3943/3940. Docker access is required to read their configured admin token. These tests modify the fixtures; do not use production clusters. The Compose example does not provision these named fixtures. Arrange them before running E2E and disclose unavailable prerequisites. Setup-wizard and TLS-warning tests use their separate [wizard](web/e2e/wizard.config.ts) and [TLS](web/e2e/tls.config.ts) configurations.
+On Linux, Playwright may also require system packages; follow its [browser installation instructions](https://playwright.dev/docs/browsers#install-system-dependencies). A custom `CARGO_TARGET_DIR` does not change the configurations' required binary path, `target/debug/garage-ui`.
+
+Run the disposable smoke against each supported Garage version:
+
+```sh
+scripts/e2e-check.sh
+GARAGE_VERSION=v2.3.0 scripts/e2e-check.sh
+```
+
+The [runner](scripts/e2e-check.sh) defaults to Garage v2.4.1 and `disposable-smoke.spec.ts`. It requires Bun 1.4.2 (`BUN_BIN` can select its executable), Docker, installed Playwright browsers, and the prerequisites above. It never installs dependencies, pulls images, or builds the application. It resolves the selected local image to its ID, creates a single-node Garage fixture on random loopback Admin/S3 ports, and uses a fresh UI data directory. Cleanup removes only the fixture container and volume with its exact ownership label plus its temporary directory; cleanup failures identify the resources to inspect. Do not run two browser checks concurrently on port 3909.
+
+Pass an affected spec or a separate configuration when appropriate:
+
+```sh
+scripts/e2e-check.sh e2e/buckets-keys.spec.ts
+scripts/e2e-check.sh --config=e2e/wizard.config.ts
+scripts/e2e-check.sh --config=e2e/tls.config.ts
+GARAGE_BROWSER=all scripts/e2e-check.sh
+```
+
+Borrowed disposable fixtures remain an alternative for direct `bun run test:e2e` runs from `web`. The defaults in [garage-target.ts](web/e2e/garage-target.ts) are `garage-wave1-v241` on Admin/S3 ports 3953/3950 and `garage-wave1-v230` on 3943/3940, selected with `GARAGE_VERSION`. Override `GARAGE_CONTAINER`, `GARAGE_ADMIN_URL`, and `S3_ENDPOINT_URL` for another disposable fixture; provide `GARAGE_ADMIN_TOKEN` or allow Docker access to read the fixture's configured token. These tests mutate Garage. The demo Compose file does not provision these named fixtures. Coordinate ownership and disclose unavailable prerequisites.
 
 ## Use AI assistance within a bounded task
 
@@ -105,10 +128,18 @@ Give the assistant the desired behavior, allowed files, relevant spec sections, 
 
 For concurrent work, assign non-overlapping file ownership and use separate branches/worktrees where useful. Preserve other contributors' edits. Coordinate shared ports, Garage fixtures, SQLite databases, and test runs; a separate worktree does not isolate those resources. Keep staging and integration under the coordinating contributor's control.
 
-Never include live tokens, passwords, session keys, private machine paths, personal context, or credential-bearing screenshots in patches, commits, or pull requests. The current [secret scan](scripts/secret-scan.sh) detects private-key blocks in the working tree; passing it does not establish token/password detection or a clean Git history. Review the actual diff for sensitive content.
+Never include live tokens, passwords, session keys, private machine paths, personal context, or credential-bearing screenshots in patches, commits, or pull requests. The [secret scan](scripts/secret-scan.sh) requires the checksum-verified **Gitleaks 8.30.0 release binary** on `PATH`. Download the archive for your operating system and architecture and the checksum list from the [official release](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.0); compare the archive's SHA-256 with that list before extracting and installing it. Do not substitute an unverified binary or a different version.
+
+```sh
+scripts/secret-scan.sh
+scripts/secret-scan.sh --worktree
+scripts/secret-scan.sh --history
+```
+
+The default (`--all`) scans both the working tree and Git history reachable from all local refs, using [the repository configuration](data/config/gitleaks.toml). History scanning requires a complete, non-shallow checkout; fetch the missing history and tags before scanning a shallow clone. The script redacts findings and ignores inline `gitleaks:allow` directives. Its rules and explicit allowlist have limits: a passing scan does not prove that all secrets were detected. Review the actual diff and any files intended for publication for credentials and personal data.
 
 An AI-generated completion report should state what changed, the exact commands and results, the initial failing and final passing regression where applicable, browser evidence for UI work, and any checks not run. Do not infer coverage, security, compatibility, or deployment success from an unrelated earlier run. Human maintainers remain responsible for reviewing contributions, merging, and publishing releases.
 
 ## Submit a focused contribution
 
-Keep a change independently reviewable and reversible. Commit only owned files; include lockfile changes when dependencies change. Explain the concrete problem, resulting behavior, and verification in the pull request, with any remaining limits stated plainly. Do not bump the version during ordinary development; release version rules are in [engineering](docs/engineering.md#79-release-and-images).
+Keep a change independently reviewable and reversible. Commit only owned files; include lockfile changes when dependencies change. Explain the concrete problem, resulting behavior, and verification in the pull request, with any remaining limits stated plainly. Follow the [development and release identity rules](docs/engineering.md#79-release-and-images) for version changes.

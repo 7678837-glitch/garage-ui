@@ -113,7 +113,7 @@ Persist and back up `/data` in containers, or `DATA_DIR` when running the binary
 - [Delivery status and roadmap](docs/roadmap.md): implemented areas, verification limits, and deferred work.
 - [Verification evidence](docs/README.md#verification-evidence): dated reports, source identities, limits, and reproduction commands.
 
-Garage UI is under active development. GitHub Actions are disabled during development; verification reports apply to their recorded source revisions and artifacts.
+Garage UI is under active development. The CI workflow remains disabled during development; verification reports apply to their recorded source revisions and artifacts.
 
 ## License
 
