@@ -27,20 +27,46 @@ Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleur
 - **See what needs attention:** check cluster health and capacity, manage nodes and layout, inspect workers and block errors, and run repair tasks.
 - **Keep daily work comfortable:** use light or dark mode, English or Simplified Chinese, and layouts that adapt to desktop and narrow screens.
 
-Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. See the [official Garage support assessment](docs/garage-support.md) for the stable API match, UI gaps, vendor limits, and verification boundary. Versions older than v2.3.0 cannot perform writes through the UI. Build from source for development. Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts; an unpublished draft does not provide public downloads.
+Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. See the [official Garage support assessment](docs/garage-support.md) for the stable API match, UI gaps, vendor limits, and verification boundary. Versions older than v2.3.0 cannot perform writes through the UI.
 
-## Build and run
+## Install
 
-Both Compose paths below build the UI from source. The first build downloads pinned toolchains and dependencies, so allow time for it to finish. Start with the current development branch:
+The image `ghcr.io/xjoker/garage-ui` is published for `linux/amd64` and `linux/arm64`. Linux binaries for both architectures are attached to each [GitHub release](https://github.com/xjoker/garage-ui/releases). Both need a running Garage v2.3.0 or v2.4.1 cluster, its Admin API token, and its S3 endpoint and region. All endpoint addresses must be reachable from the UI; inside a container, `127.0.0.1` refers to the container itself.
+
+### Run the published image
 
 ```sh
-git clone --branch dev https://github.com/xjoker/garage-ui.git
-cd garage-ui
+docker run -d --name garage-ui --read-only --tmpfs /tmp \
+  -p 127.0.0.1:3909:3909 -v garage-ui-data:/data \
+  -e GARAGE_ADMIN_URL=http://garage.example:3903 \
+  -e GARAGE_ADMIN_TOKEN=replace-with-your-admin-token \
+  -e S3_ENDPOINT_URL=http://garage.example:3900 \
+  -e S3_REGION=garage \
+  -e COOKIE_SECURE=false \
+  ghcr.io/xjoker/garage-ui:latest
 ```
 
-### Connect to your existing Garage
+Replace the four Garage values with your cluster's. Use a version tag such as `ghcr.io/xjoker/garage-ui:20261015.1` to pin a release. Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. `COOKIE_SECURE=false` is for this local HTTP address; use HTTPS and the default secure cookies when serving the UI remotely. To keep the token out of your shell history, use Compose with an `.env` file as shown below.
 
-You need Docker with buildx, a running Garage v2.3.0 or v2.4.1 cluster, its Admin API token, and its S3 endpoint and region. All endpoint addresses must be reachable from the UI container; `127.0.0.1` inside that container refers to the container itself.
+### Download the binary
+
+Download the binary for your architecture together with `SHA256SUMS` from the release page, then verify it and make it executable:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+chmod +x garage-ui-linux-amd64
+```
+
+On macOS, use `shasum -a 256 --check --ignore-missing SHA256SUMS`. Set the Garage connection variables from the table below in the environment, plus `COOKIE_SECURE=false` for local HTTP, and run `./garage-ui-linux-amd64`. It listens on `127.0.0.1:3909` by default. Checksums verify file integrity; the binaries are unsigned.
+
+### Connect to your existing Garage with Compose
+
+The Compose files are in this repository, so clone it first:
+
+```sh
+git clone https://github.com/xjoker/garage-ui.git
+cd garage-ui
+```
 
 Create a private local configuration file:
 
@@ -58,11 +84,11 @@ Edit `.env` and fill all four settings with your cluster's actual values before 
 | `S3_ENDPOINT_URL` | Garage S3 API URL, usually on port 3900 |
 | `S3_REGION` | Region configured in Garage |
 
-From the repository root, start the [existing-cluster Compose service](deploy/compose.external.yaml):
+From the repository root, start the [existing-cluster Compose service](deploy/compose.external.yaml). It pulls the published image:
 
 ```sh
 COOKIE_SECURE=false docker compose --env-file .env \
-  -f deploy/compose.external.yaml up -d --build
+  -f deploy/compose.external.yaml up -d
 ```
 
 Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. `COOKIE_SECURE=false` is for this local HTTP address; use HTTPS and the default secure cookies when serving the UI remotely.
@@ -74,28 +100,23 @@ For file-backed secrets, private certificates, reverse proxies, and browser-reac
 The [Compose example](deploy/compose.yaml) runs the UI alongside a separate single-node Garage v2.4.1 instance. It is for local evaluation; it stores data in Docker volumes.
 
 ```sh
-docker compose -f deploy/compose.yaml up -d --build
+docker compose -f deploy/compose.yaml up -d
 ```
 
 Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. Garage initializes its single-node layout automatically, so you can create a bucket and upload files after setup. See the [operator guide](docs/wiki/Home.md) for troubleshooting.
 
-### Run the binary directly
+### Build from source
 
-Install the pinned Rust toolchain and Bun version, then build from the repository root:
+Compose runs `ghcr.io/xjoker/garage-ui:${GARAGE_UI_VERSION}` (default: the current release; set `GARAGE_UI_VERSION` to pin another). Add `--build` to either `docker compose ... up -d` command above to build the image from your checkout instead; it is tagged with the same name locally and never pushed. Building needs Docker with buildx, and the first build downloads pinned toolchains and dependencies, so allow time for it to finish.
+
+To build the binary, install the pinned Rust toolchain and Bun version, then run from the repository root:
 
 ```sh
 scripts/build.sh
-```
-
-Set the Garage connection variables in `.env`, plus `COOKIE_SECURE=false` for local HTTP, and run:
-
-```sh
 ./target/release/garage-ui
 ```
 
-The binary listens on `127.0.0.1:3909` by default. Toolchain details and development checks are in [Contributing](CONTRIBUTING.md).
-
-The production build embeds `web/dist` in that binary. The runtime uses one image, process, and port; Bun is only needed while building. There is no separate frontend service, browser CDN, or Node.js runtime to configure.
+Toolchain details and development checks are in [Contributing](CONTRIBUTING.md). The production build embeds `web/dist` in that binary. The runtime uses one image, process, and port; Bun is only needed while building. There is no separate frontend service, browser CDN, or Node.js runtime to configure.
 
 To build and load local Linux images separately, run `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64`. With no architecture argument, it builds both. Default tags are `garage-ui:<VERSION>-local-amd64` and `garage-ui:<VERSION>-local-arm64`; an explicit `BUILD_VERSION` produces `garage-ui:<BUILD_VERSION>-<architecture>`. See the [stable, development, and local version policy](docs/engineering.md#79-release-and-images). The script does not publish images.
 
