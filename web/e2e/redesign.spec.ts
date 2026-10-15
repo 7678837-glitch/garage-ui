@@ -151,6 +151,7 @@ for (const width of [1280, 360]) {
           expect(await rows.allTextContents()).toEqual(firstPage);
           await next.click();
           await expect(page.getByText("Page 2", { exact: true })).toBeVisible();
+          await openDisclosure(page.getByRole("region", { name: "Audit", exact: true }).locator("summary").filter({ hasText: /^Filters$/ }));
           const filteredResponse = page.waitForResponse((response) => {
             const url = new URL(response.url());
             return response.request().method() === "GET" && url.pathname === "/api/audit" && url.searchParams.get("offset") === "0" && url.searchParams.get("user") === administrator.username;
