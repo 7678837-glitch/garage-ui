@@ -684,6 +684,8 @@ function checkedBox(name: string): boolean {
   return screen.getByLabelText(name, { selector: "button" }).getAttribute("aria-checked") === "true";
 }
 
+// This test toggles every scope switch in one render. It takes about 4 s alone
+// and often ran past the 5 s default during a full parallel run.
 test("scope_groups_cover_every_v24_admin_endpoint", async () => {
   const names = operationIds(readFileSync("../openapi/garage-admin-v2.json", "utf8"));
   const excluded = new Set(["CheckDomain", "Health"]);
@@ -798,7 +800,7 @@ test("scope_groups_cover_every_v24_admin_endpoint", async () => {
     name: "reader",
     scope: ["CreateAdminToken", "GetClusterStatus", "ListBuckets"],
   });
-});
+}, 20_000);
 
 test("shows the API code and requests the admin token list again from Retry", async () => {
   let listCalls = 0;

@@ -53,7 +53,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test -p garage-ui slash_only_endpoint_is_unset
 ```
 
-Replace `slash_only_endpoint_is_unset` with the affected test's name. `cargo test --workspace` is the full Rust suite. When parallel work needs separate build artifacts, set `CARGO_TARGET_DIR` to a directory owned by your checkout; this does not isolate database state or service ports.
+Replace `slash_only_endpoint_is_unset` with the affected test's name. `cargo test --workspace` is the default Rust suite. It needs Docker for the S3 client test, which starts its own container. The CORS preflight test also needs the `garage-wave1-v241` fixture described below, so it is ignored by default; with the fixture running, use `cargo test --workspace -- --include-ignored` for the full suite. When parallel work needs separate build artifacts, set `CARGO_TARGET_DIR` to a directory owned by your checkout; this does not isolate database state or service ports.
 
 For an OpenAPI update, regenerate and inspect the generated diff:
 

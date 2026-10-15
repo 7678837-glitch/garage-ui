@@ -277,6 +277,7 @@ async fn browser_preflight(app: crate::state::App, token: String, slot: &Mutex<O
 }
 
 #[tokio::test]
+#[ignore = "needs the garage-wave1-v241 Docker fixture (see CONTRIBUTING.md); run with --include-ignored"]
 async fn browser_preflight_matches_the_saved_cors_rule() {
     let token = admin_token();
     let dir = crate::util::temp_dir();
