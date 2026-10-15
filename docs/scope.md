@@ -4,7 +4,7 @@
 
 ### 1.1 Goals
 
-This project is a self-hosted web admin UI for Garage (an S3-compatible distributed object store). One Rust binary embeds the frontend single-page application. It is for cluster administrators and read-only operators, and it provides day-to-day management of the cluster, the layout, buckets, keys, and objects.
+This project is a self-hosted web admin UI for Garage (an S3-compatible distributed object store). One Rust binary embeds the frontend single-page application. It is for cluster administrators, read-only operators, and tenant accounts that reach only the buckets of one bound Garage key (3.20 of [security.md](security.md)), and it provides day-to-day management of the cluster, the layout, buckets, keys, and objects.
 
 Delivery requirements (acceptance targets, not a current verification receipt):
 
@@ -37,7 +37,7 @@ The minimum version is the first version that can be delivered outside the proje
 
 | Module | Scope |
 |---|---|
-| Account | Setup wizard, log in and log out, change password. Two roles, administrator and read-only, plus download and share permission bits that can be granted to a read-only user (3.1, 3.4, 3.5, 3.19). |
+| Account | Setup wizard, log in and log out, change password. Two roles, administrator and read-only, plus download and share permission bits that can be granted to a read-only user, and tenant accounts bound to a Garage key (3.1, 3.4, 3.5, 3.19, 3.20). |
 | Security baseline | Every P0 in [security.md](security.md): authentication by default, secrets are not leaked, examples contain no secrets, the browser does not hold a Garage token, CSRF, rate limiting, an endpoint allowlist proxy, security headers, a request-body limit, and `no-store` on objects. |
 | Cluster | Health, status, and cluster statistics (5.9, and 5.10 without the metrics panel). |
 | Buckets | Paginated list, create, delete, aliases, quotas, and grant or revoke permissions (5.1, 5.18, 5.19). |

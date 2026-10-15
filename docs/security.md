@@ -153,32 +153,50 @@ Acceptance: Table-driven tests for a missing configuration and for an illegal co
 
 D and S are independent permissions added on top of V. Both default to off. Granting S requires that the user also has D, because a share link also takes the content out of the admin UI. The UI and the backend both enforce that constraint. "—" means the operation is unavailable, and the UI does not show an entry for it. The backend authorizes from this table and from no other rule.
 
-| Operation | A | V | V+D | V+D+S |
-|---|---|---|---|---|
-| View cluster health, status, nodes, layout, and history | ✔ | ✔ | ✔ | ✔ |
-| View cluster statistics and node statistics | ✔ | ✔ | ✔ | ✔ |
-| View the Prometheus metrics panel (summary metrics, with no credentials) | ✔ | ✔ | ✔ | ✔ |
-| Change the layout, connect nodes, skip dead nodes | ✔ | — | — | — |
-| View the bucket list and bucket detail (aliases, quotas, website, CORS, lifecycle) | ✔ | ✔ | ✔ | ✔ |
-| Create and delete buckets, and change aliases, quotas, website, CORS, and lifecycle | ✔ | — | — | — |
-| View the keys and permissions on a bucket (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
-| Grant and revoke bucket permissions | ✔ | — | — | — |
-| View the key list and key detail (the secret is not included) | ✔ | ✔ | ✔ | ✔ |
-| View the S3 secret | ✔ (a second confirmation, and an audit record) | — | — | — |
-| Create, import, change, and delete keys | ✔ | — | — | — |
-| Browse the object list, metadata, and search | ✔ | ✔ | ✔ | ✔ |
-| Preview and download an object, download a ZIP, and view thumbnails | ✔ | — | ✔ | ✔ |
-| Upload and delete objects, and clean up incomplete uploads | ✔ | — | — | — |
-| Generate a share link | ✔ | — | — | ✔ |
-| `InspectObject` diagnostics | ✔ | — | — | — |
-| Workers, repair, block errors, and metadata snapshots (view) | ✔ | — | — | — |
-| Worker variables, repair, retry, purge blocks, and snapshots (run) | ✔ | — | — | — |
-| Admin tokens (view and manage) | ✔ | — | — | — |
-| Audit log (view and export) | ✔ | — | — | — |
-| User management | ✔ | — | — | — |
-| Change your own password, and the theme | ✔ | ✔ | ✔ | ✔ |
+T is a tenant account (3.20): a `viewer` bound to one Garage access key. Its D and S bits keep the meaning above. In the T column, R and W mean that the bound key holds Garage's `read` or `write` permission on that bucket. Garage enforces R and W on the S3 request, because every S3 request of a tenant is signed with its bound key. "Granted" means the buckets on which the bound key holds any permission. A tenant reaches no other bucket.
+
+| Operation | A | V | V+D | V+D+S | T |
+|---|---|---|---|---|---|
+| View cluster health, status, nodes, layout, and history | ✔ | ✔ | ✔ | ✔ | — |
+| View cluster statistics and node statistics | ✔ | ✔ | ✔ | ✔ | — |
+| View the Prometheus metrics panel (summary metrics, with no credentials) | ✔ | ✔ | ✔ | ✔ | — |
+| Change the layout, connect nodes, skip dead nodes | ✔ | — | — | — | — |
+| View the bucket list and bucket detail (aliases, quotas, website, CORS, lifecycle) | ✔ | ✔ | ✔ | ✔ | Granted (no key list) |
+| Create and delete buckets, and change aliases, quotas, website, CORS, and lifecycle | ✔ | — | — | — | — |
+| View the keys and permissions on a bucket (the secret is not included) | ✔ | ✔ | ✔ | ✔ | — |
+| Grant and revoke bucket permissions | ✔ | — | — | — | — |
+| View the key list and key detail (the secret is not included) | ✔ | ✔ | ✔ | ✔ | — |
+| View the S3 secret | ✔ (a second confirmation, and an audit record) | — | — | — | — |
+| Create, import, change, and delete keys | ✔ | — | — | — | — |
+| Browse the object list, metadata, and search | ✔ | ✔ | ✔ | ✔ | R |
+| Preview and download an object, download a ZIP, and view thumbnails | ✔ | — | ✔ | ✔ | R + D |
+| Upload and delete objects | ✔ | — | — | — | W |
+| Clean up incomplete uploads | ✔ | — | — | — | — |
+| Generate a share link | ✔ | — | — | ✔ | R + D + S |
+| `InspectObject` diagnostics | ✔ | — | — | — | — |
+| Workers, repair, block errors, and metadata snapshots (view) | ✔ | — | — | — | — |
+| Worker variables, repair, retry, purge blocks, and snapshots (run) | ✔ | — | — | — | — |
+| Admin tokens (view and manage) | ✔ | — | — | — | — |
+| Audit log (view and export) | ✔ | — | — | — | — |
+| User management | ✔ | — | — | — | — |
+| Change your own password, and the theme | ✔ | ✔ | ✔ | ✔ | ✔ |
 
 - Operations pages (Workers, block errors and block information, metadata snapshots, and repair) are not open to a read-only role for viewing. Only an administrator can use them. These pages are internal diagnostic information. Block information includes the bucket ID, the object key, and the internal version ID. Block errors show disk and data-corruption detail. Worker variables and errors include internal tuning parameters and node paths. A read-only user has no follow-up action they can take after seeing that information. The health information a read-only role needs is already on the cluster health, status, and statistics pages.
 - Data model. A user record contains a role (`admin` or `viewer`) and a permission set (two boolean bits, `download` and `share`, default false). For an admin, the two bits mean nothing and are ignored. On save, check that if `share` is true, then `download` must be true. The session does not cache permissions. Each request reads them live from the user store, as 3.4 says. Granting or revoking a permission writes an audit record.
 
-Acceptance: A table-driven test covers every row of this table, across all four columns. A request from V for object preview, download, a thumbnail, or a ZIP token returns 403. After D is granted, those requests succeed. A save that grants S and does not grant D returns 400. After D is revoked, a ZIP token that this user has already exchanged and has not yet used becomes invalid. A request from V to any operations API returns 403.
+Acceptance: A table-driven test covers every row of this table, across all five columns. A request from V for object preview, download, a thumbnail, or a ZIP token returns 403. After D is granted, those requests succeed. A save that grants S and does not grant D returns 400. After D is revoked, a ZIP token that this user has already exchanged and has not yet used becomes invalid. A request from V to any operations API returns 403.
+
+## 3.20 Tenant accounts
+
+A tenant account lets a business team or tenant use the admin UI for its own buckets only. garage-ui does not keep a second permission model. Garage's own key permissions (`read`, `write`, `owner` per bucket) decide what a tenant reaches.
+
+- Binding. A tenant account is a `viewer` whose user record holds one bound Garage access key ID. An administrator cannot be bound. A `viewer` without a bound key keeps the V columns of 3.19 and sees every bucket. Binding, changing, or removing the bound key writes an audit record and deletes every session of that user (3.12).
+- Visible buckets. The bucket list and bucket detail show only the buckets on which the bound key holds at least one of `read`, `write`, or `owner`, read from Garage's `GetKeyInfo`. They are read live on each request and are not cached, so a grant or revoke in Garage takes effect on the next request. Bucket detail for a tenant omits the list of keys on the bucket.
+- Other buckets. For a bucket outside that set, every bucket-scoped API (detail, browse, search, preview, download, thumbnail, ZIP, upload, delete, share) returns 404 `not_found`, the same response as a bucket that does not exist. The check runs before any S3 request or bucket-scoped Admin API request for that bucket.
+- S3 credential. Every S3 request of a tenant, presigned share links included, is signed with the bound key. A tenant request never uses the project key, a bucket key (4.2 of [correctness.md](correctness.md)), or their shared credential cache. A 403 from Garage is returned as 403 `garage_denied` and is not retried with another credential.
+- Missing key. When the bound key no longer exists in Garage, the bucket list and every bucket-scoped API return 403 `tenant_key_unavailable`.
+- Caches. A server-side content cache (thumbnails) serves a tenant only after an S3 request signed with the bound key has succeeded for that object.
+- `owner`. Garage's `owner` permission does not open bucket settings (aliases, quotas, website, CORS, lifecycle, deletion) in the admin UI. Those stay administrator-only.
+- Traceability. Garage logs show the tenant's key on S3 requests. Admin API requests made for a tenant (`GetKeyInfo`) use the admin token. The audit log of 3.13 records the username as for every other account.
+
+Acceptance: A tenant bound to a key with permissions on two of three buckets lists exactly those two. Every bucket-scoped API on the third bucket returns 404, and the fake S3 upstream receives no request for it. S3 requests of a tenant carry the bound key's access key ID, and the project key never appears. A tenant whose key has only `read` gets 403 `garage_denied` on upload, with a single upstream attempt. After the key is deleted in Garage, the tenant's next request returns 403 `tenant_key_unavailable`. A tenant gets 403 on every cluster, key, operations, admin-token, audit, user-management, and raw Admin API proxy route. Changing the bound key ends that user's other sessions.
