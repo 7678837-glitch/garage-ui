@@ -28,3 +28,7 @@ The server reads filtered records in batches of 128 and streams CSV frames of at
 If **Export failed** appears, the preflight or download initiation failed; verify your session and filters, then retry. Failures during the subsequent `GET` download are managed by the browser: inspect its download status, because the page cannot report those failures. Preserve the UI database when upgrading if you need to retain the audit history.
 
 Formula-leading text cells, including `=`, `+`, `-`, `@` and their full-width forms after leading whitespace/control characters, receive a leading single quote in the CSV. Leading tab, carriage-return, or newline cells are escaped too. Stored audit text and the JSON list remain unchanged. For example, a stored target `=1+1` exports as `'=1+1`. Import CSV columns as text when inspecting untrusted values; spreadsheet applications can alter quoting when saving or reopening the file, so this export does not guarantee safety after those transformations.
+
+## Automatic retention
+
+The server deletes audit records older than the configured retention period at startup and then every 86400 seconds. Set `AUDIT_RETENTION_DAYS` in the server environment or `.env` file and restart the server. The default is 90 days; values must be integers from 1 through the signed 64-bit maximum. Missing, malformed, zero, negative, or out-of-range values use 90 days. The audit UI has no retention control. See [Configuration](Configuration.md).

@@ -40,7 +40,7 @@ The minimum version includes the account items in 8.1, and user create and delet
 
 Acceptance: Each kind of event has one integration test that asserts an audit record. Records past the retention period are cleaned up on a schedule.
 
-The minimum version includes audit writes (login-related events are in 3.13; writes and viewing a secret are written to the audit table). The audit page, filters, export, and retention management are requirements beyond that minimum; see the [implemented audit behavior](wiki/Audit.md). The minimum version must still write the records into the table, and it must meet "after a failed login, the audit table has one record that includes the IP".
+The minimum version includes audit writes (login-related events are in 3.13; writes and viewing a secret are written to the audit table). The audit page, filters, export, and configurable automatic retention are requirements beyond that minimum; see the [implemented audit behavior](wiki/Audit.md). Retention is configured on the server, without a retention control in the audit UI. The minimum version must still write the records into the table, and it must meet "after a failed login, the audit table has one record that includes the IP".
 
 ## 5.23 Settings and About
 

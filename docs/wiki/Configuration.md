@@ -47,7 +47,10 @@ On Garage v2.3.0 and v2.4.1, explicitly set `S3_ENDPOINT_URL` and `S3_REGION`; t
 | Variable | Default | Meaning |
 |---|---|---|
 | `HOST` | `127.0.0.1` | IP address to bind; port is fixed at 3909. The container image sets `0.0.0.0` |
+| `GARAGE_HEADER_READ_TIMEOUT_SECS` | `10` | HTTP/1 request-header read timeout in seconds |
+| `GARAGE_IDLE_TIMEOUT_SECS` | `60` | Connection inactivity timeout in seconds; successful reads or writes reset it |
 | `DATA_DIR` | `./data` | Writable directory for `garage-ui.sqlite` and generated `session.key` |
+| `AUDIT_RETENTION_DAYS` | `90` | Automatic audit retention in days; accepts integers from 1 through the signed 64-bit maximum, otherwise uses 90 |
 | `BASE_PATH` | Empty | URL prefix, such as `/garage-ui`; affects routes, assets, and cookie path |
 | `COOKIE_SECURE` | `true` | Accepts `true` or `false`; keep `true` for HTTPS |
 | `SESSION_KEY_FILE` | Unset | Optional session signing key file, at least 32 bytes; otherwise the UI creates a persistent key in `DATA_DIR` |
@@ -60,6 +63,8 @@ On Garage v2.3.0 and v2.4.1, explicitly set `S3_ENDPOINT_URL` and `S3_REGION`; t
 Only trust proxy headers when direct access is restricted and your reverse proxy replaces incoming client-address headers. `BASE_PATH` must match the path served by that proxy. A provided session key must be preserved along with the UI database; changing the key prevents existing cookies from authenticating.
 
 Session and timeout durations accept positive seconds up to one year; invalid values fall back to defaults. Invalid upload-size and fan-out settings also fall back to defaults. Invalid `COOKIE_SECURE` values stop startup.
+
+Audit cleanup runs at startup and then every 86400 seconds, deleting records older than `AUDIT_RETENTION_DAYS`. Configure it here and restart the server; the audit UI has no retention setting. See [Audit](Audit.md).
 
 `WEBSITE_ROOT_DOMAIN` is read as an optional website-domain setting. `UPDATE_URL` is read, but the current update-check function performs no network check; it does not enable automatic upgrades.
 
