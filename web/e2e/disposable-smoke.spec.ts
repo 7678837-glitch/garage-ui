@@ -18,8 +18,8 @@ for (const width of [360, 1280]) {
     const filename = "browser-smoke.txt";
     const contents = `Real Garage browser transfer at ${width}px: ${alias}\n`;
     const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "garage_csrf")?.value;
-    expect(csrf).toBeTruthy();
-    const headers = { "x-csrf-token": csrf! };
+    if (!csrf) throw new Error("Authenticated browser session is missing the CSRF cookie");
+    const headers = { "x-csrf-token": csrf };
     let bucketId = "";
     let keyId = "";
     const failures: unknown[] = [];
@@ -66,8 +66,8 @@ for (const width of [360, 1280]) {
       const download = await downloadPromise;
       expect(download.suggestedFilename()).toBe(filename);
       const saved = await download.path();
-      expect(saved).not.toBeNull();
-      expect(await readFile(saved!, "utf8")).toBe(contents);
+      if (saved === null) throw new Error("Object download did not write a file");
+      expect(await readFile(saved, "utf8")).toBe(contents);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 
       await openNavigation(page);
@@ -78,8 +78,8 @@ for (const width of [360, 1280]) {
       const exported = await exportPromise;
       expect(exported.suggestedFilename()).toBe("audit.csv");
       const csvPath = await exported.path();
-      expect(csvPath).not.toBeNull();
-      const csv = await readFile(csvPath!, "utf8");
+      if (csvPath === null) throw new Error("Audit export did not write a file");
+      const csv = await readFile(csvPath, "utf8");
       expect(csv.split(/\r?\n/)[0]).toContain("username");
       expect(csv).toContain(administrator.username);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
