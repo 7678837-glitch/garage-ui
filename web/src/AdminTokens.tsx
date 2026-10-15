@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api/client";
 import { ConfirmDialog } from "./confirm";
+import { SecretDialog } from "./SecretDialog";
 import { ReadableInstantText, copy, fill, translate } from "./i18n";
 import { isGarageDown } from "./garageDown";
 
@@ -446,49 +447,6 @@ function createdSecret(value: unknown): string | null {
   return secret;
 }
 
-async function copySecret(secret: string): Promise<"copied" | "select"> {
-  const clipboard = navigator.clipboard;
-  if (!window.isSecureContext || typeof clipboard?.writeText !== "function") {
-    return "select";
-  }
-  try {
-    await clipboard.writeText(secret);
-    return "copied";
-  } catch {
-    return "select";
-  }
-}
-
-function SecretDialog({ secret, onClose, returnFocus }: { secret: string; onClose: () => void; returnFocus: HTMLButtonElement | null }) {
-  const copyRef = useRef<HTMLButtonElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Content maxWidth="480px" onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus(); }} onOpenAutoFocus={(event) => { event.preventDefault(); copyRef.current?.focus(); }}>
-        <Dialog.Title>{copy("ui.admin.token.secret")}</Dialog.Title>
-        <Dialog.Description>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</Dialog.Description>
-        <label className="ui-field">
-          <span>{copy("ui.secret")}</span>
-          <TextField.Root size="2" readOnly autoComplete="off" type={visible ? "text" : "password"} value={secret} />
-        </label>
-        <div className="ui-actions">
-          <Button size="2" variant="soft" color="gray" type="button" onClick={() => setVisible(true)}>{copy("ui.show.secret")}</Button>
-          <Button size="2" variant="soft" color="gray" type="button" ref={copyRef} onClick={() => {
-            void copySecret(secret).then((result) => {
-              if (result === "copied") { setFeedback(copy("ui.copied")); return; }
-              setVisible(true);
-              setFeedback(copy("ui.select.the.secret.and.copy.it"));
-            });
-          }}>{copy("ui.copy.secret")}</Button>
-          <Button size="2" variant="soft" color="gray" type="button" onClick={onClose}>{copy("ui.i.have.saved.it")}</Button>
-        </div>
-        {feedback ? <p role="status">{feedback}</p> : null}
-      </Dialog.Content>
-    </Dialog.Root>
-  );
-}
-
 function CreateTokenForm({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const client = useQueryClient();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -606,6 +564,9 @@ function CreateTokenForm({ open, onOpenChange }: { open: boolean; onOpenChange: 
       {reveal !== null ? (
         <SecretDialog
           secret={reveal}
+          title={copy("ui.admin.token.secret")}
+          label={copy("ui.secret")}
+          description={copy("ui.this.secret.is.shown.once.closing.this.dialog")}
           returnFocus={triggerRef.current}
           onClose={() => {
             setReveal(null);

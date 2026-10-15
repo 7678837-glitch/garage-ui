@@ -226,6 +226,7 @@ test("an admin creates a token, sees a full-admin scope warning, and the secret 
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   const field = (await screen.findByLabelText("Secret")) as HTMLInputElement;
   expect(field.type).toBe("password");
+  expect(screen.getByText("This secret is shown once. Closing this dialog removes it from the page.")).toBeTruthy();
   expect(document.body.textContent ?? "").not.toContain(CREATED_SECRET);
   const posted = calls.find((call) => call.method === "POST");
   expect(posted).toEqual({

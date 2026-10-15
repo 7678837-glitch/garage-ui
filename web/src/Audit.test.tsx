@@ -125,7 +125,10 @@ test("filtering the audit list by user Ada", async () => {
   });
   fireEvent.change(screen.getByLabelText("From"), { target: { value: "2023-11-14T22:13:20" } });
   fireEvent.change(screen.getByLabelText("To"), { target: { value: "2023-11-14T22:15:00" } });
-  fireEvent.change(screen.getByLabelText("Action"), { target: { value: "bucket-1" } });
+  const target = screen.getByLabelText("Target");
+  expect(target.getAttribute("aria-describedby")).toBe("audit-target-hint");
+  expect(screen.getByText("Exact target match, such as a bucket or key ID.").id).toBe("audit-target-hint");
+  fireEvent.change(target, { target: { value: "bucket-1" } });
   await waitFor(() => {
     expect(auditUrls(fetchMock, "list").at(-1)).toBe(
       "/api/audit?user=Ada&from=1700000000&to=1700000100&action=bucket-1&offset=0&limit=100",
@@ -139,28 +142,45 @@ test("filtering the audit list by user Ada", async () => {
   });
 });
 
-test("exporting audit downloads audit.csv", async () => {
-  const priorCreate = URL.createObjectURL;
-  const priorRevoke = URL.revokeObjectURL;
-  URL.createObjectURL = () => "blob:audit-csv";
-  URL.revokeObjectURL = () => undefined;
-  window.location.hash = "#audit";
-  const fetchMock = stubAdminAudit();
-  renderApp();
-  try {
-    fireEvent.click(await screen.findByRole("button", { name: "Export audit" }));
-    await waitFor(() => {
-      const link = document.querySelector('a[download="audit.csv"]');
-      expect(link?.getAttribute("download")).toBe("audit.csv");
-    });
-    const exportUrl = fetchMock.mock.calls
-      .map((call) => String(call[0]))
-      .find((url) => url.includes("/api/audit/export"));
-    expect(exportUrl).toBe("/api/audit/export");
-  } finally {
-    URL.createObjectURL = priorCreate;
-    URL.revokeObjectURL = priorRevoke;
-  }
+test("preflights audit export and streams the filtered CSV through a native download", async () => {
+  const response = new Response(null, { status: 200, headers: { "content-type": "text/csv" } });
+  const blob = vi.spyOn(response, "blob");
+  const downloads: { href: string | null; name: string; connected: boolean }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    downloads.push({ href: this.getAttribute("href"), name: this.download, connected: this.isConnected });
+  });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/audit/export")) return response;
+    return json({ items: [auditRow], hasMore: false });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderAudit();
+  await screen.findByText("login");
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "Ada" } });
+  fireEvent.change(screen.getByLabelText("Target"), { target: { value: "bucket-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
+  await waitFor(() => expect(downloads).toHaveLength(1));
+  expect(fetchMock).toHaveBeenCalledWith("/api/audit/export?user=Ada&action=bucket-1", {
+    method: "HEAD", credentials: "include",
+  });
+  expect(downloads).toEqual([{ href: "/api/audit/export?user=Ada&action=bucket-1", name: "audit.csv", connected: true }]);
+  expect(blob).not.toHaveBeenCalled();
+  expect(document.querySelector('a[download="audit.csv"]')).toBeNull();
+});
+
+test("shows an export failure without starting a native download when the preflight is rejected", async () => {
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/audit/export")) return new Response(null, { status: 403 });
+    return json({ items: [auditRow], hasMore: false });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderAudit();
+  await screen.findByText("login");
+  fireEvent.click(screen.getByRole("button", { name: "Export audit" }));
+  expect(await screen.findByText("Export failed")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledWith("/api/audit/export", { method: "HEAD", credentials: "include" });
+  expect(click).not.toHaveBeenCalled();
 });
 
 function json(body: unknown, status = 200) {
@@ -213,7 +233,7 @@ test("shows Loading audit and marks the audit section busy on the first load", a
   expect(screen.getByLabelText("User")).toBeTruthy();
   expect(screen.getByLabelText("From")).toBeTruthy();
   expect(screen.getByLabelText("To")).toBeTruthy();
-  expect(screen.getByLabelText("Action")).toBeTruthy();
+  expect(screen.getByLabelText("Target")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Export audit" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: /create/i })).toBeNull();
   release(json({ items: [auditRow], hasMore: false }));
@@ -244,7 +264,7 @@ test("says there are no audit events", async () => {
   expect(screen.getByLabelText("User")).toBeTruthy();
   expect(screen.getByLabelText("From")).toBeTruthy();
   expect(screen.getByLabelText("To")).toBeTruthy();
-  expect(screen.getByLabelText("Action")).toBeTruthy();
+  expect(screen.getByLabelText("Target")).toBeTruthy();
   expect(screen.queryByText("login")).toBeNull();
   expect(screen.queryByLabelText("Loading audit")).toBeNull();
   expect(screen.queryByText("Loading audit")).toBeNull();
@@ -344,7 +364,7 @@ test("pages audit with filters and resets the range when filters change", async 
   await waitFor(() => expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   await screen.findByText("page-100");
-  fireEvent.change(screen.getByLabelText("Action"), { target: { value: "login" } });
+  fireEvent.change(screen.getByLabelText("Target"), { target: { value: "login" } });
   await screen.findByText("page-0");
   expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
   expect(requests.at(-1)?.searchParams.get("user")).toBe("Ada");

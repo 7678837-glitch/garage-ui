@@ -9,21 +9,14 @@ import {
   type QueryCacheNotifyEvent,
   type QueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { api, advanceAuthGeneration, bindUnauthenticated, type AuthStatus } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { About, garageLine } from "./About";
-import { AdminTokens } from "./AdminTokens";
-import { Audit } from "./Audit";
-import { BlockErrors } from "./BlockErrors";
-import { Buckets } from "./Buckets";
-import { ClusterHealth } from "./ClusterHealth";
-import { ClusterNodes } from "./ClusterNodes";
 import type { CopyKey } from "./copy-en";
-import { LanguageChooser, phrase, useI18n, copy } from "./i18n";
-import { Keys } from "./Keys";
+import { LanguageChooser, phrase, useI18n, copy, fill } from "./i18n";
 import {
   Nav,
   bucketLocationFromHash,
@@ -37,8 +30,16 @@ import {
 } from "./Nav";
 import { ThemeChooser } from "./theme";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
-import { Users } from "./Users";
-import { Workers } from "./Workers";
+
+const AdminTokens = lazy(() => import("./AdminTokens").then((module) => ({ default: module.AdminTokens })));
+const Audit = lazy(() => import("./Audit").then((module) => ({ default: module.Audit })));
+const BlockErrors = lazy(() => import("./BlockErrors").then((module) => ({ default: module.BlockErrors })));
+const Buckets = lazy(() => import("./Buckets").then((module) => ({ default: module.Buckets })));
+const ClusterHealth = lazy(() => import("./ClusterHealth").then((module) => ({ default: module.ClusterHealth })));
+const ClusterNodes = lazy(() => import("./ClusterNodes").then((module) => ({ default: module.ClusterNodes })));
+const Keys = lazy(() => import("./Keys").then((module) => ({ default: module.Keys })));
+const Users = lazy(() => import("./Users").then((module) => ({ default: module.Users })));
+const Workers = lazy(() => import("./Workers").then((module) => ({ default: module.Workers })));
 
 const passwordBounds = "ui.password.must.be.10.to.72.characters";
 
@@ -455,6 +456,7 @@ function Home({ status }: { status: SessionStatus }) {
           <GarageBanner />
           {section === "overview" && status.garage_write_blocked === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</Callout.Text></Callout.Root> : null}
           {section === "overview" && status.tls_insecure === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.tls.certificate.verification.is.off")}</Callout.Text></Callout.Root> : null}
+          <Suspense key={section} fallback={<div className="ui-page" role="status" aria-busy="true">{fill(t("ui.loading.section"), { section: t(sectionCopyKey(section)) })}</div>}>
           {section === "overview" ? admin ? <ClusterHealth /> : (
             <section className="ui-page">
               <header className="ui-page-header"><h2>{t("nav.overview")}</h2></header>
@@ -523,6 +525,7 @@ function Home({ status }: { status: SessionStatus }) {
           <Users selfUsername={status.username} />
         ) : null}
         {section === "tokens" && admin ? <AdminTokens /> : null}
+          </Suspense>
         </main>
       </div>
     </div>

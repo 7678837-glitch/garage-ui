@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, captureAuthGeneration, noteUnauthenticated } from "./api/client";
 import { isGarageDown } from "./garageDown";
 import { ConfirmDialog } from "./confirm";
+import { SecretDialog } from "./SecretDialog";
 import { DetailTabs } from "./DetailTabs";
 import { detailAddressFromHash, hashForDetail, keyTabs, useLocationHash } from "./Nav";
 import { releaseHash, savePhase, saveStatus, setFormDirty } from "./unsaved";
@@ -308,19 +309,6 @@ async function loadPage(offset: number): Promise<KeyPage> {
   return parsePage(text ? (JSON.parse(text) as unknown) : undefined);
 }
 
-async function copySecret(secret: string): Promise<"copied" | "select"> {
-  const clipboard = navigator.clipboard;
-  if (!window.isSecureContext || typeof clipboard?.writeText !== "function") {
-    return "select";
-  }
-  try {
-    await clipboard.writeText(secret);
-    return "copied";
-  } catch {
-    return "select";
-  }
-}
-
 function CreateKeyForm({ open, onOpenChange, onSecret }: { open: boolean; onOpenChange: (open: boolean) => void; onSecret: (reveal: SecretReveal, trigger: HTMLButtonElement | null) => void }) {
   const client = useQueryClient();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -484,36 +472,6 @@ function CreateBucketSwitch({ id, allowed, onPendingChange }: { id: string; allo
       {change.isPending ? <p>{copy("ui.saving")}</p> : null}
       {error ? <p className="ui-alert">{error}</p> : null}
     </div>
-  );
-}
-
-function SecretDialog({ reveal, onClose, returnFocus }: { reveal: SecretReveal; onClose: () => void; returnFocus: HTMLButtonElement | null }) {
-  const copyRef = useRef<HTMLButtonElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Content maxWidth="480px" onCloseAutoFocus={(event) => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus(); }} onOpenAutoFocus={(event) => { event.preventDefault(); copyRef.current?.focus(); }}>
-        <Dialog.Title>{fill(copy("ui.secret.for"), { keyId: reveal.keyId })}</Dialog.Title>
-        <Dialog.Description>{copy("ui.this.secret.is.shown.once.closing.this.dialog")}</Dialog.Description>
-        <label className="ui-field">
-          <span>{copy("ui.secret.access.key")}</span>
-          <TextField.Root size="2" readOnly autoComplete="off" type={visible ? "text" : "password"} value={reveal.secret} />
-        </label>
-        <div className="ui-actions">
-          <Button size="2" variant="soft" color="gray" type="button" onClick={() => setVisible(true)}>{copy("ui.show.secret")}</Button>
-          <Button size="2" variant="soft" color="gray" type="button" ref={copyRef} onClick={() => {
-            void copySecret(reveal.secret).then((result) => {
-              if (result === "copied") { setFeedback(copy("ui.copied")); return; }
-              setVisible(true);
-              setFeedback(copy("ui.select.the.secret.and.copy.it"));
-            });
-          }}>{copy("ui.copy.secret")}</Button>
-          <Button size="2" variant="soft" color="gray" type="button" onClick={onClose}>{copy("ui.i.have.saved.it")}</Button>
-        </div>
-        {feedback ? <p role="status">{feedback}</p> : null}
-      </Dialog.Content>
-    </Dialog.Root>
   );
 }
 
@@ -860,7 +818,10 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
       ) : null}
       {reveal !== null ? (
         <SecretDialog
-          reveal={reveal}
+          secret={reveal.secret}
+          title={fill(copy("ui.secret.for"), { keyId: reveal.keyId })}
+          label={copy("ui.secret.access.key")}
+          description={copy("ui.closing.this.dialog.removes.the.secret")}
           returnFocus={secretTrigger.current}
           onClose={() => {
             setReveal(null);

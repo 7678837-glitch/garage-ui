@@ -792,6 +792,7 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   fireEvent.click(trigger);
   const field = (await screen.findByLabelText("Secret access key")) as HTMLInputElement;
   expect(field.value).toBe("VIEWSECRET");
+  expect(screen.getByText("Closing this dialog removes the secret from the page. You can view it again.")).toBeTruthy();
   expect(screen.queryByText("NOTINLIST")).toBeNull();
   expect(pageHolds("LISTSECRET")).toBe(false);
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

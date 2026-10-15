@@ -48,10 +48,10 @@ type AuditFilters = {
 };
 
 const FILTER_FIELDS = [
-  ["user", "User"],
-  ["from", "From"],
-  ["to", "To"],
-  ["action", "Action"],
+  ["user", "ui.user"],
+  ["from", "ui.from"],
+  ["to", "ui.to"],
+  ["action", "ui.audit.target"],
 ] as const;
 
 function utcSeconds(value: string): string {
@@ -112,20 +112,21 @@ async function loadAudit(filters: AuditFilters, offset: number): Promise<AuditPa
 }
 
 async function exportAudit(filters: AuditFilters): Promise<void> {
-  const response = await fetch(`/api/audit/export${auditSearch(filters)}`, {
+  const url = `/api/audit/export${auditSearch(filters)}`;
+  const response = await fetch(url, {
+    method: "HEAD",
     credentials: "include",
   });
   if (!response.ok) {
     throw new Error(fill(copy("ui.request.failed"), { status: response.status }));
   }
-  const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
   link.download = "audit.csv";
   link.hidden = true;
   document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
 }
 
 export function Audit() {
@@ -158,9 +159,11 @@ export function Audit() {
       <p className="ui-muted">{translate("Dates are in UTC.")}</p>
       <div className="ui-toolbar">
         {FILTER_FIELDS.map(([key, label]) => (
-          <label className="ui-field" key={key}>
-            {translate(label)}
+          <div className="ui-field" key={key}>
+            <label htmlFor={`audit-filter-${key}`}>{copy(label)}</label>
             <TextField.Root size="2"
+              id={`audit-filter-${key}`}
+              aria-describedby={key === "action" ? "audit-target-hint" : undefined}
               type={key === "from" || key === "to" ? "datetime-local" : "text"}
               step={key === "from" || key === "to" ? 1 : undefined}
               aria-invalid={invalidInputs[key] || undefined}
@@ -174,7 +177,8 @@ export function Audit() {
                 setOffset(0);
               }}
             />
-          </label>
+            {key === "action" ? <span id="audit-target-hint" className="ui-muted">{copy("ui.audit.target.hint")}</span> : null}
+          </div>
         ))}
       <Button size="2" variant="soft" color="gray"
         type="button"

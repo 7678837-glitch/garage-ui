@@ -33,7 +33,8 @@ async function findSectionLink(name: string) {
 }
 
 async function chooseSection(name: string) {
-  fireEvent.click(await findSectionLink(name));
+  const link = await findSectionLink(name);
+  await act(async () => { fireEvent.click(link); });
 }
 
 function renderApp() {
