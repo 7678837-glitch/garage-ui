@@ -271,19 +271,14 @@ test("shows the Garage banner instead of the cluster status message", async () =
   expect(screen.queryByRole("button", { name: "Retry nodes" })).toBeNull();
 });
 
-test("does not show cluster nodes to a viewer or request them", async () => {
+test("shows the node list to a viewer without maintenance or connect controls", async () => {
   const fetchMock = installFetch("viewer", () => textResponse(listed));
   renderApp();
-  const account = await screen.findByRole("button", { name: "Bea · viewer" });
-  fireEvent.click(account);
-  expect(await screen.findByText("ok · test")).toBeTruthy();
-  fireEvent.click(account);
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
-  expect(screen.queryByText("node-up")).toBeNull();
-  expect(screen.queryByText("alpha")).toBeNull();
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
-    false,
-  );
+  expect(await screen.findByText("node-up")).toBeTruthy();
+  expect(screen.queryByText("Maintenance")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Connect node" })).toBeNull();
+  expect(screen.queryByLabelText("Node address")).toBeNull();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]) === "/api/cluster/status")).toBe(true);
 });
 
 test("does not send a connect request when the address is blank", async () => {

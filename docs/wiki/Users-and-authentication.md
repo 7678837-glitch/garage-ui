@@ -15,7 +15,7 @@ Sessions normally expire after 24 hours absolute age or two hours idle time. A l
 | Account | Can do |
 |---|---|
 | Administrator | Manage buckets, keys, objects, users, tokens, audit, layout, and maintenance; read and share content |
-| Viewer | Read overview, bucket/key information, and object listings/metadata; change own password |
+| Viewer | Read overview, cluster health, nodes and layout history (read-only), bucket/key information, and object listings/metadata; change own password |
 | Viewer with Download | Also read previews/thumbnails and download objects/ZIPs |
 | Viewer with Download and Share | Also issue share links when the public S3 address is configured |
 

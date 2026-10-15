@@ -724,7 +724,7 @@ export function OperationNodeSelection({ route, all = false }: {
   );
 }
 
-export function ClusterNodes() {
+export function ClusterNodes({ canWrite = false }: { canWrite?: boolean }) {
   const client = useQueryClient();
   const [hash, assignHash] = useLocationHash();
   const goHash = (next: string) => {
@@ -797,6 +797,11 @@ export function ClusterNodes() {
   const [layoutPreview, setLayoutPreview] = useState<LayoutPreview>({ phase: "idle" });
   const [layoutHistory, setLayoutHistory] = useState<LayoutHistory>({ phase: "idle" });
   useEffect(() => {
+    if (canWrite) return;
+    setLayoutHistory({ phase: "loading" });
+    loadLayoutHistory().then(setLayoutHistory).catch((error: unknown) => setLayoutHistory({ phase: "failed", message: error instanceof Error ? error.message : historyFailedMessage() }));
+  }, [canWrite]);
+  useEffect(() => {
     const sync = () => setQuery(readNodeQuery());
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
@@ -831,6 +836,35 @@ export function ClusterNodes() {
     nodeDetail === null || !nodes.isSuccess
       ? null
       : (rows.find((node) => node.id === nodeDetail.id) ?? null);
+  const historyPanel = (
+    <>
+        {layoutPreview.phase === "loading" || layoutHistory.phase === "loading" ? <p role="status">{copy("ui.working")}</p> : null}
+        {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
+        {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
+        {layoutHistory.phase === "ready" ? (
+          <>
+            <ul>
+              {layoutHistory.versions.map((row, index) => (
+                <li key={index}>
+                  <p>{row.version}</p>
+                  <p>{row.status}</p>
+                </li>
+              ))}
+            </ul>
+            <ul>
+              {layoutHistory.trackers.map((row) => (
+                <li key={row.id}>
+                  <p>{row.id}</p>
+                  <p>{row.ack}</p>
+                  <p>{row.sync}</p>
+                  <p>{row.syncAck}</p>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+    </>
+  );
   return (
     <section className="ui-page min-w-0" aria-label={copy("ui.cluster.nodes")}>
       {nodeDetail === null ? <header className="ui-page-header">
@@ -847,14 +881,14 @@ export function ClusterNodes() {
           label={fill(copy("ui.node"), { id: nodeDetail.id })}
           title={openedNode?.hostname ?? copy("ui.nodes")}
           identity={<ResourceIdentity id={nodeDetail.id} />}
-          tabs={nodeTabs()}
+          tabs={canWrite ? nodeTabs() : nodeTabs().filter((tab) => tab.id !== "maintenance")}
           selected={nodeDetail.tab}
           hrefFor={(tab) => hashForDetail({ resource: "node", id: nodeDetail.id, tab })}
           onSelect={(tab) => {
             goHash(hashForDetail({ resource: "node", id: nodeDetail.id, tab }));
           }}
         >
-          <div className="ui-actions"><Button asChild size="2" variant="soft" color="gray"><a href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a></Button><Button asChild size="2" variant="soft" color="gray"><a href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></Button></div>
+          {canWrite ? <div className="ui-actions"><Button asChild size="2" variant="soft" color="gray"><a href={`#workers/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.workers")}</a></Button><Button asChild size="2" variant="soft" color="gray"><a href={`#block-errors/${encodeURIComponent(nodeDetail.id)}`}>{copy("nav.blockErrors")}</a></Button></div> : null}
           {openedNode && nodeDetail.tab === "information" ? (
             <>
               <dl className="ui-panel grid gap-4 sm:grid-cols-2">
@@ -863,15 +897,15 @@ export function ClusterNodes() {
                 <div><dt>{copy("ui.status")}</dt><dd><span className="ui-status">{openedNode.isUp ? copy("ui.up") : copy("ui.down")}</span>{openedNode.draining ? <p>{copy("ui.draining")}</p> : null}</dd></div>
                 <div><dt>{copy("ui.capacity")}</dt><dd>{openedNode.capacity !== null ? <CompactCapacityText digits={openedNode.capacity} /> : "—"}</dd></div>
               </dl>
-              <Button size="2" variant="soft" color="gray"
+              {canWrite ? <Button size="2" variant="soft" color="gray"
                 disabled={snapshot.isPending}
                 type="button"
                 onClick={() => {
                   if (!snapshot.isPending) snapshot.mutate(openedNode.id);
                 }}
               >
-                {copy("ui.snapshot.metadata")}</Button>
-              {snapshot.isSuccess && snapshot.variables === openedNode.id ? (
+                {copy("ui.snapshot.metadata")}</Button> : null}
+              {canWrite && snapshot.isSuccess && snapshot.variables === openedNode.id ? (
                 <p>{copy("ui.metadata.snapshot.started")}</p>
               ) : null}
             </>
@@ -879,7 +913,7 @@ export function ClusterNodes() {
           {openedNode && nodeDetail.tab === "statistics" && openedNode.capacity !== null ? (
             <dl><dt>{copy("ui.capacity")}</dt><dd><CompactCapacityText digits={openedNode.capacity} /></dd></dl>
           ) : null}
-          {openedNode && nodeDetail.tab === "maintenance" ? (
+          {canWrite && openedNode && nodeDetail.tab === "maintenance" ? (
             <div className="ui-panel ui-page">
             {openedNode.capacity !== null ? <CapacityField
               pending={layoutWriting}
@@ -950,7 +984,7 @@ export function ClusterNodes() {
       {nodeDetail === null && nodes.isSuccess && rows.length === 0 ? (
         <p>{copy("ui.there.are.no.nodes.connect.the.first.node")}</p>
       ) : null}
-      {nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>
+      {canWrite && nodeDetail === null ? <details className="ui-disclosure"><summary>{copy("tab.maintenance")}</summary>
       <div className="grid gap-2">
         <div className="ui-actions">
           <Button size="2" variant="soft" color="gray"
@@ -1028,31 +1062,7 @@ export function ClusterNodes() {
           >
             {copy("ui.skip.dead.nodes")}</Button>
         </div>
-        {layoutPreview.phase === "loading" || layoutHistory.phase === "loading" ? <p role="status">{copy("ui.working")}</p> : null}
-        {layoutPreview.phase === "failed" ? <p>{layoutPreview.message}</p> : null}
-        {layoutHistory.phase === "failed" ? <p>{layoutHistory.message}</p> : null}
-        {layoutHistory.phase === "ready" ? (
-          <>
-            <ul>
-              {layoutHistory.versions.map((row, index) => (
-                <li key={index}>
-                  <p>{row.version}</p>
-                  <p>{row.status}</p>
-                </li>
-              ))}
-            </ul>
-            <ul>
-              {layoutHistory.trackers.map((row) => (
-                <li key={row.id}>
-                  <p>{row.id}</p>
-                  <p>{row.ack}</p>
-                  <p>{row.sync}</p>
-                  <p>{row.syncAck}</p>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
+        {historyPanel}
       </div>
       <form className="ui-form" onSubmit={submit}>
         <label className="ui-field">
@@ -1084,6 +1094,7 @@ export function ClusterNodes() {
         </ul>
       ) : null}
 </details> : null}
+      {!canWrite && nodeDetail === null ? <div className="grid gap-2"><h3>{copy("ui.layout.history")}</h3>{historyPanel}</div> : null}
       {nodeDetail === null && nodes.isSuccess && shown.length > 0 ? (
         <div className="ui-table-container" role="region" aria-label={translate("Node list")} tabIndex={0}>
           <Table.Root className="ui-table ui-table-records">
@@ -1091,7 +1102,7 @@ export function ClusterNodes() {
               <Table.ColumnHeaderCell scope="col">{copy("ui.hostname")}</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell scope="col">{copy("ui.status")}</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell scope="col">{copy("ui.capacity")}</Table.ColumnHeaderCell>
-              <Table.ColumnHeaderCell scope="col">{copy("tab.maintenance")}</Table.ColumnHeaderCell>
+              {canWrite ? <Table.ColumnHeaderCell scope="col">{copy("tab.maintenance")}</Table.ColumnHeaderCell> : null}
             </Table.Row></Table.Header>
             <Table.Body role="rowgroup">
           {shown.map((node) => (
@@ -1106,7 +1117,7 @@ export function ClusterNodes() {
                 {node.draining ? <p>{copy("ui.draining")}</p> : null}
               </DataCell>
               <DataCell label={copy("ui.capacity")}>{node.capacity !== null ? <CompactCapacityText digits={node.capacity} /> : "—"}</DataCell>
-              <DataCell label={copy("tab.maintenance")} kind="actions" className="ui-record-actions-wide"><details className="ui-disclosure">
+              {canWrite ? <DataCell label={copy("tab.maintenance")} kind="actions" className="ui-record-actions-wide"><details className="ui-disclosure">
                 <summary>{copy("tab.maintenance")}</summary>
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger><Button size="2" variant="soft" color="gray">{copy("ui.details")}<DropdownMenu.TriggerIcon /></Button></DropdownMenu.Trigger>
@@ -1131,7 +1142,7 @@ export function ClusterNodes() {
                   setPurgeTarget({ id: node.id, hash });
                 }}
               />
-              </details></DataCell>
+              </details></DataCell> : null}
             </Table.Row>
           ))}
             </Table.Body>

@@ -457,7 +457,8 @@ function Home({ status }: { status: SessionStatus }) {
           {section === "overview" && status.garage_write_blocked === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.garage.v2.3.0.or.newer.is.required")}</Callout.Text></Callout.Root> : null}
           {section === "overview" && status.tls_insecure === true ? <Callout.Root color="orange"><Callout.Text role="alert">{copy("ui.tls.certificate.verification.is.off")}</Callout.Text></Callout.Root> : null}
           <Suspense key={section} fallback={<div className="ui-page" role="status" aria-busy="true">{fill(t("ui.loading.section"), { section: t(sectionCopyKey(section)) })}</div>}>
-          {section === "overview" ? admin ? <ClusterHealth /> : (
+          {section === "overview" ? <ClusterHealth /> : null}
+          {section === "overview" && !admin ? (
             <section className="ui-page">
               <header className="ui-page-header"><h2>{t("nav.overview")}</h2></header>
               <div className="ui-panel">
@@ -472,7 +473,7 @@ function Home({ status }: { status: SessionStatus }) {
               </div>
             </section>
           ) : null}
-        {section === "nodes" && admin ? <ClusterNodes /> : null}
+        {section === "nodes" ? <ClusterNodes canWrite={admin} /> : null}
         {section === "workers" && admin ? <Workers /> : null}
         {section === "block-errors" && admin ? <BlockErrors /> : null}
         {section === "audit" && admin ? <Audit /> : null}

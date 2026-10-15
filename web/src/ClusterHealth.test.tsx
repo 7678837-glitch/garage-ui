@@ -200,25 +200,19 @@ test("shows the Garage banner for a down health query and keeps the version aler
   expect(screen.queryByRole("button", { name: "Retry health" })).toBeNull();
 });
 
-test("does not show cluster health to a viewer or request it", async () => {
+test("shows cluster health to a viewer without requesting the node list", async () => {
   const fetchMock = stubFetch(json(statistics), json(report), "viewer");
   renderApp();
   expect(await screen.findByRole("button", { name: "Bea · viewer" })).toBeTruthy();
-  fireEvent.click(await screen.findByRole("button", { name: / · (admin|viewer)$/ }));
-  expect(await screen.findByText("ok · test")).toBeTruthy();
-  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
-  expect(screen.queryByText("degraded")).toBeNull();
-  expect(screen.queryByText("Object bytes")).toBeNull();
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
-    false,
-  );
+  expect(await screen.findByRole("heading", { name: "Cluster health" })).toBeTruthy();
+  expect(await screen.findByText("Object bytes", { selector: "dt" })).toBeTruthy();
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(true);
   expect(
     fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/statistics")),
-  ).toBe(false);
+  ).toBe(true);
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
     false,
   );
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
 });
 
 test("shows a byte count past 2^53 from the response text and says a null field is not set", async () => {

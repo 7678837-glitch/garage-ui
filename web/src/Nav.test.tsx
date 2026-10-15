@@ -24,7 +24,7 @@ const adminEntries = [
   "Settings",
 ];
 
-const viewerEntries = ["Overview", "Buckets", "Keys", "Settings"];
+const viewerEntries = ["Overview", "Buckets", "Keys", "Nodes and layout", "Settings"];
 
 function renderApp() {
   const client = new QueryClient({
@@ -74,8 +74,11 @@ function stubSignedIn(role: "admin" | "viewer") {
     if (url.includes("/healthz")) {
       return new Response(JSON.stringify({ status: "ok", version: "test" }), { status: 200 });
     }
+    if (url.includes("/api/layout/history")) {
+      return new Response(JSON.stringify({ versions: [{ version: 7, status: "Current" }], updateTrackers: {} }), { status: 200 });
+    }
     if (url.includes("/api/cluster/status")) {
-      return new Response(JSON.stringify({ nodes: [] }), { status: 200 });
+      return new Response(JSON.stringify({ layoutVersion: 7, nodes: [{ id: "n1".repeat(8), isUp: true, draining: false, hostname: "garage-1", role: { zone: "z", capacity: 1000000000, tags: [] } }] }), { status: 200 });
     }
     if (url.includes("/api/cluster/health") || url.includes("/api/cluster/statistics")) {
       return new Response(JSON.stringify({ status: "healthy" }), { status: 200 });
@@ -106,30 +109,38 @@ test("an admin sees Overview through Settings in order and no undelivered pages"
   expect(sectionsNav().queryByRole("link", { name: "Operations" })).toBeNull();
 });
 
-test("a viewer does not see Nodes and layout, Admin tokens, or Users", async () => {
+test("a viewer sees Nodes and layout and the Overview health panel but not Admin tokens or Users", async () => {
   const fetchMock = stubSignedIn("viewer");
   renderApp();
   expect(await screen.findByRole("button", { name: "Bea · viewer" })).toBeTruthy();
   expect(linkNames()).toEqual(viewerEntries);
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
-    false,
-  );
+  expect(await screen.findByRole("heading", { name: "Cluster health" })).toBeTruthy();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
 });
 
-test("a viewer opening #nodes stays on overview and an admin marks Nodes and layout current", async () => {
+const adminOnlyPaths = [
+  "/api/layout/stage", "/api/layout/preview", "/api/layout/apply", "/api/layout/revert",
+  "/api/layout/skip-dead-nodes", "/api/cluster/connect", "/blocks/", "/block-errors", "/repair",
+  "/metadata-snapshot", "/api/workers", "/api/users", "/api/admin-tokens",
+];
+
+test("a viewer on #nodes sees the node list and layout history with no write controls and no admin-only requests", async () => {
   window.location.hash = "#nodes";
   const fetchMock = stubSignedIn("viewer");
   renderApp();
   expect(await screen.findByRole("button", { name: "Bea · viewer" })).toBeTruthy();
-  const viewerCrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
-  expect(within(viewerCrumb).getByText("Overview", { selector: "[aria-current='page']" })).toBeTruthy();
-  expect(sectionsNav().queryByRole("link", { name: "Nodes and layout" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
-  expect(window.location.hash).toBe("#nodes");
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
-    false,
-  );
+  expect(await screen.findByRole("region", { name: "Node list" })).toBeTruthy();
+  expect(await screen.findByText("garage-1")).toBeTruthy();
+  expect(await screen.findByText("Current")).toBeTruthy();
+  for (const name of [/connect/i, /apply/i, /revert/i, /preview/i, /skip/i, /snapshot/i, /purge/i, /stage|set capacity|save/i]) {
+    expect(screen.queryByRole("button", { name })).toBeNull();
+  }
+  expect(screen.queryByText("Maintenance")).toBeNull();
+  const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+  for (const path of adminOnlyPaths) {
+    expect(urls.filter((url) => url.includes(path))).toEqual([]);
+  }
+  expect(fetchMock.mock.calls.every((call) => (((call as unknown[])[1] as RequestInit | undefined)?.method ?? "GET") === "GET")).toBe(true);
 
   cleanup();
   window.location.hash = "#nodes";

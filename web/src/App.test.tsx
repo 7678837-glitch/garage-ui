@@ -792,8 +792,6 @@ test("hides user management from a viewer", async () => {
   expect(screen.queryByRole("heading", { name: "About" })).toBeNull();
   expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(1);
   expect(screen.queryByRole("heading", { name: "Users" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
   await chooseSection("Settings");
   expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
@@ -803,9 +801,6 @@ test("hides user management from a viewer", async () => {
   expect(screen.getAllByText("Garage v2.4.1")).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Change password" })).toBeTruthy();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
-    false,
-  );
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
     false,
   );
@@ -950,14 +945,10 @@ test("shows a bucket id to a viewer", async () => {
   expect(screen.getByRole("heading", { name: "Keys" })).toBeTruthy();
   expect(document.body.textContent).not.toContain("SECRETBEa");
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/users"))).toBe(false);
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/health"))).toBe(
-    false,
-  );
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/cluster/status"))).toBe(
     false,
   );
   expect(screen.queryByRole("heading", { name: "Cluster health" })).toBeNull();
-  expect(screen.queryByRole("heading", { name: "Nodes" })).toBeNull();
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/keys"))).toBe(true);
   expect(screen.queryByRole("button", { name: "Create key" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Rename key-bea" })).toBeNull();
