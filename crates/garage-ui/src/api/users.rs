@@ -33,7 +33,7 @@ pub(crate) struct NewUser {
     can_download: bool,
     #[serde(default)]
     can_share: bool,
-    #[serde(default, rename = "accessKeyId")]
+    #[serde(default)]
     access_key_id: Option<String>,
 }
 
@@ -44,7 +44,7 @@ pub(crate) struct UserPatch {
     can_share: Option<bool>,
     disabled: Option<bool>,
     // Absent keeps the bound key, null removes it, a string binds that key.
-    #[serde(default, rename = "accessKeyId", deserialize_with = "present")]
+    #[serde(default, deserialize_with = "present")]
     access_key_id: Option<Option<String>>,
 }
 
@@ -605,7 +605,7 @@ fn public_user(user: &User, created_at: i64) -> Value {
         "can_download": user.can_download,
         "can_share": user.can_share,
         "disabled": user.disabled,
-        "accessKeyId": user.access_key_id,
+        "access_key_id": user.access_key_id,
         "created_at": created_at,
     })
 }

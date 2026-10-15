@@ -89,7 +89,7 @@
     }
 
     fn key_of(response: &Exchange) -> Value {
-        serde_json::from_str::<Value>(&response.body).unwrap()["accessKeyId"].clone()
+        serde_json::from_str::<Value>(&response.body).unwrap()["access_key_id"].clone()
     }
 
     async fn stored_key(env: &BindEnv, id: i64) -> Option<String> {
@@ -118,7 +118,7 @@
     #[tokio::test]
     async fn a_viewer_created_with_a_key_is_listed_with_it_and_acts_as_a_tenant() {
         let env = bind_env().await;
-        let created = create_account(&env, "Tess", json!({ "accessKeyId": TENANT_KEY })).await;
+        let created = create_account(&env, "Tess", json!({ "access_key_id": TENANT_KEY })).await;
         assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
         assert_eq!(key_of(&created), json!(TENANT_KEY));
         assert_no_secret(&created);
@@ -137,7 +137,7 @@
             items
                 .iter()
                 .find(|user| user["username"] == name)
-                .map(|user| user["accessKeyId"].clone())
+                .map(|user| user["access_key_id"].clone())
         };
         assert_eq!(keyed("Tess"), Some(json!(TENANT_KEY)));
         assert_eq!(keyed("Plain"), Some(Value::Null));
@@ -156,7 +156,7 @@
         let created = create_account(
             &env,
             "Boss",
-            json!({ "role": "admin", "accessKeyId": TENANT_KEY }),
+            json!({ "role": "admin", "access_key_id": TENANT_KEY }),
         )
         .await;
         assert_bad_request(&created, "tenant_admin");
@@ -169,7 +169,7 @@
 
         let admin = create_account(&env, "Boss", json!({ "role": "admin" })).await;
         assert_eq!(admin.status, StatusCode::CREATED, "{}", admin.body);
-        let bound = patch_account(&env, id_of(&admin), json!({ "accessKeyId": TENANT_KEY })).await;
+        let bound = patch_account(&env, id_of(&admin), json!({ "access_key_id": TENANT_KEY })).await;
         assert_bad_request(&bound, "tenant_admin");
         assert_eq!(stored_key(&env, id_of(&admin)).await, None);
     }
@@ -177,7 +177,7 @@
     #[tokio::test]
     async fn promoting_a_bound_viewer_needs_the_key_removed_in_the_same_request() {
         let env = bind_env().await;
-        let created = create_account(&env, "Tess", json!({ "accessKeyId": TENANT_KEY })).await;
+        let created = create_account(&env, "Tess", json!({ "access_key_id": TENANT_KEY })).await;
         let id = id_of(&created);
 
         let refused = patch_account(&env, id, json!({ "role": "admin" })).await;
@@ -186,7 +186,7 @@
         assert_eq!(stored.role, "viewer");
         assert_eq!(stored.access_key_id.as_deref(), Some(TENANT_KEY));
 
-        let both = patch_account(&env, id, json!({ "role": "admin", "accessKeyId": null })).await;
+        let both = patch_account(&env, id, json!({ "role": "admin", "access_key_id": null })).await;
         assert_eq!(both.status, StatusCode::OK, "{}", both.body);
         assert_eq!(key_of(&both), Value::Null);
         let stored = crate::db::find_user_by_id(&env.app.db, id).await.unwrap().unwrap();
@@ -198,7 +198,7 @@
     async fn a_key_garage_does_not_know_is_refused_and_not_stored() {
         let env = bind_env().await;
         let before = crate::db::recent_audit(&env.app.db).await.unwrap().len();
-        let created = create_account(&env, "Tess", json!({ "accessKeyId": "GKnope" })).await;
+        let created = create_account(&env, "Tess", json!({ "access_key_id": "GKnope" })).await;
         assert_bad_request(&created, "key_not_found");
         assert!(
             crate::db::find_user_by_name(&env.app.db, "Tess")
@@ -213,7 +213,7 @@
 
         let plain = create_account(&env, "Plain", json!({})).await;
         let id = id_of(&plain);
-        let patched = patch_account(&env, id, json!({ "accessKeyId": "GKnope" })).await;
+        let patched = patch_account(&env, id, json!({ "access_key_id": "GKnope" })).await;
         assert_bad_request(&patched, "key_not_found");
         assert_eq!(stored_key(&env, id).await, None);
     }
@@ -223,11 +223,11 @@
         let env = bind_env().await;
         let too_long = "K".repeat(129);
         for bad in ["", " ", "has space", "tab\there", "ключ", too_long.as_str()] {
-            let created = create_account(&env, "Tess", json!({ "accessKeyId": bad })).await;
+            let created = create_account(&env, "Tess", json!({ "access_key_id": bad })).await;
             assert_bad_request(&created, "invalid_access_key_id");
         }
         let plain = create_account(&env, "Plain", json!({})).await;
-        let patched = patch_account(&env, id_of(&plain), json!({ "accessKeyId": "" })).await;
+        let patched = patch_account(&env, id_of(&plain), json!({ "access_key_id": "" })).await;
         assert_bad_request(&patched, "invalid_access_key_id");
         let lines = env.garage.lines();
         assert!(
@@ -251,7 +251,7 @@
                         "username": "Tess",
                         "password": "tenant horse",
                         "role": "viewer",
-                        "accessKeyId": TENANT_KEY,
+                        "access_key_id": TENANT_KEY,
                     })
                     .to_string(),
                 ),
@@ -275,7 +275,7 @@
         let created = create_account(
             &env,
             "Tess",
-            json!({ "accessKeyId": TENANT_KEY, "can_download": false, "can_share": true }),
+            json!({ "access_key_id": TENANT_KEY, "can_download": false, "can_share": true }),
         )
         .await;
         assert_bad_request(&created, "share_requires_download");
@@ -284,7 +284,7 @@
     #[tokio::test]
     async fn changing_or_removing_the_key_ends_every_session_and_is_audited() {
         let env = bind_env().await;
-        let created = create_account(&env, "Tess", json!({ "accessKeyId": TENANT_KEY })).await;
+        let created = create_account(&env, "Tess", json!({ "access_key_id": TENANT_KEY })).await;
         let id = id_of(&created);
         let first = sign_in(&env.app, "Tess", "tenant horse").await;
         let second = sign_in(&env.app, "Tess", "tenant horse").await;
@@ -293,7 +293,7 @@
 
         // The same key again is not a change.
         let before = crate::db::recent_audit(&env.app.db).await.unwrap().len();
-        let same = patch_account(&env, id, json!({ "accessKeyId": TENANT_KEY })).await;
+        let same = patch_account(&env, id, json!({ "access_key_id": TENANT_KEY })).await;
         assert_eq!(same.status, StatusCode::OK, "{}", same.body);
         assert_eq!(session_status(&env, &first).await, StatusCode::OK);
         assert_eq!(session_status(&env, &second).await, StatusCode::OK);
@@ -304,7 +304,7 @@
 
         let rows_before = crate::db::recent_audit(&env.app.db).await.unwrap();
         assert_eq!(rows_before.len(), before + 2, "{rows_before:?}");
-        let changed = patch_account(&env, id, json!({ "accessKeyId": OTHER_KEY })).await;
+        let changed = patch_account(&env, id, json!({ "access_key_id": OTHER_KEY })).await;
         assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
         assert_eq!(key_of(&changed), json!(OTHER_KEY));
         assert_no_secret(&changed);
@@ -319,7 +319,7 @@
 
         let third = sign_in(&env.app, "Tess", "tenant horse").await;
         assert_eq!(session_status(&env, &third).await, StatusCode::OK);
-        let removed = patch_account(&env, id, json!({ "accessKeyId": null })).await;
+        let removed = patch_account(&env, id, json!({ "access_key_id": null })).await;
         assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
         assert_eq!(key_of(&removed), Value::Null);
         assert_eq!(stored_key(&env, id).await, None);
@@ -331,7 +331,7 @@
         assert_eq!(rows_after[0].target, "Tess");
 
         let fourth = sign_in(&env.app, "Tess", "tenant horse").await;
-        let bound = patch_account(&env, id, json!({ "accessKeyId": TENANT_KEY })).await;
+        let bound = patch_account(&env, id, json!({ "access_key_id": TENANT_KEY })).await;
         assert_eq!(bound.status, StatusCode::OK, "{}", bound.body);
         assert_eq!(session_status(&env, &fourth).await, StatusCode::UNAUTHORIZED);
     }
