@@ -7,6 +7,65 @@
     }
 
     #[tokio::test]
+    async fn a_failed_version_probe_is_retried_on_the_next_call() {
+        let healthy = Arc::new(AtomicBool::new(false));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let healthy_task = Arc::clone(&healthy);
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0_u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let (status, body) = if healthy_task.load(Ordering::SeqCst) {
+                    ("200 OK", r#"{"garageVersion":"v2.2.0"}"#)
+                } else {
+                    ("500 Internal Server Error", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, &url).await;
+
+        let failed = crate::proxy::ensure_garage_link(&app).await;
+        assert_eq!(failed, state::GarageLink::unknown());
+
+        healthy.store(true, Ordering::SeqCst);
+        let recovered = crate::proxy::ensure_garage_link(&app).await;
+        assert_eq!(recovered.version.as_deref(), Some("v2.2.0"));
+        assert!(!recovered.writes_allowed);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cached_version_is_reused_for_five_minutes_then_probed_again() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        // Pausing after boot keeps database start-up on the real clock.
+        tokio::time::pause();
+        let probes = AtomicUsize::new(0);
+        let probe = || async {
+            probes.fetch_add(1, Ordering::SeqCst);
+            Some(state::GarageLink::from_reported(Some("v2.4.1")))
+        };
+
+        app.garage_link_for("http://garage", probe()).await;
+        tokio::time::advance(Duration::from_secs(299)).await;
+        let cached = app.garage_link_for("http://garage", probe()).await;
+        assert_eq!(cached.version.as_deref(), Some("v2.4.1"));
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        app.garage_link_for("http://garage", probe()).await;
+        assert_eq!(probes.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn old_garage_blocks_writes_and_keeps_reads() {
         let mock = GarageMock::start(r#"{"garageVersion":"v2.2.0"}"#).await;
         let dir = crate::util::temp_dir();

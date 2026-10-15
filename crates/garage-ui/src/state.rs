@@ -24,9 +24,13 @@ pub struct GarageLink {
     pub writes_allowed: bool,
 }
 
+// A short lifetime lets a Garage upgrade show up without restarting the UI.
+const GARAGE_LINK_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
 struct CachedGarageLink {
     url: String,
     link: GarageLink,
+    probed_at: tokio::time::Instant,
 }
 
 #[derive(Clone)]
@@ -94,18 +98,24 @@ impl App {
     pub async fn garage_link_for(
         &self,
         url: &str,
-        probe: impl std::future::Future<Output = GarageLink>,
+        probe: impl std::future::Future<Output = Option<GarageLink>>,
     ) -> GarageLink {
         let mut slot = self.garage_link.lock().await;
         if let Some(cached) = slot.as_ref()
             && cached.url == url
+            && cached.probed_at.elapsed() < GARAGE_LINK_TTL
         {
             return cached.link.clone();
         }
-        let link = probe.await;
+        // A failed probe answers this call only; the next call probes again.
+        let Some(link) = probe.await else {
+            *slot = None;
+            return GarageLink::unknown();
+        };
         *slot = Some(CachedGarageLink {
             url: url.to_string(),
             link: link.clone(),
+            probed_at: tokio::time::Instant::now(),
         });
         link
     }

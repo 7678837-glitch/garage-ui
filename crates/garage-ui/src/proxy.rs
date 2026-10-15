@@ -210,20 +210,19 @@ pub async fn ensure_garage_link(app: &App) -> GarageLink {
     app.garage_link_for(&url, probe_node_info(app)).await
 }
 
-async fn probe_node_info(app: &App) -> GarageLink {
-    let Ok(response) = send(app, "GetNodeInfo", &Method::GET, "node=self", &[]).await else {
-        return GarageLink::unknown();
-    };
+// None means the probe failed and its result must not be remembered.
+async fn probe_node_info(app: &App) -> Option<GarageLink> {
+    let response = send(app, "GetNodeInfo", &Method::GET, "node=self", &[])
+        .await
+        .ok()?;
     if !response.status().is_success() {
-        return GarageLink::unknown();
+        return None;
     }
-    let Ok(bytes) = axum::body::to_bytes(response.into_body(), 1024 * 1024).await else {
-        return GarageLink::unknown();
-    };
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return GarageLink::unknown();
-    };
-    GarageLink::from_reported(reported_garage_version(&value))
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .ok()?;
+    let value = serde_json::from_slice::<Value>(&bytes).ok()?;
+    Some(GarageLink::from_reported(reported_garage_version(&value)))
 }
 
 // Garage v2.4.1 returns GetNodeInfo versions inside the MultiResponse success nodes.
