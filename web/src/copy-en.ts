@@ -116,6 +116,7 @@ export const en = {
   "ui.this.secret.is.shown.once.closing.this.dialog": "This secret is shown once. Closing this dialog removes it from the page.",
   "ui.closing.this.dialog.removes.the.secret": "Closing this dialog removes the secret from the page. You can view it again.",
   "ui.secret.access.key": "Secret access key",
+  "ui.viewing.a.secret.is.audited.confirm.to.show": "Viewing a secret is audited. Confirm to show it.",
   "ui.show.secret": "Show secret",
   "ui.copied": "Copied",
   "ui.select.the.secret.and.copy.it": "Select the secret and copy it",

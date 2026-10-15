@@ -790,6 +790,7 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   const trigger = screen.getByRole("button", { name: "Show secret (a b&c=d)" });
   trigger.focus();
   fireEvent.click(trigger);
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm" }));
   const field = (await screen.findByLabelText("Secret access key")) as HTMLInputElement;
   expect(field.value).toBe("VIEWSECRET");
   expect(screen.getByText("Closing this dialog removes the secret from the page. You can view it again.")).toBeTruthy();
@@ -811,6 +812,36 @@ test("views a secret with confirmation and removes it when the dialog closes", a
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+test("asks for a second confirmation before revealing a secret and sends nothing on cancel", async () => {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const call = recordedCall(input, init);
+      calls.push(call);
+      if (call.method === "POST") return json({ accessKeyId: "GK1", secretAccessKey: "S3CRET" });
+      return json({ items: [{ id: "GK1", name: "photos" }], hasMore: false });
+    }),
+  );
+  renderKeys(true);
+  const trigger = await screen.findByRole("button", { name: "Show secret (GK1)" });
+  trigger.focus();
+  const secretCalls = () => calls.filter((call) => call.url.endsWith("/secret"));
+  fireEvent.click(trigger);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(/audited/i)).toBeTruthy();
+  expect(secretCalls()).toHaveLength(0);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(secretCalls()).toHaveLength(0);
+  fireEvent.click(trigger);
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm" }));
+  expect(await screen.findByLabelText("Secret access key")).toBeTruthy();
+  expect(secretCalls()).toHaveLength(1);
+  expect(secretCalls()[0].confirm).toBe("yes");
+});
+
 test("shows the API message when a secret view fails and does not open the dialog", async () => {
   vi.stubGlobal(
     "fetch",
@@ -824,6 +855,7 @@ test("shows the API message when a secret view fails and does not open the dialo
   );
   renderKeys(true);
   fireEvent.click(await screen.findByRole("button", { name: "Show secret (GK1)" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm" }));
   expect(await screen.findByText("Confirmation required")).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();

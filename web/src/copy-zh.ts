@@ -118,6 +118,7 @@ export const zh = {
   "ui.this.secret.is.shown.once.closing.this.dialog": "此密钥只显示一次。关闭此对话框后，页面上不再保留它。",
   "ui.closing.this.dialog.removes.the.secret": "关闭此对话框后，页面上不再保留此密钥。你可以再次查看它。",
   "ui.secret.access.key": "秘密访问密钥",
+  "ui.viewing.a.secret.is.audited.confirm.to.show": "查看密钥会被审计。确认后显示。",
   "ui.show.secret": "显示密钥",
   "ui.copied": "已复制",
   "ui.select.the.secret.and.copy.it": "选择密钥并复制",

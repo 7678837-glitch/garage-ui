@@ -564,6 +564,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
   const client = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [secretId, setSecretId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
   const secretTrigger = useRef<HTMLButtonElement | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -672,7 +673,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                 <CreateBucketSwitch key={openedKey.id} id={openedKey.id} allowed={openedKey.createBucket} />
               </SettingsSection>
               <SettingsSection title={translate("Credentials")}>
-                <Button size="2" variant="soft" color="gray" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={(event) => { secretTrigger.current = event.currentTarget; viewSecret.reset(); viewSecret.mutate(openedKey.id); }}>{copy("ui.view.secret")}</Button>
+                <Button size="2" variant="soft" color="gray" type="button" aria-label={fill(copy("ui.view.secret.for"), { id: openedKey.id })} disabled={viewSecret.isPending} onClick={(event) => { secretTrigger.current = event.currentTarget; viewSecret.reset(); setSecretId(openedKey.id); }}>{copy("ui.view.secret")}</Button>
                 {viewError ? <p className="ui-alert">{viewError}</p> : null}
               </SettingsSection>
               <SettingsSection title={translate("Danger zone")} danger>
@@ -765,7 +766,7 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
                         onClick={(event) => {
                           secretTrigger.current = event.currentTarget;
                           viewSecret.reset();
-                          viewSecret.mutate(accessKey.id);
+                          setSecretId(accessKey.id);
                         }}
                       >
                         {viewSecret.isPending && viewSecret.variables === accessKey.id
@@ -813,6 +814,18 @@ export function Keys({ canManage = false }: { canManage?: boolean }) {
               return;
             }
             removeKey.mutate(deleteId);
+          }}
+        />
+      ) : null}
+      {secretId !== null ? (
+        <ConfirmDialog
+          action="reveal-secret"
+          name={secretId}
+          consequence={copy("ui.viewing.a.secret.is.audited.confirm.to.show")}
+          onCancel={() => setSecretId(null)}
+          onConfirm={() => {
+            viewSecret.mutate(secretId);
+            setSecretId(null);
           }}
         />
       ) : null}

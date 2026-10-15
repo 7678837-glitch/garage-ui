@@ -10,6 +10,7 @@ const RISK = {
   "revoke-permission": "medium",
   "delete-empty-bucket": "medium",
   "delete-key": "medium",
+  "reveal-secret": "medium",
   "recursive-delete": "high",
   "batch-delete": "high",
   "clear-block": "high",
