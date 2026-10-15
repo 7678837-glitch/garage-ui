@@ -6,7 +6,7 @@
 
 This project is a self-hosted web admin UI for Garage (an S3-compatible distributed object store). One Rust binary embeds the frontend single-page application. It is for cluster administrators and read-only operators, and it provides day-to-day management of the cluster, the layout, buckets, keys, and objects.
 
-Goals of this phase:
+Delivery requirements (acceptance targets, not a current verification receipt):
 
 1. Safe by default. Login is required out of the box. No response leaks a cluster secret. Object preview cannot be an entry point for script injection.
 2. Correct. Bucket addressing, the credential cache, deletion, capacity, encoding, and the related behavior are implemented as [correctness.md](correctness.md) requires. Each item has an automated test.
@@ -27,11 +27,11 @@ Goals of this phase:
 - Do not implement S3 features that Garage does not support (see 5.24 of [features-data.md](features-data.md)).
 - Do not install a Garage node, upgrade one, or edit a Garage configuration file. Garage in a local container is only for tests, evaluation, and the example deployment.
 - Do not offer an anonymous access mode.
-- An external identity source (OIDC or LDAP) is listed as a later option. It is not delivered in this phase.
+- An external identity source (OIDC or LDAP) is listed as a later option. It remains deferred from this delivery.
 
 ## 8. The minimum version
 
-The minimum version is the first version that can be delivered outside the project. It may be released once every condition below is met. The other features are delivered in the later phases of [roadmap.md](roadmap.md).
+The minimum version is the first version that can be delivered outside the project. It may be released once every condition below is met. Features outside this minimum remain separate requirements; [roadmap.md](roadmap.md) tracks current implementation and outstanding work.
 
 ### 8.1 Required features
 
@@ -57,4 +57,4 @@ Layout editing and the change flow (5.28). Admin tokens and the scope picker (5.
 - Reachable vulnerabilities in Rust dependencies are 0. High and above in frontend production dependencies are 0. The secret scan is 0.
 - With simulated data of 10,000 buckets and 100,000 objects under a single prefix, the first screen of a list appears within 2 seconds, and there is no extra request per object.
 - A 5 GB upload and a 5 GB download complete under a 256 MB memory limit (the test raises the upload limit explicitly).
-- Estimate: 32.75 person-days. The algorithm is at the end of [roadmap.md](roadmap.md). That number comes from the original draft. It was not recomputed for the switch to Rust and Bun. The minimum-version scope is fixed by 8.1. Do not cut it down.
+The minimum-version scope is fixed by 8.1. Do not cut it down. Historical implementation estimates are not remaining-work estimates.

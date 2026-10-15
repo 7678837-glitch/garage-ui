@@ -12,7 +12,7 @@ Acceptance: A bucket with only a local alias appears in the list and can be open
 
 ## 5.2 Browsing objects
 
-- Requirement: Prefix navigation and breadcrumbs, split on `/`. Pagination (default 100, maximum 1000, continuation token). An S3 list returns keys only in lexicographic order and supports only a prefix filter, so the order across pages is fixed as key lexicographic order. Sort by size or by time applies only to the page already loaded, and the UI states "this page only". Substring search inside a prefix (at least 2 characters, at most 200 hits, at most 20 pages scanned). Safe preview. Object metadata and `InspectObject` diagnostics (A). The diagnostics page itself is in phase 5. The minimum version has no diagnostics entry.
+- Requirement: Prefix navigation and breadcrumbs, split on `/`. Pagination (default 100, maximum 1000, continuation token). An S3 list returns keys only in lexicographic order and supports only a prefix filter, so the order across pages is fixed as key lexicographic order. Sort by size or by time applies only to the page already loaded, and the UI states "this page only". Substring search inside a prefix (at least 2 characters, at most 200 hits, at most 20 pages scanned). Safe preview. Object metadata and `InspectObject` diagnostics (A). Diagnostics are outside the minimum-version scope. The minimum version has no diagnostics entry.
 - API: `GET /api/buckets/{id}/objects?prefix&limit&next`; `GET /api/buckets/{id}/objects/{key}` (metadata, view, download); `GET /api/buckets/{id}/search?q&prefix`; `GET /api/buckets/{id}/inspect/{key}` (A).
 - Garage: S3 `ListObjectsV2`, `HeadObject`, `GetObject`; Admin `InspectObject`.
 
@@ -83,7 +83,7 @@ Acceptance: After a save, `GetBucketInfo` returns the same values. A browser cro
 
 Acceptance: After it is turned on, the public address can be reached. After it is turned off, the response is Garage's denial response.
 
-8.1 of [scope.md](scope.md) does not list website access as required for the minimum version. The exclusion list in 8.2 does not name 5.17 either. The phase table in [roadmap.md](roadmap.md) has no separate estimate row for it. This requirement and its acceptance stay as written. When the work is broken down, do not assign this item to a phase.
+8.1 of [scope.md](scope.md) does not list website access as required for the minimum version. The exclusion list in 8.2 does not name 5.17 either. The dedicated editor and update route remain unscheduled in [roadmap.md](roadmap.md). This requirement and its acceptance stay as written.
 
 ## 5.18 Quotas
 

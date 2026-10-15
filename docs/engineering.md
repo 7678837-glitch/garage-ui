@@ -78,7 +78,9 @@ Acceptance: After a language switch, no key is untranslated (a test checks that 
 
 ## 7.4 CI
 
-On every commit and every merge request:
+These are acceptance requirements. The workflow remains disabled on GitHub during development; no current remote execution or blocking-gate status is implied.
+
+Required behavior when enabled, on every commit and every merge request:
 
 1. `bun install --frozen-lockfile`.
 2. Frontend: type check, lint, unit tests, and build. Bun runs the commands.

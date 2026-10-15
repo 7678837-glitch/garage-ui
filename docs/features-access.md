@@ -10,7 +10,7 @@ Role abbreviations: A = administrator, V = read-only.
 
 Acceptance: After allowing bucket creation is turned on, that key can create a bucket through S3. After the key is deleted, the browse credential cache is invalid (see 4.2 of [correctness.md](correctness.md)).
 
-The key scope of the minimum version follows 8.1 of [scope.md](scope.md): paginated list, create, delete, rename, allow bucket creation, and view the secret. The phase 2B estimate row also names import and expiration. 8.1 states that the minimum-version scope is fixed by that table. When accepting the minimum version, those 8.1 items are what counts.
+The key scope of the minimum version follows 8.1 of [scope.md](scope.md): paginated list, create, delete, rename, allow bucket creation, and view the secret. Import and expiration remain requirements of this section beyond that minimum. 8.1 states that the minimum-version scope is fixed by that table. When accepting the minimum version, those 8.1 items are what counts.
 
 ## 5.15 Restricted admin tokens
 
@@ -30,7 +30,7 @@ Acceptance: Only an administrator can see them. A token secret does not appear i
 
 Acceptance: Tests cover granting a permission bit, revoking one, and the "share depends on download" constraint. Each lockout-protection rule has a test. A user response never contains a hash. A role change takes effect immediately (3.4).
 
-The minimum version includes the account items in 8.1, and the phase 2B user create and delete, disable, role change, password reset, and lockout protection. The offline CLI is in phase 6. A logged-in administrator calling `POST /api/users/{id}/reset-password` is part of that user management. It is a different path from the offline CLI in 3.18.
+The minimum version includes the account items in 8.1, and user create and delete, disable, role change, password reset, and lockout protection. The offline CLI is outside the minimum-version account scope and is implemented; see the [account guide](wiki/Users-and-authentication.md). A logged-in administrator calling `POST /api/users/{id}/reset-password` is part of that user management. It is a different path from the offline CLI in 3.18.
 
 ## 5.21 Audit log
 
@@ -40,7 +40,7 @@ The minimum version includes the account items in 8.1, and the phase 2B user cre
 
 Acceptance: Each kind of event has one integration test that asserts an audit record. Records past the retention period are cleaned up on a schedule.
 
-The minimum version includes audit writes (login-related events are in 3.13; writes and viewing a secret are written to the audit table). The audit page, filters, export, and the retention-cleanup UI are in phase 5. The minimum version must still write the records into the table, and it must meet "after a failed login, the audit table has one record that includes the IP".
+The minimum version includes audit writes (login-related events are in 3.13; writes and viewing a secret are written to the audit table). The audit page, filters, export, and retention management are requirements beyond that minimum; see the [implemented audit behavior](wiki/Audit.md). The minimum version must still write the records into the table, and it must meet "after a failed login, the audit table has one record that includes the IP".
 
 ## 5.23 Settings and About
 

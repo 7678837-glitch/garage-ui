@@ -16,7 +16,7 @@ Acceptance: Every list API normalizes an out-of-range `limit` (default 100, maxi
 
 Acceptance: In E2E, opening any deep address directly renders it correctly. A read-only account's navigation has no entry for a write action. On a narrow screen the navigation can be expanded and collapsed.
 
-The minimum version's navigation mounts only modules that have already been delivered. Operations, admin tokens, the audit page, CORS, lifecycle, website, and incomplete uploads that are not yet delivered show no entry. Address rules for pages that have been delivered hold from the first day.
+Navigation must mount only delivered modules and hide entries for unavailable features. Operations, admin tokens, audit, CORS, lifecycle, and incomplete-upload controls are implemented beyond the minimum-version scope; the website editor remains unscheduled. Address rules apply to every delivered page. See [roadmap.md](roadmap.md) for current status.
 
 ## 5.26 Shared interaction states
 

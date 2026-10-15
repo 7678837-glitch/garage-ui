@@ -32,7 +32,7 @@ Multiple agents may develop in parallel.
 
 How parallel work is closed:
 
-- Split tasks by the phases and section numbers in [roadmap.md](roadmap.md). Tasks that change the same set of files do not run in parallel.
+- Split tasks by the outstanding work in [roadmap.md](roadmap.md) and relevant working-spec section numbers. Tasks that change the same set of files do not run in parallel.
 - The main session closes full-suite tests and `git` commits. Agents working in parallel do not each run the full test suite, and they do not each run `git add`.
 - When the spec conflicts with the facts, stop and change the spec or ask. Do not change an acceptance criterion to make a test green.
 - For security, persistence, and deletion, the acceptance text in [security.md](security.md) and [correctness.md](correctness.md) is the authority.
@@ -75,7 +75,7 @@ Data and outbound calls:
 - Logs: tracing 0.1.44 and tracing-subscriber 0.3.23. JSON goes to stdout/stderr.
 - Errors: anyhow 1.0.104. Not below 1.0.103. That release fixed the `Error::downcast_mut` issue.
 - Metrics: metrics 0.24.6 and metrics-exporter-prometheus 0.18.3. Do not add OpenTelemetry. Do not use tikv's `prometheus` crate.
-- Command line: clap 4.6.7 with derive. It covers `-health` and the offline admin commands in phase 6.
+- Command line: clap 4.6.7 with derive. It covers `-health` and the offline admin commands in section 3.18 of [security.md](security.md).
 - Rate limiting: governor 0.10.4.
 - ZIP: `zip` 9.0.0 on crates.io. The repository is zip-rs/zip2. Path traversal during extraction is fixed starting in 2.3.0. Do not use the archived zip-rs/zip.
 - Thumbnails: image 0.25.10, bounded, and the image header is read first.

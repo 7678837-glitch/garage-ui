@@ -4,6 +4,10 @@
 
 Start with the [Garage UI operator and user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior. The canonical Markdown sources live in `docs/wiki/`; update those files when correcting the published Wiki. Contributor build and verification commands belong in [Contributing](../CONTRIBUTING.md), while this guide covers operator and end-user tasks.
 
+## Current status
+
+The [delivery status and roadmap](roadmap.md) owns the living implementation summary, known gaps, outstanding acceptance/distribution work, and deferred scope. It does not repeat historical phase estimates.
+
 ## Verification evidence
 
 Reports describe particular source revisions and environments, not every later commit:
@@ -18,7 +22,7 @@ See the [delivery status and roadmap](roadmap.md) for implemented areas and defe
 
 ## Working specifications
 
-This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. The original text stays. When the two sides conflict, this directory wins.
+This directory is the breakdown of [`DEV-GUIDE.md`](../DEV-GUIDE.md) at the repository root. It is for implementation, parallel development, and acceptance. These chapters retain the original requirement and acceptance semantics, with superseding decisions applied. When the two sides conflict, this directory wins.
 
 For local development and AI-assisted contributions, see [Contributing](../CONTRIBUTING.md). These chapters define requirements and acceptance targets, not a completed-feature checklist or a verification receipt. Consult the relevant implementation and record results for the exact source commit. The CI workflow remains disabled during development; the CI requirements below do not imply that CI checks are running.
 

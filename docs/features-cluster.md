@@ -4,7 +4,7 @@ Role abbreviations: A = administrator, V = read-only. Operations pages are open 
 
 ## 5.8 Layout
 
-The minimum version does not include layout editing or the change flow (5.28, see 8.2 of [scope.md](scope.md)). Preview, history, and skip dead nodes for this item are in phase 4.
+The minimum version does not include layout editing or the change flow (5.28, see 8.2 of [scope.md](scope.md)).
 
 - Requirement: Assign and change node roles (zone, capacity, tags; an empty capacity means a gateway node), and remove a role. View and change the layout parameter `zoneRedundancy` (`"maximum"`, or at least N zones). A list of staged changes (from `stagedRoleChanges` and `stagedParameters` on `GetClusterLayout`). Before apply, call preview and show the preview result (v2.4 and later show structured statistics, v2.3 shows text). When preview returns the error branch, show the error and forbid apply. Apply (version = current + 1), or revert every staged change. Layout history. Skip dead nodes (A, a strong confirmation, and a statement of the risk. Pass the current version. Separately choose whether `allowMissingData` is set. When it is selected, add one more strong confirmation that says data may be lost).
 - API: `GET /api/layout`; `POST /api/layout/stage`; `POST /api/layout/preview`; `POST /api/layout/apply`; `POST /api/layout/revert`; `GET /api/layout/history`; `POST /api/layout/skip-dead-nodes`.
@@ -28,11 +28,11 @@ Acceptance: The numbers are correct on both v2.3.x and v2.4.1. When Garage is un
 
 Acceptance: A unit test parses Prometheus text. Every field of an empty response is 0.
 
-The minimum version delivers health, status, and cluster statistics, and does not include the metrics panel. `GET /api/metrics` and Prometheus parsing wait until phase 4.
+The minimum version delivers health, status, and cluster statistics, and does not include the metrics panel. This minimum-version boundary does not imply the implemented metrics panel is pending.
 
 ## 5.11 Workers and repair tasks
 
-Phase 5. Not included in the minimum version.
+Not included in the minimum version.
 
 - Requirement: List Workers by node (one node ID, or every node), with status, errors, and progress. The list can show only busy workers, or only workers in error. View detail. Read every Worker variable, or one Worker variable, and set a variable (the variable name and the value are both strings, A). Start a repair task (A, a strong confirmation, targeted at one node or every node). The type comes from the Garage definition: `tables`, `blocks`, `versions`, `multipartUploads`, `blockRefs`, `blockRc`, `rebalance`, `aliases`, `clearResyncQueue`, and `start`, `pause`, `resume`, and `cancel` of `scrub`.
 - API: `GET /api/nodes/{id}/workers`; `GET /api/nodes/{id}/workers/{wid}`; `GET`/`PUT /api/nodes/{id}/worker-variables`; `POST /api/nodes/{id}/repair`.
@@ -42,7 +42,7 @@ Acceptance: After a variable is set, reading it again returns the new value. A r
 
 ## 5.12 Block errors
 
-Phase 5. Not included in the minimum version.
+Not included in the minimum version.
 
 - Requirement: List block errors by node. View block information by block hash (a node must be specified). Retry resync (a specified block hash, or "retry all"). Purge blocks (A, a strong confirmation, stating that object data will be lost. One request may submit multiple block hashes).
 - API: `GET /api/nodes/{id}/block-errors`; `GET /api/nodes/{id}/blocks/{hash}`; `POST /api/nodes/{id}/blocks/retry`; `POST /api/nodes/{id}/blocks/purge`.
@@ -52,7 +52,7 @@ Acceptance: A read-only role calling purge returns 403. Purge requires typing th
 
 ## 5.13 Metadata snapshots
 
-Phase 5. Not included in the minimum version.
+Not included in the minimum version.
 
 - Requirement: Create a metadata snapshot for a specified node, or for every node (A).
 - API: `POST /api/nodes/{id}/metadata-snapshot`.
@@ -62,7 +62,7 @@ Acceptance: A successful operation shows a notice and writes an audit record.
 
 ## 5.28 Layout change flow
 
-Depends on 5.8. Not included in the minimum version. The work to wire it in is included in the estimates for phase 4 and phase 3A.
+Depends on 5.8. Not included in the minimum version.
 
 - Requirement: The layout page guides the user through steps.
   1. View the current layout (nodes, zone, capacity, tags, role) and the "staged changes" list.
@@ -76,7 +76,7 @@ Acceptance: Apply is not available before preview. After apply, the tracking vie
 
 ## 5.29 Overview page and capacity visualization
 
-The minimum version does only the health and statistics cards. Ranking, auto-refresh, and the audit widget are wired in with later phases.
+The minimum version does only the health and statistics cards. Ranking, auto-refresh, and the audit widget are requirements beyond that minimum; [roadmap.md](roadmap.md) tracks current delivery status.
 
 - Requirement: The overview page contains a health card, cluster capacity (used and free, distributed by node), the bucket count and the total object count, a ranking of buckets by capacity (the top N, with the rest merged as "Other", still readable when there are many buckets or when the buckets are very small), and recent audit events (administrators; enabled after the 5.21 query API in [features-access.md](features-access.md) is delivered).
 - Ranking buckets by capacity, and sorting by capacity, depend on each bucket's detail. When the capability probe finds `ListBucketsInfo`, use it directly. Otherwise a background task summarizes on a schedule with bounded concurrency (4.11 of [correctness.md](correctness.md)), default 10 minutes, configurable, and caches the result. The UI labels the time of the data. A 30-second refresh does not trigger a full fetch.
