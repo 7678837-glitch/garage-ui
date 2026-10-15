@@ -2026,7 +2026,7 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
     const MESSAGE: &str = "This bucket has no usable read-write key";
     let (s3_url, s3_seen, s3_task) = capture_requests(|_| empty_list_http()).await;
     let (admin_url, admin_task) =
-        serve_json(r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value"}"#).await;
+        serve_json(r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value","buckets":[{"id":"bkt-1","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":true,"owner":false}}]}"#).await;
     let dir = crate::util::temp_dir();
     let app = state::test_app_with(
         &dir,
@@ -2154,6 +2154,71 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
         );
     }
     s3_task.abort();
+    admin_task.abort();
+}
+
+#[tokio::test]
+async fn bucket_credential_rejects_key_without_read_write_on_the_bucket() {
+    // The key exists but only has read on bkt-1 and read+write on another bucket.
+    let (admin_url, admin_task) = serve_json(
+        r#"{"accessKeyId":"WEAK","expired":false,"buckets":[{"id":"bkt-1","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":false,"owner":false}},{"id":"bkt-2","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":true,"owner":false}}]}"#,
+    )
+    .await;
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("S3_ENDPOINT_URL", "http://127.0.0.1:9"),
+            ("S3_REGION", "garage"),
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    for body in [
+        json!({ "access_key_id": "WEAK" }),
+        json!({ "access_key_id": "" }),
+    ] {
+        let rejected = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/credential",
+                Some(&body.to_string()),
+                Some(&ada),
+            ),
+        )
+        .await;
+        assert_eq!(
+            rejected.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            rejected.body
+        );
+        assert_eq!(code_of(&rejected.body), "invalid_bucket_key");
+    }
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT access_key_id FROM bucket_keys WHERE bucket_id = 'bkt-1'")
+            .fetch_optional(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, None);
+    assert!(audit_text(&app).await.contains("invalid_bucket_key"));
+
+    let accepted = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-2/credential",
+            Some(&json!({ "access_key_id": "WEAK" }).to_string()),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    assert!(audit_text(&app).await.contains("bucket_key_selected"));
     admin_task.abort();
 }
 

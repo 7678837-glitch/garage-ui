@@ -334,6 +334,12 @@ fn normalize_s3_endpoint(raw: String) -> Option<String> {
     (!joined.is_empty()).then_some(joined)
 }
 
+/// Key metadata without the secret: name, flags, and per-bucket permissions.
+pub async fn fetch_key_info(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
+    let query = format!("id={}", percent_encode(id));
+    send(app, "GetKeyInfo", &Method::GET, &query, &[]).await
+}
+
 pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
     let query = format!("id={}&showSecretKey=true", percent_encode(id));
     send(app, "GetKeyInfo", &Method::GET, &query, &[]).await
