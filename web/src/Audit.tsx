@@ -136,6 +136,7 @@ export function Audit() {
     to: "",
     action: "",
   });
+  const activeFilterCount = Object.values(filters).filter((value) => value !== "").length;
   const [offset, setOffset] = useState(0);
   const [invalidInputs, setInvalidInputs] = useState<Record<string, boolean>>({});
   let filterError: string | null = Object.values(invalidInputs).some(Boolean) ? translate("Enter a valid UTC date and time.") : null;
@@ -155,43 +156,50 @@ export function Audit() {
   };
   return (
     <section className="ui-page" aria-label={copy("nav.audit")} aria-busy={view.busy}>
-      <div className="ui-page-header"><h2>{copy("nav.audit")}</h2></div>
-      <p className="ui-muted">{translate("Dates are in UTC.")}</p>
-      <div className="ui-toolbar">
-        {FILTER_FIELDS.map(([key, label]) => (
-          <div className="ui-field" key={key}>
-            <label htmlFor={`audit-filter-${key}`}>{copy(label)}</label>
-            <TextField.Root size="2"
-              id={`audit-filter-${key}`}
-              aria-describedby={key === "action" ? "audit-target-hint" : undefined}
-              type={key === "from" || key === "to" ? "datetime-local" : "text"}
-              step={key === "from" || key === "to" ? 1 : undefined}
-              aria-invalid={invalidInputs[key] || undefined}
-              value={filters[key]}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => {
-                const value = event.target.value;
-                setInvalidInputs((current) => ({ ...current, [key]: !event.target.validity.valid }));
-                setFilters((current) => ({ ...current, [key]: value }));
-                setOffset(0);
-              }}
-            />
-            {key === "action" ? <span id="audit-target-hint" className="ui-muted">{copy("ui.audit.target.hint")}</span> : null}
-          </div>
-        ))}
-      <Button size="2" variant="soft" color="gray"
-        type="button"
-        disabled={filterError !== null}
-        onClick={() => {
-          setExportFailed(false);
-          void exportAudit(filters).catch(() => {
-            setExportFailed(true);
-          });
-        }}
-      >
-        {copy("ui.export.audit")}</Button>
+      <div className="ui-page-header">
+        <h2>{copy("nav.audit")}</h2>
+        <Button size="2" variant="soft" color="gray"
+          type="button"
+          disabled={filterError !== null}
+          onClick={() => {
+            setExportFailed(false);
+            void exportAudit(filters).catch(() => {
+              setExportFailed(true);
+            });
+          }}
+        >
+          {copy("ui.export.audit")}</Button>
       </div>
+      <details className="ui-disclosure ui-audit-filters">
+        <summary>{copy("ui.audit.filters")}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</summary>
+        <div className="ui-form">
+          <p className="ui-muted">{translate("Dates are in UTC.")}</p>
+          <div className="ui-audit-filter-grid">
+            {FILTER_FIELDS.map(([key, label]) => (
+              <div className="ui-field" key={key}>
+                <label htmlFor={`audit-filter-${key}`}>{copy(label)}</label>
+                <TextField.Root size="2"
+                  id={`audit-filter-${key}`}
+                  aria-describedby={key === "action" ? "audit-target-hint" : undefined}
+                  type={key === "from" || key === "to" ? "datetime-local" : "text"}
+                  step={key === "from" || key === "to" ? 1 : undefined}
+                  aria-invalid={invalidInputs[key] || undefined}
+                  value={filters[key]}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setInvalidInputs((current) => ({ ...current, [key]: !event.target.validity.valid }));
+                    setFilters((current) => ({ ...current, [key]: value }));
+                    setOffset(0);
+                  }}
+                />
+                {key === "action" ? <span id="audit-target-hint" className="ui-muted">{copy("ui.audit.target.hint")}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      </details>
       {filterError ? <p className="ui-alert" role="alert">{filterError}</p> : null}
       {exportFailed ? <p>{copy("ui.export.failed")}</p> : null}
       {view.busy ? <div className="h-16 border border-line" role="status" aria-label={copy("ui.loading.audit")}>{copy("ui.loading.audit")}</div> : null}

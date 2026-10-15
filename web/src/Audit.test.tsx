@@ -109,6 +109,27 @@ function auditUrls(fetchMock: ReturnType<typeof stubAdminAudit>, kind: "list" | 
     );
 }
 
+test("keeps filters collapsed by default and preserves active values when closed", async () => {
+  stubAdminAudit();
+  renderAudit();
+  await screen.findByText("login");
+  const summary = screen.getByText("Filters", { exact: true });
+  const disclosure = summary.closest("details");
+  if (!disclosure) throw new Error("Filters summary must belong to a native disclosure");
+  expect(disclosure.open).toBe(false);
+  expect(disclosure.contains(screen.getByRole("button", { name: "Export audit" }))).toBe(false);
+  fireEvent.click(summary);
+  expect(disclosure.open).toBe(true);
+  fireEvent.change(screen.getByLabelText("Target"), { target: { value: "bucket-1" } });
+  expect(summary.textContent).toBe("Filters (1)");
+  fireEvent.click(summary);
+  expect(disclosure.open).toBe(false);
+  fireEvent.click(summary);
+  expect((screen.getByLabelText("Target") as HTMLInputElement).value).toBe("bucket-1");
+  fireEvent.change(screen.getByLabelText("Target"), { target: { value: "" } });
+  expect(summary.textContent).toBe("Filters");
+});
+
 test("filtering the audit list by user Ada", async () => {
   window.location.hash = "#audit";
   const fetchMock = stubAdminAudit();

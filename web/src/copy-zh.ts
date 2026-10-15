@@ -315,6 +315,7 @@ export const zh = {
   "ui.from": "起始",
   "ui.to": "结束",
   "ui.action": "操作",
+  "ui.audit.filters": "筛选",
   "ui.audit.target": "目标",
   "ui.audit.target.hint": "精确匹配目标，例如存储桶或密钥 ID。",
   "ui.loading.section": "正在加载{section}…",

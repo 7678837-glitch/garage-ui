@@ -313,6 +313,7 @@ export const en = {
   "ui.from": "From",
   "ui.to": "To",
   "ui.action": "Action",
+  "ui.audit.filters": "Filters",
   "ui.audit.target": "Target",
   "ui.audit.target.hint": "Exact target match, such as a bucket or key ID.",
   "ui.loading.section": "Loading {section}…",

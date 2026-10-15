@@ -1,3 +1,6 @@
+.ui-audit-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-medium); align-items: start; }
+.ui-audit-filter-grid .rt-TextFieldRoot { width: 100%; min-width: 0; }
+
 .ui-bucket-usage-mobile { display: none; }
 .ui-user-mobile-summary { display: none; }
 .ui-filter-help { color: var(--muted); font-size: 12px; }
