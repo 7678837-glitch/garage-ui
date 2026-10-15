@@ -42,7 +42,9 @@ export function garageTarget(): GarageTarget {
 export function browserProjects() {
   const browsers = ["chromium", "firefox", "webkit"] as const;
   const explicitProject = process.argv.some((arg) => arg === "--project" || arg.startsWith("--project="));
-  const selected = explicitProject ? "all" : (process.env.GARAGE_BROWSER ?? "chromium");
+  // Workers reload this configuration without the parent's CLI project arguments.
+  if (explicitProject) process.env.GARAGE_BROWSER = "all";
+  const selected = process.env.GARAGE_BROWSER ?? "chromium";
   if (selected !== "all" && !browsers.some((browser) => browser === selected)) {
     throw new Error("GARAGE_BROWSER must be chromium, firefox, webkit, or all");
   }
