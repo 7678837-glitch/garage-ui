@@ -6,12 +6,11 @@ import { evidenceDir, recordLayout } from "./layout";
 
 const nextPassword = "e2e-admin-next";
 
-const viewerLinks = ["Overview", "Buckets", "Keys", "Settings"] as const;
+const viewerLinks = ["Overview", "Nodes and layout", "Buckets", "Keys", "Settings"] as const;
 
 const hiddenLinks = [
   "Create bucket",
   "Create key",
-  "Nodes and layout",
   "Workers",
   "Block errors",
   "Audit",
