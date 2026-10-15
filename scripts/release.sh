@@ -9,6 +9,8 @@ fi
 caller_dir=$PWD
 cd "$(dirname "$0")/.."
 version=$(cat VERSION)
+# Official releases always use the stable version, including when the caller built dev locally.
+export BUILD_VERSION=$version
 commit=$(git rev-parse --verify HEAD)
 if ! git diff --quiet HEAD --; then
   echo "Release requires clean tracked source" >&2

@@ -8,8 +8,72 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  identity:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      commit: ${{ steps.identity.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read original workflow run
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/workflow-run.json"
+      - name: Assign build identity
+        id: identity
+        run: |
+          python3 - <<'PY_IDENTITY'
+          from datetime import datetime, timezone
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or commit != os.environ["GITHUB_SHA"]:
+              raise SystemExit("Checkout must match the full workflow commit")
+          version = Path("VERSION").read_text().removesuffix("\n")
+          if not re.fullmatch(r"[0-9]{8}\.[1-9][0-9]*", version):
+              raise SystemExit("VERSION must be YYYYMMDD.N")
+          datetime.strptime(version[:8], "%Y%m%d")
+          version += "-local"
+          if os.environ["GITHUB_EVENT_NAME"] == "push" and os.environ["GITHUB_REF"] == "refs/heads/dev":
+              run = json.loads((Path(os.environ["RUNNER_TEMP"]) / "workflow-run.json").read_text())
+              if (run["id"] != int(os.environ["GITHUB_RUN_ID"])
+                  or run["run_number"] != int(os.environ["GITHUB_RUN_NUMBER"])
+                  or run["run_number"] < 1 or run["head_sha"] != commit):
+                  raise SystemExit("Workflow run identity does not match this checkout")
+              created = datetime.strptime(run["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+              version = f"{created:%Y%m%d}.{run['run_number']}-dev"
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"version={version}\ncommit={commit}\n")
+          receipt = {
+              "version": version,
+              "git_commit": commit,
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+          }
+          (Path(os.environ["RUNNER_TEMP"]) / "build-identity.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY_IDENTITY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-identity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/build-identity.json
+
+  check:
+    needs: identity
+    runs-on: ubuntu-24.04
+    env:
+      BUILD_VERSION: ${{ needs.identity.outputs.version }}
+      GIT_COMMIT: ${{ needs.identity.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +96,10 @@ jobs:
           git diff --exit-code -- src/api/garage-admin-v2.ts
           bun audit --prod --audit-level=high
           bun run build
+      - name: Build identity regression checks
+        run: |
+          sh scripts/check-build-identity.sh
+          sh scripts/check-dev-version.sh
       - name: rust
         run: |
           cargo fmt --check
@@ -63,14 +131,21 @@ jobs:
           file: deploy/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
+          tags: garage-ui:${{ needs.identity.outputs.version }}
+          build-args: |
+            BUILD_VERSION=${{ needs.identity.outputs.version }}
+            GIT_COMMIT=${{ needs.identity.outputs.commit }}
 
   e2e:
+    needs: identity
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         garage-version: [v2.3.0, v2.4.1]
     env:
+      BUILD_VERSION: ${{ needs.identity.outputs.version }}
+      GIT_COMMIT: ${{ needs.identity.outputs.commit }}
       GARAGE_VERSION: ${{ matrix.garage-version }}
       GARAGE_BROWSER: chromium
     steps:

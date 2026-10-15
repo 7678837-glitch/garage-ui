@@ -97,7 +97,7 @@ The binary listens on `127.0.0.1:3909` by default. Toolchain details and develop
 
 The production build embeds `web/dist` in that binary. The runtime uses one image, process, and port; Bun is only needed while building. There is no separate frontend service, browser CDN, or Node.js runtime to configure.
 
-To build and load local Linux images separately, run `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64`. With no architecture argument, it builds both. Tags are `garage-ui:<VERSION>-amd64` and `garage-ui:<VERSION>-arm64`; the script does not publish images.
+To build and load local Linux images separately, run `scripts/build.sh --images amd64` or `scripts/build.sh --images arm64`. With no architecture argument, it builds both. Default tags are `garage-ui:<VERSION>-local-amd64` and `garage-ui:<VERSION>-local-arm64`; an explicit `BUILD_VERSION` produces `garage-ui:<BUILD_VERSION>-<architecture>`. See the [stable, development, and local version policy](docs/engineering.md#79-release-and-images). The script does not publish images.
 
 ## Keep your data and credentials safe
 

@@ -18,6 +18,7 @@ RUN apt-get update \
 WORKDIR /src
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=$GIT_COMMIT
+ARG BUILD_VERSION
 COPY rust-toolchain.toml Cargo.toml Cargo.lock VERSION ./
 COPY crates ./crates
 COPY --from=web /src/web/dist ./web/dist
@@ -32,6 +33,7 @@ RUN set -eu; \
       *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
     rustup target add "$triple"; \
+    if [ -z "${BUILD_VERSION:-}" ]; then unset BUILD_VERSION; fi; \
     cargo build --release --locked --target "$triple" -p garage-ui --bin garage-ui; \
     cp "target/${triple}/release/garage-ui" /garage-ui
 

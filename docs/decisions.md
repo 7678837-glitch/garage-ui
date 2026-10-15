@@ -127,3 +127,11 @@ On 2026-10-13 the maintainer replaced semantic versions with `YYYYMMDD.N`. The m
 The first release on a calendar day is `.1`. Another release on the same day increments `N`. A new day starts again at `.1`. The only source is the `VERSION` file at the repository root. The Cargo workspace version and `web/package.json` `version` are `YYYYMMDD.N.0`, and the trailing `.0` exists only to satisfy the manifest format. Git tags and GitHub release names match `VERSION` exactly, with no `v` prefix. Before a release commit, run `date +%Y%m%d`, then `git tag -l '<that date>.*'` and `gh release list`. Do not increment from the previous version's date. Change `VERSION` only in a release commit. Ordinary commits on the dev branch do not change it.
 
 This rule is the application version. Helm's `Chart.yaml` `version` stays valid SemVer because Helm rejects other versions. The image tag follows `VERSION`.
+
+## Development build identity
+
+On 2026-10-15 development builds adopted `YYYYMMDD.N-dev`, assigned once by the identity job in the existing `.github/workflows/ci.yml` on a `dev` push. The UTC date is the current workflow run's original `created_at`, read through the workflow-runs API, and `N` is its `run_number`. This is a workflow-wide sequence, so it does not reset each day. Keep the canonical workflow filename; forks have an independent sequence and do not allocate canonical development versions. Reruns retain the original version and full commit, even across UTC midnight. `run_attempt` belongs only in the JSON build receipt and artifact name.
+
+All build jobs reuse the identity outputs as `BUILD_VERSION` and `GIT_COMMIT`; Docker receives both arguments and tags the image with that version. The binary embeds both values and exposes them through `/healthz`. Only the identity job has `actions: read` permission. This source change does not enable the workflow on GitHub.
+
+Formal releases retain `YYYYMMDD.N` from `VERSION`, with a daily sequence reset. Ordinary development changes neither `VERSION` nor manifest or lockfile version fields. `scripts/release.sh` explicitly selects the stable version. Unassigned local builds and other CI events use `<VERSION>-local`, which makes no CI sequence claim.

@@ -63,7 +63,7 @@ Do not use container-local `127.0.0.1` for an API hosted in another container. U
 scripts/build.sh --images amd64
 ```
 
-This builds and loads `garage-ui:<VERSION>-amd64` locally. Choose `arm64` for ARM, or omit the architecture to build both. The version comes from the root `VERSION` file. `scripts/build.sh` passes the full current Git commit as `GIT_COMMIT` to native and image builds; `scripts/release.sh` uses this build path and checks the exact final images against `/healthz` for matching version and commit. The build uses buildx without cache; it does not push images.
+This builds and loads `garage-ui:<VERSION>-local-amd64` locally. Choose `arm64` for ARM, or omit the architecture to build both. An explicit `BUILD_VERSION` produces `garage-ui:<BUILD_VERSION>-<architecture>`; see the [stable, development, and local version policy](../engineering.md#79-release-and-images). `scripts/build.sh` passes the full current Git commit as `GIT_COMMIT` to native and image builds; `scripts/release.sh` uses the stable `VERSION` and checks the exact final images against `/healthz` for matching version and commit. The build uses buildx without cache; it does not push images.
 
 The runtime image contains one Rust binary with the browser assets embedded. It serves the UI and API from one process on 0.0.0.0:3909, runs as UID/GID 65532, and has no shell, Bun, or Node.js runtime. It needs no browser CDN or separate frontend deployment. Mount a writable `/data` for its UI database and generated session key; mount secret files read-only. Put a trusted HTTPS proxy in front of externally reachable deployments.
 
