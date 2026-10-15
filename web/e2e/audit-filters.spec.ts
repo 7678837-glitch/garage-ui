@@ -35,8 +35,8 @@ for (const width of [360, 1280]) {
     await expect(target).toHaveAttribute("aria-describedby", "audit-target-hint");
     await expect(audit.locator("#audit-target-hint")).toBeVisible();
     await user.fill(administrator.username);
-    await from.fill("2020-01-01T00:00:00");
-    await to.fill("2030-01-01T00:00:00");
+    await from.fill("2020-01-01T00:00");
+    await to.fill("2030-01-01T00:00");
     for (const date of [from, to]) {
       await expect(date).toHaveAttribute("type", "datetime-local");
       const box = await date.boundingBox();
