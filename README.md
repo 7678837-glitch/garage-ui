@@ -4,6 +4,8 @@
 
 # Garage UI
 
+[![Releases](https://img.shields.io/badge/Releases-GitHub-blue)](https://github.com/xjoker/garage-ui/releases)
+
 **Your Garage cluster, buckets, and files in one browser.**
 
 Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. One Rust binary serves the React interface and connects to your Garage Admin and S3 APIs. The interface uses Radix Themes for accessible controls and adapts to narrow screens.
@@ -25,7 +27,7 @@ Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleur
 - **See what needs attention:** check cluster health and capacity, manage nodes and layout, inspect workers and block errors, and run repair tasks.
 - **Keep daily work comfortable:** use light or dark mode, English or Simplified Chinese, and layouts that adapt to desktop and narrow screens.
 
-Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. Versions older than v2.3.0 cannot perform writes through the UI. The current version, **20261014.2**, is an unpublished development draft; build from source to try it. Published container images are not available for this draft.
+Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. Versions older than v2.3.0 cannot perform writes through the UI. Build from source for development. Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts; an unpublished draft does not provide public downloads.
 
 ## Build and run
 
@@ -108,10 +110,10 @@ Persist and back up `/data` in containers, or `DATA_DIR` when running the binary
 - [Operator guide and reference](docs/wiki/Home.md): deployment, configuration, storage, permissions, cluster operations, and troubleshooting.
 - [Contributing](CONTRIBUTING.md): local development, focused verification, and AI-assisted contributions.
 - [Requirements](docs/README.md): the working specification and acceptance targets. Requirements are not a record of completed verification.
-- [Roadmap](docs/roadmap.md): planned work.
-- [Nine audit fixes](evidence/nine-fixes/report.md): corrected behavior, focused regression evidence, and reproduction commands.
+- [Delivery status and roadmap](docs/roadmap.md): implemented areas, verification limits, and deferred work.
+- [Verification evidence](docs/README.md#verification-evidence): dated reports, source identities, limits, and reproduction commands.
 
-Garage UI is under active development. GitHub Actions are disabled during development; an unpublished release draft and later source commits can have different verification results.
+Garage UI is under active development. GitHub Actions are disabled during development; verification reports apply to their recorded source revisions and artifacts.
 
 ## License
 

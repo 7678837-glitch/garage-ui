@@ -1,8 +1,18 @@
 # Documentation
 
-## User guide
+## Operator guide
 
-Start with the [Garage UI user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior.
+Start with the [Garage UI operator and user guide](wiki/Home.md) for installation, configuration, everyday storage tasks, account permissions, cluster operations, and troubleshooting. These pages describe current implementation behavior.
+
+## Verification evidence
+
+Reports describe particular source revisions and environments, not every later commit:
+
+- [Nine audit fixes](../evidence/nine-fixes/report.md): corrected behavior, focused regressions, source/native/browser results, and reproduction commands.
+- [Radix migration](../evidence/radix-migration/report.md): the earlier UI migration checkpoint, container and browser results, and their limits.
+- [Screenshot metadata](images/README.md): build identity, fixture contents, and viewport sizes for the README images.
+
+See the [delivery status and roadmap](roadmap.md) for implemented areas and deferred work, [Contributing](../CONTRIBUTING.md) for current build/check entrypoints, and [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts. A draft or an evidence report does not establish a published release.
 
 ## Working specifications
 
@@ -35,6 +45,6 @@ The UI libraries are React 18, TypeScript, Vite, Radix Themes 3.3.0, `radix-ui` 
 5. [correctness.md](correctness.md). Correctness requirements.
 6. Four feature documents: [data plane](features-data.md), [cluster and layout](features-cluster.md), [identity and audit](features-access.md), [UI](features-ui.md).
 7. [engineering.md](engineering.md). Non-functional and engineering requirements (already rewritten for Rust and Bun).
-8. [roadmap.md](roadmap.md). Phases, priority, and person-days.
+8. [roadmap.md](roadmap.md). Delivery status, outstanding acceptance, and deferred scope.
 
 Section numbers follow the original draft, so the two can be compared. For example, authentication that is safe by default is still 3.1, and buckets are still 5.1.

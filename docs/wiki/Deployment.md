@@ -1,6 +1,6 @@
 # Deployment
 
-The current release is an unpublished development draft. Use the **dev** source branch for the deployment files described here. Build locally; these examples do not depend on a published Garage UI image.
+Use the **dev** source branch for the deployment files described here. Build locally; these examples do not depend on a published Garage UI image. Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts; unpublished drafts have no public downloads.
 
 ```sh
 git clone --branch dev https://github.com/xjoker/garage-ui.git

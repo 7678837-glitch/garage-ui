@@ -8,6 +8,24 @@ Read the applicable [repository instructions](AGENTS.md), the [working spec](doc
 
 Use English for code comments, errors, UI copy, documentation, commits, and pull requests. Simplified Chinese belongs in the existing UI locale catalog or deliberate non-ASCII test fixtures.
 
+## Repository and script map
+
+| Location | Purpose |
+|---|---|
+| [crates/garage-ui](crates/garage-ui) | Rust service, API handlers, authentication, SQLite state, and embedded frontend |
+| [crates/garage-loadgen](crates/garage-loadgen) | Development-only Garage test-data generator; excluded from the runtime image |
+| [web/src](web/src), [web/e2e](web/e2e) | React interface, component tests, and browser integration tests |
+| [openapi](openapi) | Pinned Garage API input; generated frontend types live in `web/src/api` |
+| [deploy](deploy) | Runtime Dockerfile, local/existing-cluster Compose examples, and UI-only Helm chart |
+| [docs](docs/README.md), [evidence](evidence) | Working spec, operator Wiki, delivery status, and revision-specific verification reports |
+| [VERSION](VERSION), [CHANGELOG.md](CHANGELOG.md) | Release identity and historical change notes |
+
+Use [scripts/build.sh](scripts/build.sh) for host or local image builds and [scripts/check-build-identity.sh](scripts/check-build-identity.sh) for the focused source-identity check. [scripts/release.sh](scripts/release.sh) owns local release artifact preparation; read [release requirements](docs/engineering.md#79-release-and-images) before using it. Publishing requires separate maintainer authorization.
+
+Specialized validation tools live under [scripts](scripts): `list-performance.ts` measures real catalog lists; `large-file-check.sh` and `large-file-browser.ts` exercise large-object and browser-thumbnail behavior; `s3-recovery-check.ts` checks same-process S3 discovery recovery; `zip-pack-memory.py` measures ZIP memory use. Read each tool's prerequisites before running it: these tools can create fixtures, write data, and use shared Docker/services. `api-split-lines.sh` compares the API module split with a supplied historical base. The scope of `secret-scan.sh` is described under [AI assistance](#use-ai-assistance-within-a-bounded-task).
+
+Keep raw local receipts under ignored `evidence-local/`; Playwright's generated `web/test-results/` and `web/playwright-report/` are ignored as well. Curate public, credential-free evidence deliberately under `evidence/`. Ignoring a path does not remove files that are already tracked.
+
 ## Set up local development
 
 Install the pinned Rust toolchain from [rust-toolchain.toml](rust-toolchain.toml) and Bun version from [web/package.json](web/package.json). From the repository root:

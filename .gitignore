@@ -6,3 +6,8 @@ web/dist
 .DS_Store
 .env
 /data
+
+# Reproducible browser output and private local validation receipts.
+/web/test-results/
+/web/playwright-report/
+/evidence-local/

@@ -1,10 +1,36 @@
-# Phased delivery
+# Delivery status and roadmap
 
-Effort is counted for one developer who knows Rust and React (person-days). The numbers follow the original draft. They were not recomputed because the backend changed to Rust or because the frontend toolchain changed to Bun. Phases are ordered by dependency. A later phase depends only on the output of the phases before it.
+The implementation now covers areas across the original phases. Phase order is a historical implementation breakdown, not a list of wholly outstanding work. Requirements in the [working spec](README.md) remain acceptance targets; implemented controls and earlier passing checks do not establish that every acceptance criterion has passed on the current source revision.
 
-A phase is complete when every acceptance criterion this chapter cites has passed. Garage v2.3.x and v2.4.1 in local containers may be used to verify that.
+## Implemented areas and recorded evidence
 
-Parallel development is described in [decisions.md](decisions.md). Split work by the items in this chapter. Items that change the same set of files do not run in parallel. The main session closes full-suite tests and commits.
+| Area | Implemented scope | Source and evidence |
+|---|---|---|
+| Build and deployment | Embedded React/Rust binary, pinned toolchains, non-root images, Compose examples, UI-only Helm chart, and development data generator | [Build script](../scripts/build.sh), [deployment files](../deploy), [load generator](../crates/garage-loadgen), [operator deployment guide](wiki/Deployment.md) |
+| Local authentication and access | Setup, local accounts, persisted sessions, role/download/share permissions, user administration, and offline account recovery | [Authentication API](../crates/garage-ui/src/api/auth.rs), [access rules](../crates/garage-ui/src/access.rs), [CLI](../crates/garage-ui/src/cli.rs), [account guide](wiki/Users-and-authentication.md) |
+| Storage and objects | Bucket/key management, object browsing, upload/download/ZIP, previews, sharing, CORS/lifecycle settings, and incomplete-upload cleanup | [Bucket UI](../web/src/Buckets.tsx), [object UI](../web/src/Objects.tsx), [bucket guide](wiki/Buckets.md), [object guide](wiki/Objects.md) |
+| Cluster and operations | Health/metrics, nodes/layout, admin tokens, workers/repair, block errors, snapshots, object inspection, and audit filtering/export | [API modules](../crates/garage-ui/src/api), [cluster guide](wiki/Cluster-and-layout.md), [maintenance guide](wiki/Maintenance.md), [audit guide](wiki/Audit.md) |
+| Interface | Radix controls, responsive navigation, light/dark themes, English/Simplified Chinese, and keyboard interaction | [Application](../web/src/App.tsx), [theme](../web/src/theme.tsx), [localization](../web/src/i18n.tsx), [migration report](../evidence/radix-migration/report.md) |
+| Audit corrections | S3 recovery/cache behavior, ZIP error propagation/cancellation, node outcomes, proxy auditing/catalog cursors, audit CSV/export buffering, and build identity | [Nine-fix report](../evidence/nine-fixes/report.md) records focused regressions and revision-specific source/native/browser checks |
+
+The reports retain exact build identities, Garage versions, test results, and limits. They are the evidence for those checkpoints; they do not validate later changes. In particular, controlled browser failures do not establish successful live destructive maintenance, and local performance checks do not establish remote-network or physical-phone performance.
+
+## Outstanding acceptance and distribution
+
+- GitHub Actions remain disabled during development. Workflow files and local results do not establish running remote CI or its release gates.
+- The [release script](../scripts/release.sh) prepares local Linux artifacts, checksums, and an SBOM. Signing and build provenance in [release requirements](engineering.md#79-release-and-images) remain distribution requirements; local artifact preparation does not establish publication. Consult [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts.
+- Re-run affected acceptance checks for the exact source/artifacts being reviewed. The [contributor guide](../CONTRIBUTING.md#verify-the-affected-behavior) owns verification commands and fixture prerequisites. Full-phase acceptance is not inferred from feature presence or older reports.
+- For private Garage certificates, the implemented path is a configured CA file or the explicit insecure option described in [Configuration](wiki/Configuration.md). The old phase-6 certificate item is not evidence of browser-facing certificate provisioning.
+
+## Deferred scope
+
+OIDC login and identity-provider role mapping/single logout, team-based bucket authorization, multi-cluster management, Unix-socket listeners/connections, multi-replica deployment, and the next major Garage Admin API remain outside this delivery. No new schedule or effort estimate is assigned here.
+
+## Original phase breakdown and estimates (historical)
+
+The tables below preserve the original single-developer Rust/React planning estimates and phase dependencies. They were not recomputed after the stack changes or reconciled against delivered work, and must not be used as remaining-effort estimates. The original phase-completion rule required every cited acceptance criterion to pass. For current status, use the sections above and revision-specific evidence.
+
+Parallel changes still require non-overlapping ownership and coordinated fixtures, service ports, test runs, and integration, as described in [Contributing](../CONTRIBUTING.md#use-ai-assistance-within-a-bounded-task).
 
 ## Phase 0: Buildable, and a baseline (P0, about 4 person-days)
 
@@ -104,11 +130,11 @@ Items in phase 3A that depend on a later phase (5.28 depends on the layout API f
 
 Section 5.17, website access, has a requirement and acceptance in the original draft. 8.1, 8.2, and the phase table above do not give it a row of its own. When the work is broken down, do not assign it to a phase.
 
-## Later
+## Originally excluded scope
 
-Not in this round: OIDC login (including mapping roles from the identity source, and single logout), bucket-level authorization by team, multi-cluster management, listening on a unix socket and connecting to one, multi-replica deployment, and tracking the next major version of the Garage Admin API.
+The original plan excluded: OIDC login (including mapping roles from the identity source, and single logout), bucket-level authorization by team, multi-cluster management, listening on a unix socket and connecting to one, multi-replica deployment, and tracking the next major version of the Garage Admin API.
 
-## Total
+## Original estimate totals (historical)
 
 P0 is 23 person-days. P1 is 21.5 person-days. P2 is 12 person-days. The total is 56.5 person-days (the later work is not included).
 

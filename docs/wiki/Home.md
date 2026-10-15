@@ -1,10 +1,12 @@
 # Garage UI user guide
 
+[![Releases](https://img.shields.io/badge/Releases-GitHub-blue)](https://github.com/xjoker/garage-ui/releases)
+
 Garage UI is an unofficial browser console for Garage, the S3-compatible object store. Use it to manage storage, access, and cluster operations without giving the browser your Garage admin token.
 
 The React interface is bundled into the Rust server. A production deployment serves the UI and API from one process and port; it needs neither a separate frontend service nor a browser CDN.
 
-The current development version is **20261014.2**, an unpublished draft. Build from the source you intend to run; a draft release does not establish that later source changes are included. Garage **v2.3.0 or newer** is required for writes. Compatibility has been exercised with v2.3.0 and v2.4.1.
+Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts. Build from the source you intend to run; an unpublished draft has no public downloads and does not establish that later source changes are included. Garage **v2.3.0 or newer** is required for writes. Compatibility has been exercised with v2.3.0 and v2.4.1.
 
 ## Start here
 
@@ -35,3 +37,5 @@ If someone has already deployed the UI, ask them for its address and a local UI 
 Garage holds objects, buckets, S3 keys, Garage admin tokens, and cluster metadata. Garage UI has its own SQLite database for UI users, sessions, audit records, ZIP download tokens, and selected bucket-key bindings. Preserve the UI data directory as well as your independent Garage backups. See [Deployment](Deployment.md#back-up-and-restore-ui-state).
 
 This guide describes implemented behavior. The repository's [working specifications](https://github.com/xjoker/garage-ui/tree/dev/docs) describe requirements and acceptance targets; they are not a completed-feature checklist.
+
+For implementation status and verification reports, use the repository [documentation index](https://github.com/xjoker/garage-ui/blob/dev/docs/README.md) and [delivery roadmap](https://github.com/xjoker/garage-ui/blob/dev/docs/roadmap.md). For local development and checks, use [Contributing](https://github.com/xjoker/garage-ui/blob/dev/CONTRIBUTING.md).
