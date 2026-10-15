@@ -17,6 +17,7 @@ mod proxy;
 mod redact;
 mod session;
 mod state;
+mod tenant;
 mod util;
 mod zip;
 

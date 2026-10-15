@@ -3,6 +3,7 @@ use super::PageQuery;
 use super::is_json_ws;
 use super::page_bounds;
 use super::page_json;
+use super::page_window;
 use super::percent_encode;
 use super::post_garage;
 use super::record;
@@ -14,6 +15,7 @@ use crate::objects;
 use crate::proxy;
 use crate::session::Current;
 use crate::state::{self, App};
+use crate::tenant;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
@@ -32,6 +34,17 @@ pub(crate) async fn list_buckets(
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::ViewBuckets)?;
     let (offset, limit) = page_bounds(&query)?;
+    if let Some(tenant) = tenant::load_for(&app, &current.user).await? {
+        // Page the granted IDs, then fetch only that page's rows.
+        let (ids, more) = page_window(tenant.granted(), offset, limit);
+        let mut items = proxy::bucket_rows(&app, ids).await?;
+        for item in &mut items {
+            if let Some(row) = item.as_object_mut() {
+                row.remove("keys");
+            }
+        }
+        return Ok(page_json(proxy::Page { items, more }));
+    }
     let page = proxy::list_buckets(&app, offset, limit).await?;
     Ok(page_json(page))
 }
@@ -107,8 +120,9 @@ pub(crate) async fn get_bucket(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ViewBuckets)?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?.is_some();
     let query = format!("id={}", percent_encode(&id));
-    proxy::dispatch(
+    let response = proxy::dispatch(
         &app,
         &current.user,
         &current.ip,
@@ -118,7 +132,30 @@ pub(crate) async fn get_bucket(
         &[],
         &headers,
     )
-    .await
+    .await?;
+    if tenant {
+        return without_keys(&app, response).await;
+    }
+    Ok(response)
+}
+
+// A tenant does not see the keys that hold permissions on its bucket.
+async fn without_keys(app: &App, response: Response) -> Result<Response, ApiError> {
+    if !response.status().is_success() {
+        return Ok(response);
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, app.settings.json_body_limit)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let mut value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| ApiError::unavailable("invalid_bucket", "Bucket info could not be read"))?;
+    if let Some(info) = value.as_object_mut() {
+        info.remove("keys");
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|_| ApiError::internal())?;
+    parts.headers.remove("content-length");
+    Ok(Response::from_parts(parts, axum::body::Body::from(bytes)))
 }
 
 pub(crate) async fn get_bucket_cors(
@@ -432,7 +469,8 @@ pub(crate) async fn list_multipart_uploads(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::ReadObjects)?;
-    let uploads = objects::list_multipart_uploads(&app, &id).await?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?;
+    let uploads = objects::list_multipart_uploads(&app, &id, tenant.as_ref()).await?;
     Ok(Json(json!({ "uploads": uploads })))
 }
 
@@ -479,15 +517,22 @@ pub(crate) async fn abort_multipart_uploads(
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::WriteObjects)?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?;
     let aborted = match abort_target(&body)? {
         AbortTarget::All => {
-            let uploads = objects::list_multipart_uploads(&app, &id).await?;
+            let uploads = objects::list_multipart_uploads(&app, &id, tenant.as_ref()).await?;
             let mut aborted = 0u64;
             for upload in uploads {
                 // One failed AbortMultipartUpload must not fail the rest, and it does not count.
-                if objects::abort_incomplete_upload(&app, &id, &upload.key, &upload.upload_id)
-                    .await
-                    .is_ok()
+                if objects::abort_incomplete_upload(
+                    &app,
+                    &id,
+                    &upload.key,
+                    &upload.upload_id,
+                    tenant.as_ref(),
+                )
+                .await
+                .is_ok()
                 {
                     aborted += 1;
                 }
@@ -495,7 +540,7 @@ pub(crate) async fn abort_multipart_uploads(
             aborted
         }
         AbortTarget::One { key, upload_id } => {
-            objects::abort_incomplete_upload(&app, &id, &key, &upload_id).await?;
+            objects::abort_incomplete_upload(&app, &id, &key, &upload_id, tenant.as_ref()).await?;
             1
         }
     };

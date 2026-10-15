@@ -970,6 +970,7 @@
                 threshold,
                 part_bytes,
             },
+            None,
         )
         .await?;
         Ok((status, stored.0))
@@ -1125,6 +1126,7 @@
                     threshold: 3,
                     part_bytes: 4,
                 },
+                None,
             )
             .await
         });
@@ -1140,6 +1142,7 @@
                     threshold: 3,
                     part_bytes: 4,
                 },
+                None,
             )
             .await
         });

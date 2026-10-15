@@ -135,12 +135,13 @@ pub async fn list(
     prefix: &str,
     limit: Option<i64>,
     next: &str,
+    tenant: Option<&BucketCredential>,
 ) -> Result<ListPage, ApiError> {
     let bucket = bucket_id.to_string();
     let prefix = prefix.to_string();
     let token = next.to_string();
     let limit = page_size(limit);
-    let page = drive(app, bucket.clone(), {
+    let page = drive(app, bucket.clone(), tenant.cloned(), {
         let prefix = prefix.clone();
         move |client| {
             let bucket = bucket.clone();
@@ -178,9 +179,10 @@ pub struct IncompleteUpload {
 pub async fn list_multipart_uploads(
     app: &App,
     bucket_id: &str,
+    tenant: Option<&BucketCredential>,
 ) -> Result<Vec<IncompleteUpload>, ApiError> {
     let bucket = bucket_id.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         async move { collect_multipart_uploads(&client, &bucket).await }
     })
@@ -252,6 +254,7 @@ pub async fn search(
     bucket_id: &str,
     query: &str,
     prefix: &str,
+    tenant: Option<&BucketCredential>,
 ) -> Result<SearchPage, ApiError> {
     if query.chars().count() < 2 {
         return Err(ApiError::bad_request(
@@ -262,7 +265,7 @@ pub async fn search(
     let bucket = bucket_id.to_string();
     let query = query.to_string();
     let prefix = prefix.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let query = query.clone();
         let prefix = prefix.clone();
@@ -271,10 +274,15 @@ pub async fn search(
     .await
 }
 
-pub async fn metadata(app: &App, bucket_id: &str, key: &str) -> Result<ObjectMeta, ApiError> {
+pub async fn metadata(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    tenant: Option<&BucketCredential>,
+) -> Result<ObjectMeta, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let key = key.clone();
         async move { head(&client, &bucket, &key).await }
@@ -294,6 +302,7 @@ pub async fn presign_get(
     bucket_id: &str,
     key: &str,
     ttl_secs: u64,
+    tenant: Option<&BucketCredential>,
 ) -> Result<String, ApiError> {
     // Sign the issued link for the public address. The internal endpoint must not appear in this URL.
     let endpoint = app
@@ -305,6 +314,19 @@ pub async fn presign_get(
             ApiError::not_implemented("share_unavailable", "Public S3 address is not configured")
         })?;
     let (_, region) = proxy::s3_origin(app).await;
+    if let Some(credential) = tenant {
+        // A tenant link is signed with the bound key. It never reads the shared credential cache.
+        let client = s3_client(
+            &region,
+            &endpoint,
+            credential,
+            app.settings.tls_insecure,
+            app.settings.tls_ca_pem.as_deref(),
+        );
+        return sign_get(&client, bucket_id, key, ttl_secs)
+            .await
+            .map_err(|_| ApiError::internal());
+    }
     let bucket = bucket_id.to_string();
     let object_key = key.to_string();
     let sources = sources(app, bucket_id).await;
@@ -362,8 +384,13 @@ async fn sign_get(
     Ok(signed.uri().to_string())
 }
 
-pub async fn open(app: &App, bucket_id: &str, key: &str) -> Result<ObjectStream, ApiError> {
-    open_ranged(app, bucket_id, key, None).await
+pub async fn open(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    tenant: Option<&BucketCredential>,
+) -> Result<ObjectStream, ApiError> {
+    open_ranged(app, bucket_id, key, None, tenant).await
 }
 
 pub async fn open_ranged(
@@ -371,10 +398,11 @@ pub async fn open_ranged(
     bucket_id: &str,
     key: &str,
     range: Option<String>,
+    tenant: Option<&BucketCredential>,
 ) -> Result<ObjectStream, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let key = key.clone();
         let range = range.clone();
@@ -383,6 +411,8 @@ pub async fn open_ranged(
     .await
 }
 
+// The tenant credential is the one argument beyond the upload itself.
+#[allow(clippy::too_many_arguments)]
 pub async fn put(
     app: &App,
     bucket_id: &str,
@@ -391,9 +421,10 @@ pub async fn put(
     content_type: Option<String>,
     body: axum::body::Body,
     plan: PartPlan,
+    tenant: Option<&BucketCredential>,
 ) -> Result<PutResult, ApiError> {
     if size <= plan.threshold {
-        return put_whole(app, bucket_id, key, size, content_type, body).await;
+        return put_whole(app, bucket_id, key, size, content_type, body, tenant).await;
     }
     put_multipart(
         app,
@@ -403,6 +434,7 @@ pub async fn put(
         content_type,
         body,
         plan.part_bytes,
+        tenant,
     )
     .await
 }
@@ -414,13 +446,14 @@ async fn put_whole(
     size: u64,
     content_type: Option<String>,
     body: axum::body::Body,
+    tenant: Option<&BucketCredential>,
 ) -> Result<PutResult, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
     let length = i64::try_from(size).unwrap_or(i64::MAX);
     // drive retries once on 403. The body can be read only once, so spool it and build both ByteStreams from the file.
     let replay = ReplayBody::new(app.settings.data_dir.clone(), size, body);
-    let etag = drive(app, bucket.clone(), {
+    let etag = drive(app, bucket.clone(), tenant.cloned(), {
         let bucket = bucket.clone();
         let key = key.clone();
         let replay = Arc::clone(&replay);
@@ -439,6 +472,8 @@ async fn put_whole(
     Ok(PutResult { key, etag, size })
 }
 
+// The tenant credential is the one argument beyond the upload itself.
+#[allow(clippy::too_many_arguments)]
 async fn put_multipart(
     app: &App,
     bucket_id: &str,
@@ -447,13 +482,14 @@ async fn put_multipart(
     content_type: Option<String>,
     body: axum::body::Body,
     part_size: u64,
+    tenant: Option<&BucketCredential>,
 ) -> Result<PutResult, ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
     // When Create returns 403, drive retries, so the request body must still be unread.
     let source = Arc::new(Mutex::new(Some(body)));
     let upload_buffer = Arc::clone(&app.upload_buffer);
-    let etag = drive(app, bucket.clone(), {
+    let etag = drive(app, bucket.clone(), tenant.cloned(), {
         let bucket = bucket.clone();
         let key = key.clone();
         let source = Arc::clone(&source);
@@ -483,10 +519,15 @@ async fn put_multipart(
     Ok(PutResult { key, etag, size })
 }
 
-pub async fn delete(app: &App, bucket_id: &str, key: &str) -> Result<(), ApiError> {
+pub async fn delete(
+    app: &App,
+    bucket_id: &str,
+    key: &str,
+    tenant: Option<&BucketCredential>,
+) -> Result<(), ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let key = key.clone();
         async move {
@@ -504,9 +545,10 @@ pub async fn delete_many(
     app: &App,
     bucket_id: &str,
     keys: Vec<String>,
+    tenant: Option<&BucketCredential>,
 ) -> Result<DeleteMany, ApiError> {
     let bucket = bucket_id.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let keys = keys.clone();
         async move { remove_objects(&client, &bucket, &keys).await }
@@ -518,6 +560,7 @@ pub async fn delete_prefix(
     app: &App,
     bucket_id: &str,
     prefix: &str,
+    tenant: Option<&BucketCredential>,
 ) -> Result<PrefixDelete, ApiError> {
     let mut deleted = 0u64;
     let mut errors = Vec::new();
@@ -526,7 +569,7 @@ pub async fn delete_prefix(
         let bucket = bucket_id.to_string();
         let prefix = prefix.to_string();
         let listed = token.clone();
-        let page = drive(app, bucket.clone(), move |client| {
+        let page = drive(app, bucket.clone(), tenant.cloned(), move |client| {
             let bucket = bucket.clone();
             let prefix = prefix.clone();
             let listed = listed.clone();
@@ -545,7 +588,7 @@ pub async fn delete_prefix(
         .await?;
         let keys: Vec<String> = page.objects.into_iter().map(|object| object.key).collect();
         if !keys.is_empty() {
-            let batch = delete_many(app, bucket_id, keys).await?;
+            let batch = delete_many(app, bucket_id, keys, tenant).await?;
             deleted += batch.deleted.len() as u64;
             errors.extend(batch.failed);
         }
@@ -1203,11 +1246,12 @@ pub async fn abort_incomplete_upload(
     bucket_id: &str,
     key: &str,
     upload_id: &str,
+    tenant: Option<&BucketCredential>,
 ) -> Result<(), ApiError> {
     let bucket = bucket_id.to_string();
     let key = key.to_string();
     let upload_id = upload_id.to_string();
-    drive(app, bucket.clone(), move |client| {
+    drive(app, bucket.clone(), tenant.cloned(), move |client| {
         let bucket = bucket.clone();
         let key = key.clone();
         let upload_id = upload_id.clone();
@@ -1401,7 +1445,14 @@ fn cut(message: &str) -> String {
     message.chars().take(200).collect()
 }
 
-async fn drive<T, F, Fut>(app: &App, bucket_id: String, mut call: F) -> Result<T, ApiError>
+// A tenant credential builds the S3 client directly. The project key, the bucket key, the shared
+// credential cache and the 403 retry are not involved, and a Garage 403 is final.
+async fn drive<T, F, Fut>(
+    app: &App,
+    bucket_id: String,
+    tenant: Option<BucketCredential>,
+    mut call: F,
+) -> Result<T, ApiError>
 where
     T: Send + 'static,
     F: FnMut(Client) -> Fut + Send + 'static,
@@ -1411,6 +1462,23 @@ where
     let endpoint = endpoint
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unavailable("garage_unavailable", "Garage is unavailable"))?;
+    if let Some(credential) = tenant {
+        let client = s3_client(
+            &region,
+            &endpoint,
+            &credential,
+            app.settings.tls_insecure,
+            app.settings.tls_ca_pem.as_deref(),
+        );
+        return match call(client).await {
+            Ok(value) => Ok(value),
+            Err(S3Failure::Forbidden(_)) => Err(ApiError::forbidden(
+                "garage_denied",
+                "Garage denied the request for the key bound to this account",
+            )),
+            Err(failure) => Err(failure_error(failure)),
+        };
+    }
     let sources = sources(app, &bucket_id).await;
     let tls_insecure = app.settings.tls_insecure;
     let tls_ca_pem = app.settings.tls_ca_pem.clone();
@@ -1441,14 +1509,7 @@ where
         .await;
     match attempted {
         Ok(Ok(value)) => Ok(value),
-        Ok(Err(S3Failure::NotFound)) => Err(ApiError::not_found()),
-        Ok(Err(S3Failure::Upstream { status, message })) => Err(s3_error(status, message)),
-        Ok(Err(S3Failure::Forbidden(message))) => Err(s3_error(403, message)),
-        Ok(Err(S3Failure::Down)) => Err(ApiError::unavailable(
-            "garage_unavailable",
-            "Garage is unavailable",
-        )),
-        Ok(Err(S3Failure::Local)) => Err(ApiError::internal()),
+        Ok(Err(failure)) => Err(failure_error(failure)),
         Err(credentials::ReadFailure::NoUsableKey(missing)) => Err(ApiError::new(
             StatusCode::from_u16(missing.status()).expect("412"),
             missing.code(),
@@ -1458,6 +1519,16 @@ where
             let message = notes.lock().expect("403 note").take().unwrap_or_default();
             Err(s3_error(403, message))
         }
+    }
+}
+
+fn failure_error(failure: S3Failure) -> ApiError {
+    match failure {
+        S3Failure::NotFound => ApiError::not_found(),
+        S3Failure::Upstream { status, message } => s3_error(status, message),
+        S3Failure::Forbidden(message) => s3_error(403, message),
+        S3Failure::Down => ApiError::unavailable("garage_unavailable", "Garage is unavailable"),
+        S3Failure::Local => ApiError::internal(),
     }
 }
 
@@ -2286,7 +2357,7 @@ metrics_token = "{metrics}"
             crate::limit::test_quota(),
         )
         .await;
-        let opened = open(&app, "objects", "one-mib.bin")
+        let opened = open(&app, "objects", "one-mib.bin", None)
             .await
             .unwrap_or_else(|error| panic!("get failed: {error:?}"));
         let mut body = std::pin::pin!(opened.body);

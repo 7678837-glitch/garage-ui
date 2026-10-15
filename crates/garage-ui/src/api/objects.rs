@@ -17,6 +17,8 @@ use crate::preview::preview_policy;
 use crate::proxy;
 use crate::session::Current;
 use crate::state::App;
+use crate::state::credentials::BucketCredential;
+use crate::tenant;
 use crate::util::{self, hex_encode, random_bytes};
 use axum::Json;
 use axum::Router;
@@ -69,6 +71,7 @@ async fn object_body(
     view: ObjectBody,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
+    tenant::deny(&current.user)?;
     let fixtures = app.fixtures.lock().expect("fixtures");
     let Some(fixture) = fixtures.get(name).cloned() else {
         return Err(ApiError::not_found());
@@ -119,6 +122,7 @@ pub(crate) async fn create_archive_token(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
+    tenant::scope(&app, &current.user, &id).await?;
     let keys = archive_keys(&body)?;
     let token = hex_encode(&random_bytes(32).map_err(|_| ApiError::internal())?);
     let keys_json = serde_json::to_string(&keys).map_err(|_| ApiError::internal())?;
@@ -140,6 +144,7 @@ pub(crate) async fn download_archive(
     Query(query): Query<ArchiveTokenQuery>,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::ReadObjects)?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?;
     let Some(row) = db::load_zip(&app.db, &query.token)
         .await
         .map_err(|_| ApiError::internal())?
@@ -170,7 +175,7 @@ pub(crate) async fn download_archive(
     let app = app.clone();
     // The handler returns this response before the task opens the next object.
     let task = tokio::spawn(async move {
-        let result = write_archive(app, bucket, planned, tx.clone()).await;
+        let result = write_archive(app, bucket, planned, tx.clone(), tenant).await;
         tx.finish(result);
     });
     let mut response = Response::new(Body::new(ZipChunks { rx, task }));
@@ -191,12 +196,13 @@ async fn write_archive(
     bucket: String,
     planned: Vec<crate::zip::PlannedFile>,
     tx: ArchiveTx,
+    tenant: Option<BucketCredential>,
 ) -> Result<(), ApiError> {
     let mut archive = crate::zip::ArchiveSink::new(ChunkWriter { tx: tx.clone() });
     let mut errors = Vec::new();
     let mut names = Vec::new();
     for entry in planned {
-        match objects::open(&app, &bucket, &entry.key).await {
+        match objects::open(&app, &bucket, &entry.key, tenant.as_ref()).await {
             Ok(opened) => {
                 tx.ready(crate::zip::header_room(&entry.name))
                     .await
@@ -565,6 +571,7 @@ pub(crate) async fn share(
         .await?;
         return Err(ApiError::forbidden("forbidden", "Not allowed"));
     }
+    let tenant = tenant::scope(&app, &current.user, &body.bucket).await?;
     if !app.settings.share_enabled() {
         return Err(ApiError::not_implemented(
             "share_unavailable",
@@ -573,7 +580,7 @@ pub(crate) async fn share(
     }
     // Seconds beyond 7 days are truncated before signing. The audit row stores the truncated value.
     let ttl = access::cap_share_ttl(body.ttl_seconds);
-    let url = objects::presign_get(&app, &body.bucket, &body.key, ttl).await?;
+    let url = objects::presign_get(&app, &body.bucket, &body.key, ttl, tenant.as_ref()).await?;
     let website_url = share_website(&app, &current, &body.bucket).await;
     let target = format!("{}\n{}\n{ttl}", body.bucket, body.key);
     record(
@@ -671,6 +678,7 @@ pub(crate) async fn upload_object(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     require(&current.user, Op::WriteObjects)?;
+    tenant::deny(&current.user)?;
     upload_length(&headers, app.settings.max_upload_bytes)?;
     Err(ApiError::not_implemented(
         "not_implemented",
@@ -733,6 +741,12 @@ pub(crate) async fn put_bucket_object(
     if let Err(error) = require(&current.user, Op::WriteObjects) {
         return reject_object(&app, &current, "denied", "PUT", &path, &target, error).await;
     }
+    let tenant = match tenant::scope(&app, &current.user, &id).await {
+        Ok(tenant) => tenant,
+        Err(error) => {
+            return reject_object(&app, &current, "error", "PUT", &path, &target, error).await;
+        }
+    };
     let size = match upload_length(&headers, app.settings.max_upload_bytes) {
         Ok(size) => size,
         Err(error) => {
@@ -751,6 +765,7 @@ pub(crate) async fn put_bucket_object(
             threshold: 64 * 1024 * 1024,
             part_bytes: 16 * 1024 * 1024,
         },
+        tenant.as_ref(),
     )
     .await
     {
@@ -765,6 +780,8 @@ pub(crate) async fn put_bucket_object(
     }
 }
 
+// The tenant credential is the one argument beyond the upload itself.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn put_object(
     app: &App,
     id: &str,
@@ -773,10 +790,11 @@ pub(crate) async fn put_object(
     content_type: Option<String>,
     body: Body,
     plan: objects::PartPlan,
+    tenant: Option<&BucketCredential>,
 ) -> Result<(StatusCode, Json<objects::PutResult>), ApiError> {
     // Permission and length failures return from put_bucket_object. The in-flight upload count starts here.
     let _in_flight = app.begin_upload();
-    let stored = objects::put(app, id, key, size, content_type, body, plan).await?;
+    let stored = objects::put(app, id, key, size, content_type, body, plan, tenant).await?;
     Ok((StatusCode::CREATED, Json(stored)))
 }
 
@@ -800,12 +818,14 @@ pub(crate) async fn list_bucket_objects(
     Query(query): Query<ObjectListQuery>,
 ) -> Result<Json<objects::ListPage>, ApiError> {
     require(&current.user, Op::ViewObjects)?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?;
     let page = objects::list(
         &app,
         &id,
         query.prefix.as_deref().unwrap_or(""),
         query.limit,
         query.next.as_deref().unwrap_or(""),
+        tenant.as_ref(),
     )
     .await?;
     Ok(Json(page))
@@ -818,11 +838,13 @@ pub(crate) async fn search_bucket_objects(
     Query(query): Query<ObjectSearchQuery>,
 ) -> Result<Json<objects::SearchPage>, ApiError> {
     require(&current.user, Op::ViewObjects)?;
+    let tenant = tenant::scope(&app, &current.user, &id).await?;
     let page = objects::search(
         &app,
         &id,
         query.q.as_deref().unwrap_or(""),
         query.prefix.as_deref().unwrap_or(""),
+        tenant.as_ref(),
     )
     .await?;
     Ok(Json(page))
@@ -990,11 +1012,13 @@ pub(crate) async fn object_metadata(
     match intent {
         ObjectIntent::Thumbnail => {
             require(&current.user, Op::ReadObjects)?;
-            thumb::deliver(&app, &id, &key).await
+            let tenant = tenant::scope(&app, &current.user, &id).await?;
+            thumb::deliver(&app, &id, &key, tenant.as_ref()).await
         }
         ObjectIntent::Meta => {
             require(&current.user, Op::ViewObjects)?;
-            let meta = objects::metadata(&app, &id, &key).await?;
+            let tenant = tenant::scope(&app, &current.user, &id).await?;
+            let meta = objects::metadata(&app, &id, &key, tenant.as_ref()).await?;
             let mut response = Json(meta).into_response();
             response.headers_mut().insert(
                 "cache-control",
@@ -1004,8 +1028,9 @@ pub(crate) async fn object_metadata(
         }
         ObjectIntent::Transfer(transfer) => {
             require(&current.user, Op::ReadObjects)?;
+            let tenant = tenant::scope(&app, &current.user, &id).await?;
             let range = byte_range(&headers)?;
-            let opened = objects::open_ranged(&app, &id, &key, range).await?;
+            let opened = objects::open_ranged(&app, &id, &key, range, tenant.as_ref()).await?;
             stream_object(transfer, &key, opened)
         }
     }
@@ -1041,8 +1066,14 @@ pub(crate) async fn delete_bucket_object(
     if let Err(error) = require(&current.user, Op::WriteObjects) {
         return reject_object(&app, &current, "denied", "DELETE", &path, &target, error).await;
     }
+    let tenant = match tenant::scope(&app, &current.user, &id).await {
+        Ok(tenant) => tenant,
+        Err(error) => {
+            return reject_object(&app, &current, "error", "DELETE", &path, &target, error).await;
+        }
+    };
     if query.recursive == Some(true) {
-        let outcome = match objects::delete_prefix(&app, &id, &key).await {
+        let outcome = match objects::delete_prefix(&app, &id, &key, tenant.as_ref()).await {
             Ok(outcome) => outcome,
             Err(error) => {
                 return reject_object(&app, &current, "error", "DELETE", &path, &target, error)
@@ -1062,7 +1093,7 @@ pub(crate) async fn delete_bucket_object(
         .await?;
         return Ok(Json(outcome).into_response());
     }
-    if let Err(error) = objects::delete(&app, &id, &key).await {
+    if let Err(error) = objects::delete(&app, &id, &key, tenant.as_ref()).await {
         return reject_object(&app, &current, "error", "DELETE", &path, &target, error).await;
     }
     audit_object(
@@ -1090,13 +1121,19 @@ pub(crate) async fn delete_bucket_objects(
     if let Err(error) = require(&current.user, Op::WriteObjects) {
         return reject_object(&app, &current, "denied", "POST", &path, target, error).await;
     }
+    let tenant = match tenant::scope(&app, &current.user, &id).await {
+        Ok(tenant) => tenant,
+        Err(error) => {
+            return reject_object(&app, &current, "error", "POST", &path, target, error).await;
+        }
+    };
     let keys = match delete_keys(&body) {
         Ok(keys) => keys,
         Err(error) => {
             return reject_object(&app, &current, "error", "POST", &path, target, error).await;
         }
     };
-    match objects::delete_many(&app, &id, keys).await {
+    match objects::delete_many(&app, &id, keys, tenant.as_ref()).await {
         Ok(result) => {
             audit_object(
                 &app,

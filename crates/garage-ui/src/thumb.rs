@@ -13,6 +13,7 @@ use crate::error::ApiError;
 use crate::objects::{self, ObjectMeta};
 use crate::preview::preview_policy;
 use crate::state::App;
+use crate::state::credentials::BucketCredential;
 
 const MAX_SOURCE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_PIXELS: u64 = 40_000_000;
@@ -41,8 +42,15 @@ struct Cache {
     map: HashMap<String, Stored>,
 }
 
-pub(crate) async fn deliver(app: &App, bucket: &str, key: &str) -> Result<Response, ApiError> {
-    let meta = match objects::metadata(app, bucket, key).await {
+// For a tenant, the metadata request below is signed with the bound key and runs before any
+// cache lookup, so a cached thumbnail is served only after that key has read the object.
+pub(crate) async fn deliver(
+    app: &App,
+    bucket: &str,
+    key: &str,
+    tenant: Option<&BucketCredential>,
+) -> Result<Response, ApiError> {
+    let meta = match objects::metadata(app, bucket, key, tenant).await {
         Ok(meta) => meta,
         Err(error) => return Ok(crate::error::single_error(error).await),
     };
@@ -56,7 +64,7 @@ pub(crate) async fn deliver(app: &App, bucket: &str, key: &str) -> Result<Respon
     if let Some(hit) = lookup(&meta.etag) {
         return Ok(image_response(hit));
     }
-    let opened = objects::open(app, bucket, key).await?;
+    let opened = objects::open(app, bucket, key, tenant).await?;
     let Some(bytes) = read_capped(opened.body, MAX_SOURCE_BYTES).await? else {
         return Ok(skip());
     };

@@ -647,6 +647,11 @@ mod lists {
         list_catalog(app, KEYS, offset, limit).await
     }
 
+    // The same row shape as a bucket list, for the given bucket IDs only.
+    pub async fn bucket_rows(app: &App, ids: Vec<String>) -> Result<Vec<Value>, ApiError> {
+        fetch_details(app, BUCKETS.detail, ids).await
+    }
+
     async fn list_catalog(
         app: &App,
         catalog: Catalog,
@@ -1062,7 +1067,7 @@ mod lists {
 }
 
 #[allow(dead_code, unused_imports)]
-pub use lists::{ListProbes, Page, Probe, list_buckets, list_keys, list_probes};
+pub use lists::{ListProbes, Page, Probe, bucket_rows, list_buckets, list_keys, list_probes};
 
 // These parameters correspond to the audit table columns.
 #[allow(clippy::too_many_arguments)]

@@ -9,6 +9,7 @@ use crate::error::ApiError;
 use crate::proxy;
 use crate::session::Current;
 use crate::state::App;
+use crate::tenant;
 use crate::util;
 use axum::Json;
 use axum::Router;
@@ -1193,6 +1194,7 @@ pub(crate) async fn garage(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    tenant::deny(&current.user)?;
     proxy::dispatch(
         &app,
         &current.user,
