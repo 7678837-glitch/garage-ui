@@ -240,6 +240,9 @@ for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const)
       const secret = panel.getByRole("button", { name: /^View secret/ });
       await expect(secret).toBeVisible();
       await secret.click();
+      const confirm = page.getByRole("dialog", { name: `Confirm ${id}`, exact: true });
+      await expect(confirm).toContainText("Viewing a secret is audited.");
+      await confirm.getByRole("button", { name: "Confirm", exact: true }).click();
       const secretDialog = page.getByRole("dialog");
       await expect(secretDialog.getByLabel("Secret access key", { exact: true })).toHaveAttribute("type", "password");
       await expect(secretDialog.getByRole("button", { name: "Copy secret", exact: true })).toBeVisible();
