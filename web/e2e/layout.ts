@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { garageTarget } from "./garage-target";
 
-const evidenceBase = process.env.GARAGE_UI_E2E_EVIDENCE_DIR ?? fileURLToPath(new URL("../../evidence/e2e/", import.meta.url));
+const evidenceBase = process.env.GARAGE_UI_E2E_EVIDENCE_DIR ?? fileURLToPath(new URL("../../evidence-local/e2e/", import.meta.url));
 export const evidenceDir = join(evidenceBase, garageTarget().version);
 
 const widths = [360, 390, 768, 1280] as const;

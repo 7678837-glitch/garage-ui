@@ -128,14 +128,15 @@ for (const width of [360, 390, 768, 1280]) {
         const audit = page.getByRole('region', { name: 'Audit', exact: true });
         await expect(audit.getByRole('cell', { name: admin, exact: true }).first()).toBeVisible();
         await shot(page, 'audit', width);
+        await audit.locator('summary').filter({ hasText: /^Filters/ }).click();
         await audit.getByLabel('User', { exact: true }).fill('no-such-allpages');
         await expect(audit.getByText('There are no audit events.', { exact: true })).toBeVisible();
         await audit.getByLabel('User', { exact: true }).fill(admin);
         await audit.getByLabel('From', { exact: true }).fill('2020-01-01T00:00');
         await audit.getByLabel('To', { exact: true }).fill('2030-01-01T00:00');
-        await audit.getByLabel('Action', { exact: true }).fill('no-such-allpages-action');
+        await audit.getByLabel('Target', { exact: true }).fill('no-such-allpages-action');
         await expect(audit.getByText('There are no audit events.', { exact: true })).toBeVisible();
-        await audit.getByLabel('Action', { exact: true }).fill('');
+        await audit.getByLabel('Target', { exact: true }).fill('');
         await expect(audit.getByRole('cell', { name: admin, exact: true }).first()).toBeVisible();
         await shot(page, 'audit-filtered', width);
         const dl = page.waitForEvent('download');

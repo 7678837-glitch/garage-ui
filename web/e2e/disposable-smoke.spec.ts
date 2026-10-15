@@ -6,7 +6,7 @@ import { assertAuthenticated, closeUpload, openAccount, openNavigation, openUplo
 import { submitLogin } from "./login";
 
 for (const width of [360, 1280]) {
-  test(`auth, bucket, file transfer, and audit export at ${width}px`, async ({ page }) => {
+  test(`auth, bucket, file transfer, and audit export at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/");
     await page.getByLabel("Username").fill(administrator.username);
@@ -65,8 +65,8 @@ for (const width of [360, 1280]) {
       await objects.getByRole("link", { name: "Download", exact: true }).click();
       const download = await downloadPromise;
       expect(download.suggestedFilename()).toBe(filename);
-      const saved = await download.path();
-      if (saved === null) throw new Error("Object download did not write a file");
+      const saved = testInfo.outputPath("browser-smoke.txt");
+      await download.saveAs(saved);
       expect(await readFile(saved, "utf8")).toBe(contents);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 
@@ -77,8 +77,8 @@ for (const width of [360, 1280]) {
       await page.getByRole("button", { name: "Export audit", exact: true }).click();
       const exported = await exportPromise;
       expect(exported.suggestedFilename()).toBe("audit.csv");
-      const csvPath = await exported.path();
-      if (csvPath === null) throw new Error("Audit export did not write a file");
+      const csvPath = testInfo.outputPath("audit.csv");
+      await exported.saveAs(csvPath);
       const csv = await readFile(csvPath, "utf8");
       expect(csv.split(/\r?\n/)[0]).toContain("username");
       expect(csv).toContain(administrator.username);

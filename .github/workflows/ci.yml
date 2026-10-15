@@ -156,6 +156,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - uses: dtolnay/rust-toolchain@1.99.0
+      - name: Pull the Garage image for Rust CORS checks
+        run: docker pull --platform linux/amd64 dxflrs/garage:v2.4.1
       - name: Install browser dependencies
         working-directory: web
         run: |
