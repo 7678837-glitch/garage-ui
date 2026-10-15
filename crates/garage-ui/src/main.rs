@@ -32,6 +32,7 @@ fn main() -> anyhow::Result<()> {
 async fn serve() -> anyhow::Result<()> {
     let app = boot().await?;
     garage_ui::start_audit_retention(app.db.clone());
+    garage_ui::start_limit_pruning(&app);
     let host = std::env::var("HOST").ok();
     let addr = listen_addr(host.as_deref())?;
     let listener = TcpListener::bind(addr)

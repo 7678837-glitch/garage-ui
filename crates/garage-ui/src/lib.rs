@@ -56,6 +56,18 @@ pub fn start_audit_retention(pool: sqlx::SqlitePool) {
     }));
 }
 
+pub fn start_limit_pruning(app: &state::App) {
+    let limits = std::sync::Arc::clone(&app.limits);
+    drop(tokio::spawn(async move {
+        let mut tick = tokio::time::interval(limit::PRUNE_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            limits.prune();
+        }
+    }));
+}
+
 #[cfg(test)]
 #[test]
 fn server_timeouts_follow_the_env() {

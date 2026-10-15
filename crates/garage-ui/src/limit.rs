@@ -30,7 +30,7 @@ impl Limits {
     }
 
     pub fn login(&self, ip: &str, username: &str) -> Result<(), Duration> {
-        let key = format!("{ip}\n{}", username.to_lowercase());
+        let key = format!("{ip}\n{}", limiter_name(username));
         self.hit(&self.login, &key)
     }
 
@@ -39,11 +39,27 @@ impl Limits {
     }
 
     pub fn password(&self, username: &str) -> Result<(), Duration> {
-        self.hit(&self.password, &username.to_lowercase())
+        self.hit(&self.password, &limiter_name(username))
     }
 
     pub fn share(&self, username: &str) -> Result<(), Duration> {
-        self.hit(&self.share, &username.to_lowercase())
+        self.hit(&self.share, &limiter_name(username))
+    }
+
+    /// Drops keys whose bucket has refilled completely. A refilled key behaves
+    /// exactly like an unseen one, so removing it never loosens a limit.
+    /// Without this, every distinct login name stays in memory for the life
+    /// of the process, and login is reachable without a session.
+    pub fn prune(&self) {
+        for limiter in [&self.login, &self.init, &self.password, &self.share] {
+            limiter.retain_recent();
+            limiter.shrink_to_fit();
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked(&self) -> usize {
+        self.login.len() + self.init.len() + self.password.len() + self.share.len()
     }
 
     fn hit(&self, limiter: &Limiter, key: &str) -> Result<(), Duration> {
@@ -53,6 +69,21 @@ impl Limits {
         }
     }
 }
+
+/// Valid usernames are at most `MAX_USERNAME_CHARS` characters. Longer input
+/// cannot match an account, so keying on the prefix keeps one request from
+/// storing up to a full JSON body in the limiter while still counting it.
+const MAX_USERNAME_CHARS: usize = 64;
+
+fn limiter_name(username: &str) -> String {
+    username
+        .chars()
+        .take(MAX_USERNAME_CHARS)
+        .collect::<String>()
+        .to_lowercase()
+}
+
+pub const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn production_quota() -> Quota {
     Quota::per_minute(NonZeroU32::new(10).expect("10"))
@@ -126,6 +157,37 @@ mod tests {
         }
         assert!(limits.login("10.0.0.2", "ada").is_err());
         assert!(limits.login("10.0.0.3", "Ada").is_ok());
+    }
+
+    #[test]
+    fn oversized_login_names_share_one_bounded_key() {
+        let limits = Limits::new(production_quota());
+        let base = "a".repeat(MAX_USERNAME_CHARS);
+        for tail in 0..10 {
+            let name = format!("{base}{tail}{}", "x".repeat(10_000));
+            assert!(limits.login("10.0.0.1", &name).is_ok());
+        }
+        assert!(limits.login("10.0.0.1", &format!("{base}zzz")).is_err());
+        assert_eq!(limits.login.len(), 1);
+    }
+
+    #[test]
+    fn prune_forgets_refilled_keys_and_keeps_active_ones() {
+        let limits = Limits::new(test_quota());
+        for n in 0..500 {
+            assert!(limits.login("10.0.0.1", &format!("user{n}")).is_ok());
+        }
+        assert!(limits.share("ada").is_ok());
+        assert_eq!(limits.tracked(), 501);
+        // test_quota emits one cell per 200 ms. A key drops once its theoretical
+        // arrival time is a full period behind the clock, so wait past 2 periods.
+        std::thread::sleep(Duration::from_millis(600));
+        for _ in 0..10 {
+            let _ = limits.login("10.0.0.9", "busy");
+        }
+        limits.prune();
+        assert_eq!(limits.tracked(), 1, "only the exhausted key should remain");
+        assert!(limits.login("10.0.0.9", "busy").is_err());
     }
 
     #[tokio::test]
