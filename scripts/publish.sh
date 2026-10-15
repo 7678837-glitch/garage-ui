@@ -96,6 +96,18 @@ case $(uname -m) in
 esac
 docker pull --platform "$host" "$registry:$version"
 verify_image "$registry:$version" "$host"
+# A new ghcr package starts private, and the pull above used this machine's login.
+# Read the index with an anonymous registry token, as a user without an account would.
+anon_token=$(curl -fsS "https://ghcr.io/token?scope=repository:$repo:pull" 2>/dev/null |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])' 2>/dev/null) || anon_token=
+if [ -z "$anon_token" ] || ! curl -fsS -o /dev/null -H "Authorization: Bearer $anon_token" \
+  -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+  "https://ghcr.io/v2/$repo/manifests/$version" 2>/dev/null; then
+  echo "$registry:$version is not publicly readable. Set the package to public at" >&2
+  echo "  https://github.com/users/xjoker/packages/container/garage-ui/settings" >&2
+  echo "then run this script again; the pushes above are safe to repeat." >&2
+  exit 1
+fi
 
 # The tag is created when the owner publishes the draft, at the commit this release was built from.
 if gh release view "$version" --repo "$repo" >/dev/null 2>&1; then
