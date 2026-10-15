@@ -13,6 +13,8 @@ The implementation now covers areas across the original phases. Phase order is a
 | Interface | Radix controls, responsive navigation, light/dark themes, English/Simplified Chinese, and keyboard interaction | [Application](../web/src/App.tsx), [theme](../web/src/theme.tsx), [localization](../web/src/i18n.tsx), [migration report](../evidence/radix-migration/report.md) |
 | Audit corrections | S3 recovery/cache behavior, ZIP error propagation/cancellation, node outcomes, proxy auditing/catalog cursors, audit CSV/export buffering, and build identity | [Nine-fix report](../evidence/nine-fixes/report.md) records focused regressions and revision-specific source/native/browser checks |
 
+The [remaining-improvement convergence report](../evidence/convergence/report.md) records the current development checkpoint, including combined Rust/browser retakes and local arm64 image validation. Consult the separate [official Garage support check](garage-support.md) for upstream support evidence; application test results alone do not establish upstream support policy.
+
 The reports retain exact build identities, Garage versions, test results, and limits. They are the evidence for those checkpoints; they do not validate later changes. In particular, controlled browser failures do not establish successful live destructive maintenance, and local performance checks do not establish remote-network or physical-phone performance.
 
 ## Outstanding acceptance and distribution

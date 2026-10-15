@@ -27,7 +27,7 @@ Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleur
 - **See what needs attention:** check cluster health and capacity, manage nodes and layout, inspect workers and block errors, and run repair tasks.
 - **Keep daily work comfortable:** use light or dark mode, English or Simplified Chinese, and layouts that adapt to desktop and narrow screens.
 
-Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. Versions older than v2.3.0 cannot perform writes through the UI. Build from source for development. Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts; an unpublished draft does not provide public downloads.
+Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. See the [official Garage support assessment](docs/garage-support.md) for the stable API match, UI gaps, vendor limits, and verification boundary. Versions older than v2.3.0 cannot perform writes through the UI. Build from source for development. Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts; an unpublished draft does not provide public downloads.
 
 ## Build and run
 
@@ -110,6 +110,7 @@ Persist and back up `/data` in containers, or `DATA_DIR` when running the binary
 - [Operator guide and reference](docs/wiki/Home.md): deployment, configuration, storage, permissions, cluster operations, and troubleshooting.
 - [Contributing](CONTRIBUTING.md): local development, focused verification, and AI-assisted contributions.
 - [Requirements](docs/README.md): the working specification and acceptance targets. Requirements are not a record of completed verification.
+- [Official Garage support assessment](docs/garage-support.md): supported releases, upstream API drift, feature gaps, and validation limits.
 - [Delivery status and roadmap](docs/roadmap.md): implemented areas, verification limits, and deferred work.
 - [Verification evidence](docs/README.md#verification-evidence): dated reports, source identities, limits, and reproduction commands.
 

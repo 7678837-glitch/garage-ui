@@ -1,4 +1,5 @@
 - [Home](Home.md)
+- [Garage support assessment](https://github.com/xjoker/garage-ui/blob/dev/docs/garage-support.md)
 - [Getting started](Getting-started.md)
 - [Deployment](Deployment.md)
 - [Configuration](Configuration.md)

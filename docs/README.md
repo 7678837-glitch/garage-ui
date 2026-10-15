@@ -8,6 +8,8 @@ Start with the [Garage UI operator and user guide](wiki/Home.md) for installatio
 
 Reports describe particular source revisions and environments, not every later commit:
 
+- [Remaining-improvement convergence](../evidence/convergence/report.md): final interface, documentation, verification tooling, scanner, and build-identity behavior, with combined-run limits and reproduction commands.
+- [Official Garage support check](garage-support.md): upstream version/support evidence, separate from application verification.
 - [Nine audit fixes](../evidence/nine-fixes/report.md): corrected behavior, focused regressions, source/native/browser results, and reproduction commands.
 - [Radix migration](../evidence/radix-migration/report.md): the earlier UI migration checkpoint, container and browser results, and their limits.
 - [Screenshot metadata](images/README.md): build identity, fixture contents, and viewport sizes for the README images.
