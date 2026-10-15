@@ -24,7 +24,8 @@ persistence:
 # Do not commit a token, password, private key, or S3 secret, and do not paste one into this file.
 # Store the value outside git, then pass it with --set. For the admin token:
 #   helm upgrade --install garage-ui deploy/helm/garage-ui --set secrets.garageAdminToken="$(cat /path/outside/git/admin-token)"
-# Use the same form for the other keys. An empty value is omitted from the pod.
+# Use the same form for the other keys. An empty value is omitted. Non-empty values are
+# stored in the Secret <release>-secrets and referenced from the pod, never written into the Deployment.
 # Set s3AccessKeyId and s3SecretAccessKey together, or leave both empty.
 # The process rejects a configured secret that is too short or that matches a documented placeholder.
 secrets:
@@ -32,6 +33,13 @@ secrets:
   metricsToken: ""
   s3AccessKeyId: ""
   s3SecretAccessKey: ""
+
+# Set true to trust forwarded client-address headers (sets TRUSTED_PROXY=true).
+# Enable it when the UI sits behind an ingress or proxy that overwrites X-Forwarded-For;
+# otherwise every client shares the proxy's address and one user can exhaust the login limit
+# of a username for everyone. Leave it false when clients reach the pod directly, because
+# they could then forge the header.
+trustedProxy: false
 
 # TLS for the Garage API this chart does not install.
 # insecure stays false unless the operator sets it. Only true sets GARAGE_TLS_INSECURE to 1.

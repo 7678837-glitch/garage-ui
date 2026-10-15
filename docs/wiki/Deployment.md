@@ -90,7 +90,7 @@ The existing-cluster Compose file accepts the same environment variable. Build f
 
 The [Helm chart](https://github.com/xjoker/garage-ui/tree/dev/deploy/helm/garage-ui) installs the UI only. It expects an existing Garage cluster and an image accessible to your Kubernetes nodes. Load or publish your built image using your cluster's normal workflow before installation.
 
-Create a private values file with your image repository/tag and cluster addresses. Configure `garageAdminUrl`, `s3EndpointUrl`, and `s3Region`; use `s3PublicEndpointUrl` when sharing is needed. Supply `secrets.garageAdminToken` and any metrics or S3 key pair through your private deployment configuration. Do not commit the resulting file.
+Create a private values file with your image repository/tag and cluster addresses. Configure `garageAdminUrl`, `s3EndpointUrl`, and `s3Region`; use `s3PublicEndpointUrl` when sharing is needed. Supply `secrets.garageAdminToken` and any metrics or S3 key pair through your private deployment configuration. Do not commit the resulting file. The chart stores those secrets in a Secret named `<release>-secrets` and references them from the Deployment. Set `trustedProxy: true` when the UI runs behind an ingress or proxy that overwrites `X-Forwarded-For`; it sets `TRUSTED_PROXY=true`.
 
 ```sh
 helm upgrade --install garage-ui deploy/helm/garage-ui -f private-values.yaml
