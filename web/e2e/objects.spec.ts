@@ -69,8 +69,9 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await expect(details).toContainText("text/plain");
       await expect(details.locator("pre")).toHaveText(note);
       const href = await objects.getByRole("link", { name: "Download", exact: true }).getAttribute("href");
-      expect(href).toContain("notes/a.txt");
-      expect(href).toContain("download=1");
+      const params = new URL(href ?? "", "http://127.0.0.1").searchParams;
+      expect(params.get("key")).toBe("notes/a.txt");
+      expect(params.get("download")).toBe("1");
       const downloaded = await page.request.get(href ?? "");
       expect(downloaded.status()).toBe(200);
       expect(Buffer.from(await downloaded.body())).toEqual(Buffer.from(note));
@@ -223,7 +224,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       const widePath = join(work, "wide.bin");
       expect(statSync(widePath).size).toBe(wideSize);
       const captured: { status: number; body: string } = { status: 0, body: "" };
-      const wideRoute = /\/objects\/wide\.bin$/;
+      const wideRoute = (url: URL) => url.pathname.endsWith("/object") && url.searchParams.get("key") === "wide.bin";
       await page.route(wideRoute, async (route) => {
         const request = route.request();
         if (request.method() !== "PUT") {
