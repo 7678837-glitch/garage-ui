@@ -4,7 +4,7 @@ For the complete contributor workflow, read the repository's [Contributing guide
 
 ## Build a change locally
 
-The repository pins Rust 1.99.0 and Bun 1.4.2. Build the browser assets before the Rust binary:
+The repository pins Rust 1.99.0 and Bun 1.4.2. The build script also requires Python 3 available as `python3` for version validation. Build the browser assets before the Rust binary:
 
 ```sh
 scripts/build.sh
@@ -18,7 +18,7 @@ The canonical guide pages live in [docs/wiki](https://github.com/xjoker/garage-u
 
 Write repository material in English. The Simplified Chinese locale catalog and non-ASCII test fixtures are intentional exceptions. Make a change focused enough to review independently, and explain which behavior you actually verified.
 
-GitHub Actions are disabled while development is unfinished. Do not assume a pull request has remote test coverage because a workflow file exists, and do not re-enable that workflow as part of a documentation contribution.
+The CI workflow is disabled while development is unfinished. A separate manual release workflow prepares unpublished drafts. Do not assume a pull request has remote test coverage because a workflow file exists, and do not re-enable CI as part of a documentation contribution.
 
 ## Work with an AI assistant
 

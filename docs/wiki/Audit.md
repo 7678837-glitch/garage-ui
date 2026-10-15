@@ -5,7 +5,7 @@ Only administrators can view and export UI audit records. These records are stor
 ## Find an event
 
 1. Open **Audit**.
-2. Enter **User**, **Target**, **From**, and/or **To** filters as needed.
+2. Open **Filters**, then enter **User**, **From**, **To**, and/or **Target** as needed. Changes apply immediately and return the list to its first page.
 3. Read the result, reason, method, path, target, and status alongside the username and IP address.
 4. Use pagination for additional records; the UI requests 100 records per page. Filtering and pagination run in SQLite, with one extra row fetched to determine whether another page exists.
 
@@ -14,6 +14,8 @@ Only administrators can view and export UI audit records. These records are stor
 Displayed timestamps use the UI's readable timestamp presentation; inspect the exact timestamp when comparing events with other systems. Do not infer your local timezone for the UTC filter fields.
 
 The **User** filter is an exact username match. The **Target** filter is an exact match for the event's **target** field; copy a target value from a record when using it. The API query parameter remains `action` for this target filter.
+
+The **Filters** heading shows a count when any fields are nonempty. Clear each field to reset filtering. Collapsing **Filters** preserves their values and count; **Export audit** remains available in the page header.
 
 Rejected upstream mutations are recorded as errors. A Garage response with per-node errors is also recorded as an error, even when Garage returns HTTP 200; the status column retains that upstream status. Read the result and reason together with the status. Raw upstream error details are not copied into audit records. A successful maintenance request still needs operational follow-up in Garage.
 

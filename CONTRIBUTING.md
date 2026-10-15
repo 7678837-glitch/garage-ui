@@ -22,13 +22,21 @@ Use English for code comments, errors, UI copy, documentation, commits, and pull
 
 Use [scripts/build.sh](scripts/build.sh) for host or local image builds and [scripts/check-build-identity.sh](scripts/check-build-identity.sh) for the focused source-identity check. [scripts/release.sh](scripts/release.sh) owns local release artifact preparation; read [release requirements](docs/engineering.md#79-release-and-images) before using it. Publishing requires separate maintainer authorization.
 
+Focused tooling checks run from the repository root:
+
+| Command | Scope and prerequisites |
+|---|---|
+| `scripts/check-dev-version.sh` | Checks local/development build-version propagation and CI identity assignment using disposable command fixtures; requires Python 3 and Git, without building binaries or images |
+| `bun scripts/check-browser-projects.ts` | Checks browser-project selection and propagation to Playwright workers; requires Bun and the installed `web` dependencies, without launching browsers |
+| `scripts/check-secret-scan.sh` | Checks scanner detection, redaction, and all-ref history behavior in disposable repositories with synthetic fixtures; requires Python 3, Git, and the pinned Gitleaks binary described below |
+
 Specialized validation tools live under [scripts](scripts): `list-performance.ts` measures real catalog lists; `large-file-check.sh` and `large-file-browser.ts` exercise large-object and browser-thumbnail behavior; `s3-recovery-check.ts` checks same-process S3 discovery recovery; `zip-pack-memory.py` measures ZIP memory use. Read each tool's prerequisites before running it: these tools can create fixtures, write data, and use shared Docker/services. `api-split-lines.sh` compares the API module split with a supplied historical base. The scope of `secret-scan.sh` is described under [AI assistance](#use-ai-assistance-within-a-bounded-task).
 
 Keep raw local receipts under ignored `evidence-local/`; Playwright's generated `web/test-results/` and `web/playwright-report/` are ignored as well. Curate public, credential-free evidence deliberately under `evidence/`. Ignoring a path does not remove files that are already tracked.
 
 ## Set up local development
 
-Install the pinned Rust toolchain from [rust-toolchain.toml](rust-toolchain.toml) and Bun version from [web/package.json](web/package.json). From the repository root:
+Install the pinned Rust toolchain from [rust-toolchain.toml](rust-toolchain.toml), Bun version from [web/package.json](web/package.json), and Python 3 available as `python3` for the build script's version validation. From the repository root:
 
 ```sh
 scripts/build.sh
@@ -71,7 +79,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test -p garage-ui slash_only_endpoint_is_unset
 ```
 
-Replace `slash_only_endpoint_is_unset` with the affected test's name. `cargo test --workspace` is the full Rust suite. When parallel work needs separate build artifacts, set `CARGO_TARGET_DIR` to a directory owned by your checkout; this does not isolate database state or service ports.
+Replace `slash_only_endpoint_is_unset` with the affected test's name. `cargo test --workspace` is the full Rust suite. Its [CORS preflight test](crates/garage-ui/src/api/tests/cors_preflight.rs) requires an accessible Docker daemon and the local `dxflrs/garage:v2.4.1` image (`docker pull dxflrs/garage:v2.4.1` before running the suite). The test creates its own disposable container and data volume, uses random loopback Admin/S3 ports, and cleans up its owned resources; it does not use a borrowed Garage fixture or pull the image itself.
+
+`CARGO_TARGET_DIR` changes Cargo's artifact directory. When using it for parallel work, choose a directory owned by your checkout; it does not isolate runtime data, Docker resources, or service ports. The browser configurations still require `target/debug/garage-ui`, as described below.
 
 For an OpenAPI update, regenerate and inspect the generated diff:
 

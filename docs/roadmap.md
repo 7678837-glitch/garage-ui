@@ -17,7 +17,7 @@ The reports retain exact build identities, Garage versions, test results, and li
 
 ## Outstanding acceptance and distribution
 
-- GitHub Actions remain disabled during development. Workflow files and local results do not establish running remote CI or its release gates.
+- The CI workflow remains disabled during development. The separate [manual release workflow](../.github/workflows/release.yml) prepares unpublished drafts. Workflow files and local results do not establish running remote CI or its release gates.
 - The [release script](../scripts/release.sh) prepares local Linux artifacts, checksums, and an SBOM. Signing and build provenance in [release requirements](engineering.md#79-release-and-images) remain distribution requirements; local artifact preparation does not establish publication. Consult [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts.
 - Re-run affected acceptance checks for the exact source/artifacts being reviewed. The [contributor guide](../CONTRIBUTING.md#verify-the-affected-behavior) owns verification commands and fixture prerequisites. Full-phase acceptance is not inferred from feature presence or older reports.
 - For private Garage certificates, the implemented path is a configured CA file or the explicit insecure option described in [Configuration](wiki/Configuration.md). The old phase-6 certificate item is not evidence of browser-facing certificate provisioning.
