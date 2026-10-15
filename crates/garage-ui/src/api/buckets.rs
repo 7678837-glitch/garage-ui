@@ -509,7 +509,7 @@ pub(crate) async fn cleanup_uploads(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    require(&current.user, Op::WriteObjects)?;
+    require(&current.user, Op::CleanupUploads)?;
     let older_than_secs = cleanup_age(&body)?;
     let bytes = serde_json::to_vec(&json!({
         "bucketId": id,

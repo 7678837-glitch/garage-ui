@@ -1124,7 +1124,7 @@ static ENDPOINTS: [Endpoint; 50] = [
     ep(
         "CleanupIncompleteUploads",
         "POST",
-        Op::WriteObjects,
+        Op::CleanupUploads,
         false,
         true,
         true,

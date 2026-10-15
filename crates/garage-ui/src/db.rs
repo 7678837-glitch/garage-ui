@@ -15,6 +15,8 @@ pub struct User {
     pub can_download: bool,
     pub can_share: bool,
     pub disabled: bool,
+    // The bound Garage access key of a tenant account. Only a viewer with a key is a tenant.
+    pub access_key_id: Option<String>,
 }
 
 impl User {
@@ -27,6 +29,7 @@ impl User {
             admin: self.role == "admin",
             download: self.role == "admin" || self.can_download,
             share: self.role == "admin" || self.can_share,
+            tenant: self.role == "viewer" && self.access_key_id.is_some(),
         }
     }
 }
@@ -90,7 +93,7 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
             .await?;
     }
     // CREATE TABLE IF NOT EXISTS does not add columns on a database created before them.
-    for statement in ZIP_TOKEN_COLUMNS {
+    for statement in ZIP_TOKEN_COLUMNS.iter().chain(USER_COLUMNS) {
         if let Err(error) = sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(pool)
             .await
@@ -118,7 +121,8 @@ const SCHEMA: &[&str] = &[
         can_download INTEGER NOT NULL DEFAULT 0,
         can_share INTEGER NOT NULL DEFAULT 0,
         disabled INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        access_key_id TEXT
     )",
     "CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users(username COLLATE NOCASE)",
     "CREATE TABLE IF NOT EXISTS sessions (
@@ -196,7 +200,7 @@ pub async fn find_user_by_name(
     username: &str,
 ) -> Result<Option<User>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT id, username, password_hash, role, can_download, can_share, disabled
+        "SELECT id, username, password_hash, role, can_download, can_share, disabled, access_key_id
          FROM users WHERE username = ? COLLATE NOCASE",
     )
     .bind(username)
@@ -207,7 +211,7 @@ pub async fn find_user_by_name(
 
 pub async fn find_user_by_id(pool: &SqlitePool, id: i64) -> Result<Option<User>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT id, username, password_hash, role, can_download, can_share, disabled
+        "SELECT id, username, password_hash, role, can_download, can_share, disabled, access_key_id
          FROM users WHERE id = ?",
     )
     .bind(id)
@@ -218,7 +222,7 @@ pub async fn find_user_by_id(pool: &SqlitePool, id: i64) -> Result<Option<User>,
 
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<User>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, username, password_hash, role, can_download, can_share, disabled
+        "SELECT id, username, password_hash, role, can_download, can_share, disabled, access_key_id
          FROM users ORDER BY id",
     )
     .fetch_all(pool)
@@ -271,6 +275,20 @@ pub async fn update_user(
     Ok(())
 }
 
+#[cfg(test)]
+pub async fn set_user_access_key(
+    pool: &SqlitePool,
+    id: i64,
+    access_key_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE users SET access_key_id = ? WHERE id = ?")
+        .bind(access_key_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn reset_user_password(
     pool: &SqlitePool,
     id: i64,
@@ -308,7 +326,7 @@ pub async fn change_user_password(
          WHERE id = ? AND password_hash = ? AND disabled = 0
            AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = users.id
              AND key_id = ? AND expires_at > ? AND last_seen_at >= ?)
-         RETURNING id, username, password_hash, role, can_download, can_share, disabled",
+         RETURNING id, username, password_hash, role, can_download, can_share, disabled, access_key_id",
     )
     .bind(password_hash)
     .bind(id)
@@ -388,7 +406,7 @@ pub async fn insert_login_session(
             .await?;
     }
     let row = sqlx::query(
-        "SELECT id, username, password_hash, role, can_download, can_share, disabled
+        "SELECT id, username, password_hash, role, can_download, can_share, disabled, access_key_id
          FROM users WHERE id = ?",
     )
     .bind(proof.id)
@@ -562,6 +580,8 @@ const ZIP_TOKEN_COLUMNS: &[&str] = &[
     "ALTER TABLE zip_tokens ADD COLUMN keys_json TEXT NOT NULL DEFAULT '[]'",
 ];
 
+const USER_COLUMNS: &[&str] = &["ALTER TABLE users ADD COLUMN access_key_id TEXT"];
+
 pub struct StoredZip {
     pub user_id: i64,
     pub bucket_id: String,
@@ -634,6 +654,7 @@ fn user_from_row(row: &SqliteRow) -> User {
         can_download: row.get::<i64, _>("can_download") != 0,
         can_share: row.get::<i64, _>("can_share") != 0,
         disabled: row.get::<i64, _>("disabled") != 0,
+        access_key_id: row.get("access_key_id"),
     }
 }
 
