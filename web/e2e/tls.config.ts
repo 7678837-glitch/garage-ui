@@ -3,10 +3,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { adminToken, garageTarget } from "./garage-target";
+import { adminToken, browserProjects, garageTarget } from "./garage-target";
 
 const target = garageTarget();
-const dataDir = mkdtempSync(join(tmpdir(), "garage-ui-285-tls-"));
+const dataDir = process.env.GARAGE_UI_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "garage-ui-285-tls-"));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const binary = join(repoRoot, "target/debug/garage-ui");
 
@@ -23,9 +23,11 @@ env.DATA_DIR = dataDir;
 env.GARAGE_ADMIN_URL = target.adminUrl;
 env.GARAGE_ADMIN_TOKEN = adminToken(target.container);
 env.S3_ENDPOINT_URL = target.s3Url;
+env.S3_REGION = "garage";
 env.GARAGE_TLS_INSECURE = "1";
 
 export default defineConfig({
+  projects: browserProjects(),
   testDir: fileURLToPath(new URL(".", import.meta.url)),
   testMatch: "**/tls-warning.spec.ts",
   timeout: 120_000,

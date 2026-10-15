@@ -31,10 +31,28 @@ export function garageTarget(): GarageTarget {
   if (!target) {
     throw new Error("GARAGE_VERSION must be v2.4.1 or v2.3.0");
   }
-  return target;
+  return {
+    ...target,
+    container: process.env.GARAGE_CONTAINER ?? target.container,
+    adminUrl: process.env.GARAGE_ADMIN_URL ?? target.adminUrl,
+    s3Url: process.env.S3_ENDPOINT_URL ?? target.s3Url,
+  };
+}
+
+export function browserProjects() {
+  const browsers = ["chromium", "firefox", "webkit"] as const;
+  const explicitProject = process.argv.some((arg) => arg === "--project" || arg.startsWith("--project="));
+  const selected = explicitProject ? "all" : (process.env.GARAGE_BROWSER ?? "chromium");
+  if (selected !== "all" && !browsers.some((browser) => browser === selected)) {
+    throw new Error("GARAGE_BROWSER must be chromium, firefox, webkit, or all");
+  }
+  return browsers
+    .filter((browser) => selected === "all" || browser === selected)
+    .map((browser) => ({ name: browser, use: { browserName: browser } }));
 }
 
 export function adminToken(container: string): string {
+  if (process.env.GARAGE_ADMIN_TOKEN) return process.env.GARAGE_ADMIN_TOKEN;
   const configPath = configFile(container);
   const dir = mkdtempSync(join(tmpdir(), "garage-ui-e2e-"));
   const file = join(dir, "garage.toml");

@@ -3,10 +3,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { adminToken, garageTarget } from "./e2e/garage-target";
+import { adminToken, browserProjects, garageTarget } from "./e2e/garage-target";
 
 const target = garageTarget();
-const dataDir = mkdtempSync(join(tmpdir(), "garage-ui-252-"));
+const dataDir = process.env.GARAGE_UI_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "garage-ui-252-"));
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const binary = join(repoRoot, "target/debug/garage-ui");
 
@@ -20,9 +20,11 @@ env.DATA_DIR = dataDir;
 env.GARAGE_ADMIN_URL = target.adminUrl;
 env.GARAGE_ADMIN_TOKEN = adminToken(target.container);
 env.S3_ENDPOINT_URL = target.s3Url;
+env.S3_REGION = "garage";
 delete env.HOST;
 
 export default defineConfig({
+  projects: browserProjects(),
   testDir: "./e2e",
   // wizard.config.ts runs the setup wizard before any user exists.
   testIgnore: ["**/wizard.spec.ts", "**/tls-warning.spec.ts"],
