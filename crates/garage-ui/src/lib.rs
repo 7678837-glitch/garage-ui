@@ -56,6 +56,15 @@ pub fn start_audit_retention(pool: sqlx::SqlitePool) {
     }));
 }
 
+pub fn start_limiter_cleanup(limits: std::sync::Arc<limit::Limits>) {
+    drop(tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            limits.retain_recent();
+        }
+    }));
+}
+
 #[cfg(test)]
 #[test]
 fn server_timeouts_follow_the_env() {

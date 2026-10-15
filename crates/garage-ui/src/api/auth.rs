@@ -144,6 +144,23 @@ pub(crate) async fn login(
     headers: HeaderMap,
     Json(body): Json<Credentials>,
 ) -> Result<Response, ApiError> {
+    // No account can hold such a name, so skip the limiter and bcrypt: otherwise a
+    // client varying a huge username grows limiter memory and burns CPU for free.
+    if validate_username(&body.username).is_err() {
+        record(
+            &app,
+            &body.username,
+            &ip.0,
+            "failure",
+            "invalid_credentials",
+            "POST",
+            "/api/auth/login",
+            "",
+            401,
+        )
+        .await?;
+        return Err(ApiError::invalid_credentials());
+    }
     if let Err(wait) = app.limits.login(&ip.0, &body.username) {
         record(
             &app,

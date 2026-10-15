@@ -46,6 +46,23 @@ impl Limits {
         self.hit(&self.share, &username.to_lowercase())
     }
 
+    pub fn retain_recent(&self) {
+        for limiter in [&self.login, &self.init, &self.password, &self.share] {
+            limiter.retain_recent();
+            limiter.shrink_to_fit();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn login_len(&self) -> usize {
+        self.login.len()
+    }
+
+    #[cfg(test)]
+    pub fn share_len(&self) -> usize {
+        self.share.len()
+    }
+
     fn hit(&self, limiter: &Limiter, key: &str) -> Result<(), Duration> {
         match limiter.check_key(&key.to_string()) {
             Ok(_) => Ok(()),
@@ -126,6 +143,23 @@ mod tests {
         }
         assert!(limits.login("10.0.0.2", "ada").is_err());
         assert!(limits.login("10.0.0.3", "Ada").is_ok());
+    }
+
+    #[tokio::test]
+    async fn retain_recent_drops_keys_whose_quota_has_replenished() {
+        let limits = Limits::new(test_quota());
+        for user in ["a", "b", "c"] {
+            let _ = limits.login("10.0.0.1", user);
+            let _ = limits.share(user);
+        }
+        assert_eq!(limits.login_len(), 3);
+        limits.retain_recent();
+        assert_eq!(limits.login_len(), 3, "fresh keys are kept");
+        // Ten burst slots replenish after 10 * 200 ms.
+        tokio::time::sleep(Duration::from_millis(2_300)).await;
+        limits.retain_recent();
+        assert_eq!(limits.login_len(), 0);
+        assert_eq!(limits.share_len(), 0);
     }
 
     #[tokio::test]

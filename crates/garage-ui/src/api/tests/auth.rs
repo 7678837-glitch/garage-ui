@@ -609,6 +609,32 @@
     }
 
     #[tokio::test]
+    async fn login_with_an_illegal_username_skips_the_limiter_and_is_audited() {
+        let dir = crate::util::temp_dir();
+        let app = app_for(&dir, "http://127.0.0.1:9").await;
+        login(&app).await;
+        let before = crate::db::recent_audit(&app.db).await.unwrap();
+        let failed = exchange(
+            &app,
+            request(
+                "POST",
+                "/api/auth/login",
+                Some(&json!({ "username": "x".repeat(65), "password": "wrong horse" }).to_string()),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "{}", failed.body);
+        assert_eq!(code_of(&failed.body), "invalid_credentials");
+        assert_eq!(app.limits.login_len(), 0);
+        let rows = crate::db::recent_audit(&app.db).await.unwrap();
+        assert_eq!(rows.len(), before.len() + 1, "{rows:?}");
+        assert_eq!(rows[0].result, "failure");
+        assert_eq!(rows[0].reason, "invalid_credentials");
+        assert_eq!(rows[0].status, 401);
+    }
+
+    #[tokio::test]
     async fn login_rate_limit_is_audited() {
         let dir = crate::util::temp_dir();
         let app = app_for(&dir, "http://127.0.0.1:9").await;
