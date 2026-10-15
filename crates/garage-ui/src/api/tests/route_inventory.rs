@@ -122,10 +122,9 @@
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("read source");
-            // Test modules sit at column 0 after the production code; nested `#[cfg(test)]`
-            // items are indented and stay in.
-            let production = text.split("\n#[cfg(test)]\n").next().expect("source text");
-            let mut rest = production;
+            // The whole file is scanned: cutting at a test module could hide a route declared
+            // after a column-0 `#[cfg(test)]` item.
+            let mut rest = text.as_str();
             while let Some(at) = rest.find(".route(") {
                 let args = &rest[at + ".route(".len()..];
                 // Parentheses inside string literals would unbalance the count, so skip them.
@@ -152,6 +151,7 @@
                 // Method routers are the identifiers directly followed by `(` outside any
                 // other parentheses; handler names sit inside those and never count.
                 let routers = &call[closing + 1..];
+                let before = found.len();
                 let mut depth = 0_i32;
                 let mut word = String::new();
                 for c in routers.chars() {
@@ -169,6 +169,11 @@
                     }
                     word.clear();
                 }
+                // A method router this parser does not know would otherwise drop the route silently.
+                assert!(
+                    found.len() > before,
+                    "no known method router in .route({route:?}) in {path:?}"
+                );
                 rest = &args[end..];
             }
         }
