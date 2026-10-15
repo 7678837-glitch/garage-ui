@@ -4,11 +4,17 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -35,7 +41,19 @@ jobs:
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
-      - name: secret scan
+      - name: Install pinned Gitleaks
+        run: |
+          archive="$RUNNER_TEMP/gitleaks_8.30.0_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e "$archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
+          echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
+      - name: Secret scanner regression checks
+        run: scripts/check-secret-scan.sh
+      - name: Worktree and full-history secret scan
         run: scripts/secret-scan.sh
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -45,3 +63,34 @@ jobs:
           file: deploy/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
+
+  e2e:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        garage-version: [v2.3.0, v2.4.1]
+    env:
+      GARAGE_VERSION: ${{ matrix.garage-version }}
+      GARAGE_BROWSER: chromium
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - name: Install browser dependencies
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bunx playwright install --with-deps chromium
+      - name: Build the application for browser checks
+        run: |
+          (cd web && bun run build)
+          cargo build -p garage-ui --bin garage-ui
+      - name: Pull the selected Garage fixture
+        run: docker pull --platform linux/amd64 "dxflrs/garage:$GARAGE_VERSION"
+      - name: Disposable real-Garage smoke checks
+        run: scripts/e2e-check.sh disposable-smoke.spec.ts --project=chromium

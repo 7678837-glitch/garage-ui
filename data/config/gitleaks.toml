@@ -1,0 +1,16 @@
+title = "Garage UI secret scanning"
+
+[extend]
+useDefault = true
+
+# Generated dependencies and Git internals are not source; history is scanned with git.
+[[allowlists]]
+description = "Build outputs and dependency trees"
+paths = ['''(^|/)(\.git|target|node_modules)(/|$)''', '''(^|/)web/dist(/|$)''']
+
+# Preserve detection of incomplete private-key blocks as well as complete default-rule matches.
+[[rules]]
+id = "private-key-marker"
+description = "Private key header, including an incomplete block"
+regex = '''BEGIN (RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY'''
+keywords = ["PRIVATE KEY"]

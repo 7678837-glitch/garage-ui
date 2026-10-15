@@ -1,15 +1,90 @@
-name: release
+name: release draft
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-draft
+  cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      commit: ${{ steps.identity.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
-      - name: Release
-        run: bash scripts/release.sh
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release identity
+        id: identity
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          version = Path("VERSION").read_text().strip()
+          if not re.fullmatch(r"[0-9]{8}\.[1-9][0-9]*", version):
+              raise SystemExit("VERSION must use YYYYMMDD.N with a positive sequence")
+          datetime.datetime.strptime(version.split(".")[0], "%Y%m%d")
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\ncommit={commit}\n")
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: docker/setup-qemu-action@v3
+        with:
+          image: tonistiigi/binfmt:qemu-v9.2.2-52
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+        with:
+          version: v0.25.0
+      - name: Build and verify unsigned release artifacts
+        run: scripts/release.sh "$RUNNER_TEMP/release-artifacts"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: ${{ runner.temp }}/release-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+      - name: Create an unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name')
+          if printf '%s\n' "$existing" | grep -Fx -- "$RELEASE_VERSION" >/dev/null; then
+            echo "A release already exists for $RELEASE_VERSION. Review it manually; this workflow never updates drafts or published releases." >&2
+            exit 1
+          fi
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          gh release create "$RELEASE_VERSION" \
+            artifacts/garage-ui-linux-amd64 artifacts/garage-ui-linux-arm64 \
+            artifacts/sbom.spdx.json artifacts/SHA256SUMS \
+            --repo "$GH_REPO" --draft --target "$RELEASE_COMMIT" \
+            --title "$RELEASE_VERSION" \
+            --notes "Unsigned Linux binaries, SPDX SBOM, and SHA256 checksums. Publication and signing require manual review."
