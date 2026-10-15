@@ -115,7 +115,7 @@ pub(crate) async fn setup(
         return Err(error);
     }
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
-    let user_id = db::insert_user(&app.db, &body.username, &hash, "admin", false, false)
+    let user_id = db::insert_user(&app.db, &body.username, &hash, "admin", false, false, None)
         .await
         .map_err(|_| ApiError::internal())?;
     let user = db::find_user_by_id(&app.db, user_id)
@@ -469,7 +469,7 @@ mod login_proof_tests {
         let hash = password::hash_async("original password".into(), 4)
             .await
             .unwrap();
-        let id = db::insert_user(&app.db, "Original", &hash, "admin", false, false)
+        let id = db::insert_user(&app.db, "Original", &hash, "admin", false, false, None)
             .await
             .unwrap();
         let user = db::find_user_by_id(&app.db, id).await.unwrap().unwrap();
@@ -556,6 +556,7 @@ mod login_proof_tests {
             "admin",
             false,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -569,7 +570,7 @@ mod login_proof_tests {
         let dir = crate::util::temp_dir();
         let app = crate::state::test_app(&dir).await;
         let proof = verified_user(&app).await;
-        db::update_user(&app.db, proof.id, "admin", false, false, true, None)
+        db::update_user(&app.db, proof.id, "admin", false, false, true, None, None)
             .await
             .unwrap();
         let existing = existing_session(&app, proof.id).await;
@@ -582,7 +583,7 @@ mod login_proof_tests {
         let app = crate::state::test_app(&dir).await;
         let proof = verified_user(&app).await;
         let existing = existing_session(&app, proof.id).await;
-        db::update_user(&app.db, proof.id, "viewer", true, false, false, None)
+        db::update_user(&app.db, proof.id, "viewer", true, false, false, None, None)
             .await
             .unwrap();
         let response = login_response(&app, &proof, Some(&existing.id))

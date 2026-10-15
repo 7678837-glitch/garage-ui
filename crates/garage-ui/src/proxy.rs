@@ -338,6 +338,12 @@ pub async fn fetch_key_secret(app: &App, id: &str) -> Result<Response<Body>, Api
     send(app, "GetKeyInfo", &Method::GET, &query, &[]).await
 }
 
+// Existence check for a key. Garage returns the secret only when asked, so this never does.
+pub async fn fetch_key_info(app: &App, id: &str) -> Result<Response<Body>, ApiError> {
+    let query = format!("id={}", percent_encode(id));
+    send(app, "GetKeyInfo", &Method::GET, &query, &[]).await
+}
+
 fn percent_encode(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
@@ -2751,7 +2757,7 @@ mod tests {
     }
 
     async fn admin_user(app: &App) -> crate::db::User {
-        crate::db::insert_user(&app.db, "ada", "hash", "admin", false, false)
+        crate::db::insert_user(&app.db, "ada", "hash", "admin", false, false, None)
             .await
             .unwrap();
         crate::db::find_user_by_name(&app.db, "ada")

@@ -319,6 +319,7 @@ mod tests {
     include!("tests/objects.rs");
     include!("tests/tenants.rs");
     include!("tests/route_inventory.rs");
+    include!("tests/tenant_users.rs");
     include!("tests/keys.rs");
     include!("tests/admin_tokens.rs");
     include!("tests/cluster.rs");

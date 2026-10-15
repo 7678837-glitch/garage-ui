@@ -899,7 +899,7 @@
                     .await
                     .unwrap()
                     .unwrap();
-                crate::db::update_user(&app.db, user.id, "viewer", true, true, false, None)
+                crate::db::update_user(&app.db, user.id, "viewer", true, true, false, None, None)
                     .await
                     .unwrap();
             }
@@ -910,11 +910,11 @@
             let original_hash = current.user.password_hash.clone();
             match mutation {
                 "permissions" | "role" => {
-                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None)
+                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None, None)
                         .await
                         .unwrap()
                 }
-                "disabled" => crate::db::update_user(&app.db, id, "admin", false, false, true, None)
+                "disabled" => crate::db::update_user(&app.db, id, "admin", false, false, true, None, None)
                     .await
                     .unwrap(),
                 "password" => {
@@ -928,6 +928,7 @@
                         false,
                         false,
                         false,
+                        None,
                         Some(&changed_hash),
                     )
                     .await
@@ -935,7 +936,7 @@
                 }
                 "session" => crate::db::delete_user_sessions(&app.db, id).await.unwrap(),
                 "demoted" => {
-                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None)
+                    crate::db::update_user(&app.db, id, "viewer", false, false, false, None, None)
                         .await
                         .unwrap();
                     crate::db::delete_user_sessions(&app.db, id).await.unwrap();

@@ -134,7 +134,7 @@ async fn create_admin(
     let hash = crate::password::hash_async(password.to_string(), cost)
         .await
         .map_err(|_| anyhow::anyhow!("failed to hash password"))?;
-    crate::db::insert_user(pool, username, &hash, "admin", false, false)
+    crate::db::insert_user(pool, username, &hash, "admin", false, false, None)
         .await
         .map_err(|error| {
             if duplicate_user(&error) {
@@ -232,16 +232,17 @@ mod tests {
             .await
             .unwrap();
         let stored_hash = "sentinel-hash-not-for-stdout";
-        crate::db::insert_user(&listed, "ada", stored_hash, "admin", true, true)
+        crate::db::insert_user(&listed, "ada", stored_hash, "admin", true, true, None)
             .await
             .unwrap();
         let text = format_users(&listed).await.unwrap();
         assert_eq!(text, "ada admin\n");
         assert!(!text.contains(stored_hash));
-        let viewer_id = crate::db::insert_user(&listed, "bea", stored_hash, "viewer", false, false)
-            .await
-            .unwrap();
-        crate::db::update_user(&listed, viewer_id, "viewer", false, false, true, None)
+        let viewer_id =
+            crate::db::insert_user(&listed, "bea", stored_hash, "viewer", false, false, None)
+                .await
+                .unwrap();
+        crate::db::update_user(&listed, viewer_id, "viewer", false, false, true, None, None)
             .await
             .unwrap();
         let text = format_users(&listed).await.unwrap();
@@ -294,7 +295,7 @@ mod tests {
         );
         assert_eq!(crate::db::count_users(&pool).await.unwrap(), 1);
 
-        crate::db::update_user(&pool, user_id, "viewer", true, true, true, None)
+        crate::db::update_user(&pool, user_id, "viewer", true, true, true, None, None)
             .await
             .unwrap();
         crate::db::insert_session(&pool, "sess-1", user_id, "csrf", "key", 10, 99)
@@ -368,7 +369,7 @@ mod tests {
         let hash = crate::password::hash_async("original password".into(), 4)
             .await
             .unwrap();
-        let id = crate::db::insert_user(&initial, "Ada", &hash, "admin", true, true)
+        let id = crate::db::insert_user(&initial, "Ada", &hash, "admin", true, true, None)
             .await
             .unwrap();
         let pool = sqlx::sqlite::SqlitePoolOptions::new()

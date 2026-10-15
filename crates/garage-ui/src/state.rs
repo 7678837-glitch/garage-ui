@@ -445,7 +445,7 @@ async fn import_bootstrap(
             if crate::api::validate_username(username).is_err() || !is_bcrypt_hash(password_hash) {
                 anyhow::bail!("bootstrap account could not be imported; refusing to start");
             }
-            db::insert_user(pool, username, password_hash, "admin", false, false)
+            db::insert_user(pool, username, password_hash, "admin", false, false, None)
                 .await
                 .map_err(|_| {
                     anyhow::anyhow!("bootstrap account could not be imported; refusing to start")

@@ -1440,7 +1440,7 @@
         let hash = crate::password::hash_async(PASSWORD.into(), 4)
             .await
             .unwrap();
-        let id = crate::db::insert_user(&app.db, "Target", &hash, "admin", true, true)
+        let id = crate::db::insert_user(&app.db, "Target", &hash, "admin", true, true, None)
             .await
             .unwrap();
         app.db = sqlx::sqlite::SqlitePoolOptions::new()

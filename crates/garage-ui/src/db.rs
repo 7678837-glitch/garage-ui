@@ -179,10 +179,11 @@ pub async fn insert_user(
     role: &str,
     can_download: bool,
     can_share: bool,
+    access_key_id: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
     let result = sqlx::query(
-        "INSERT INTO users (username, password_hash, role, can_download, can_share, disabled, created_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?)",
+        "INSERT INTO users (username, password_hash, role, can_download, can_share, disabled, created_at, access_key_id)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
     )
     .bind(username)
     .bind(password_hash)
@@ -190,6 +191,7 @@ pub async fn insert_user(
     .bind(i64::from(can_download))
     .bind(i64::from(can_share))
     .bind(now_secs())
+    .bind(access_key_id)
     .execute(pool)
     .await?;
     Ok(result.last_insert_rowid())
@@ -249,6 +251,8 @@ pub async fn list_user_created_at(pool: &SqlitePool) -> Result<Vec<UserCreatedAt
         .collect())
 }
 
+// The arguments are the users-table columns that one update writes together.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_user(
     pool: &SqlitePool,
     id: i64,
@@ -256,11 +260,12 @@ pub async fn update_user(
     can_download: bool,
     can_share: bool,
     disabled: bool,
+    access_key_id: Option<&str>,
     password_hash: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE users
-         SET role = ?, can_download = ?, can_share = ?, disabled = ?,
+         SET role = ?, can_download = ?, can_share = ?, disabled = ?, access_key_id = ?,
              password_hash = COALESCE(?, password_hash)
          WHERE id = ?",
     )
@@ -268,6 +273,7 @@ pub async fn update_user(
     .bind(i64::from(can_download))
     .bind(i64::from(can_share))
     .bind(i64::from(disabled))
+    .bind(access_key_id)
     .bind(password_hash)
     .bind(id)
     .execute(pool)

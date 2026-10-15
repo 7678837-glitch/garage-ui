@@ -10,6 +10,8 @@ use super::validate_username;
 use crate::access::Op;
 use crate::db::{self, User};
 use crate::error::ApiError;
+use crate::proxy;
+use crate::session::Current;
 use crate::state::App;
 use axum::Json;
 use axum::Router;
@@ -17,8 +19,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
+
+const MAX_KEY_ID_LEN: usize = 128;
 
 #[derive(Deserialize)]
 pub(crate) struct NewUser {
@@ -29,6 +33,8 @@ pub(crate) struct NewUser {
     can_download: bool,
     #[serde(default)]
     can_share: bool,
+    #[serde(default, rename = "accessKeyId")]
+    access_key_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -37,6 +43,13 @@ pub(crate) struct UserPatch {
     can_download: Option<bool>,
     can_share: Option<bool>,
     disabled: Option<bool>,
+    // Absent keeps the bound key, null removes it, a string binds that key.
+    #[serde(default, rename = "accessKeyId", deserialize_with = "present")]
+    access_key_id: Option<Option<String>>,
+}
+
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -160,9 +173,27 @@ pub(crate) async fn create_user(
             return Err(error);
         }
     };
+    if let Some(key) = body.access_key_id.as_deref() {
+        let checked = match check_key_shape(role, key) {
+            Ok(()) => require_garage_key(&app, key).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = checked {
+            return Err(reject(&app, &current, "POST", &body.username, error).await);
+        }
+    }
     let hash = hash_password(&body.password, app.settings.bcrypt_cost).await?;
     let _guard = app.write.lock().await;
-    let user_id = match db::insert_user(&app.db, &body.username, &hash, role, download, share).await
+    let user_id = match db::insert_user(
+        &app.db,
+        &body.username,
+        &hash,
+        role,
+        download,
+        share,
+        body.access_key_id.as_deref(),
+    )
+    .await
     {
         Ok(id) => id,
         Err(error) if is_unique(&error) => {
@@ -291,6 +322,20 @@ pub(crate) async fn patch_user(
     };
     let disabled = body.disabled.unwrap_or(target.disabled);
     let (download, share) = normalize_bits(role, download, share)?;
+    let key = match &body.access_key_id {
+        Some(requested) => requested.clone(),
+        None => target.access_key_id.clone(),
+    };
+    let key_changed = key != target.access_key_id;
+    if let Some(key) = key.as_deref() {
+        let checked = match check_key_shape(role, key) {
+            Ok(()) if key_changed => require_garage_key(&app, key).await,
+            other => other,
+        };
+        if let Err(error) = checked {
+            return Err(reject(&app, &current, "PATCH", &target.username, error).await);
+        }
+    }
     if target.id == current.user.id && (disabled || role != current.user.role) {
         record(
             &app,
@@ -326,6 +371,7 @@ pub(crate) async fn patch_user(
         download,
         share,
         disabled,
+        key.as_deref(),
         None,
     )
     .await
@@ -335,7 +381,7 @@ pub(crate) async fn patch_user(
             .await
             .map_err(|_| ApiError::internal())?;
     }
-    if disabled || role_owned != target.role {
+    if disabled || role_owned != target.role || key_changed {
         db::delete_user_sessions(&app.db, target.id)
             .await
             .map_err(|_| ApiError::internal())?;
@@ -559,6 +605,7 @@ fn public_user(user: &User, created_at: i64) -> Value {
         "can_download": user.can_download,
         "can_share": user.can_share,
         "disabled": user.disabled,
+        "accessKeyId": user.access_key_id,
         "created_at": created_at,
     })
 }
@@ -577,6 +624,66 @@ fn parse_role(role: &str) -> Result<&str, ApiError> {
     match role {
         "admin" | "viewer" => Ok(role),
         _ => Err(ApiError::bad_request("invalid_role", "Role is invalid")),
+    }
+}
+
+// A bound key must be a plausible Garage key ID and belong to a viewer (docs/security.md 3.20).
+fn check_key_shape(role: &str, key: &str) -> Result<(), ApiError> {
+    if key.is_empty() || key.len() > MAX_KEY_ID_LEN || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(ApiError::bad_request(
+            "invalid_access_key_id",
+            "Access key ID is invalid",
+        ));
+    }
+    if role == "admin" {
+        return Err(ApiError::bad_request(
+            "tenant_admin",
+            "An administrator cannot be bound to an access key",
+        ));
+    }
+    Ok(())
+}
+
+async fn require_garage_key(app: &App, key: &str) -> Result<(), ApiError> {
+    let status = proxy::fetch_key_info(app, key).await?.status();
+    if status == StatusCode::NOT_FOUND {
+        return Err(ApiError::bad_request(
+            "key_not_found",
+            "Garage has no such access key",
+        ));
+    }
+    if !status.is_success() {
+        return Err(ApiError::unavailable(
+            "garage_unavailable",
+            "Garage is unavailable",
+        ));
+    }
+    Ok(())
+}
+
+async fn reject(
+    app: &App,
+    current: &Current,
+    method: &str,
+    target: &str,
+    error: ApiError,
+) -> ApiError {
+    let status = i64::from(error.status_code().as_u16());
+    match record(
+        app,
+        &current.user.username,
+        &current.ip,
+        "error",
+        error.code(),
+        method,
+        "/api/users",
+        target,
+        status,
+    )
+    .await
+    {
+        Ok(()) => error,
+        Err(failed) => failed,
     }
 }
 
