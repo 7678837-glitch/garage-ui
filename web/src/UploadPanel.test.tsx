@@ -819,3 +819,66 @@ test.each(["unmount", "bucket change"])("%s aborts pending checks and ignores th
   expect(FakeRequest.sent).toHaveLength(0);
   expect(screen.queryByText("a.txt")).toBeNull();
 });
+
+test("uploads into the viewed prefix and checks the full key", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} prefix="photos/2024/" />);
+  choose(["a.jpg"]);
+  await act(async () => {});
+  expect(vi.mocked(fetch).mock.calls.map((call) => String(call[0]))).toEqual([
+    "/api/buckets/bkt-1/object?key=photos%2F2024%2Fa.jpg",
+  ]);
+  expect(FakeRequest.sent.map((request) => request.url)).toEqual([
+    "/api/buckets/bkt-1/object?key=photos%2F2024%2Fa.jpg",
+  ]);
+  expect(row("a.jpg").textContent).toContain("Uploading");
+});
+
+test("asks before overwriting an object already listed under the viewed prefix", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={["photos/2024/a.jpg"]} prefix="photos/2024/" />);
+  choose(["a.jpg"]);
+  await act(async () => {});
+  expect(FakeRequest.sent).toHaveLength(0);
+  expect(within(row("a.jpg")).getByRole("button", { name: "Overwrite" })).toBeTruthy();
+});
+
+test("a chosen folder keeps its relative paths under the viewed prefix", async () => {
+  render(<UploadPanel bucketId="bkt-1" existingKeys={[]} prefix="photos/2024/" />);
+  const file = withRelativePath("a.txt", "docs/a.txt");
+  fireEvent.change(screen.getByLabelText("Choose folder"), { target: { files: [file] } });
+  await act(async () => {});
+  expect(FakeRequest.sent.map((request) => request.url)).toEqual([
+    "/api/buckets/bkt-1/object?key=photos%2F2024%2Fdocs%2Fa.txt",
+  ]);
+  expect(row("docs/a.txt").textContent).toContain("Uploading");
+});
+
+test("a queued file keeps the prefix it was queued under after navigation", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = (prefix: string) => (
+    <Theme><QueryClientProvider client={client}><UploadPanel bucketId="bkt-1" existingKeys={[]} prefix={prefix} /></QueryClientProvider></Theme>
+  );
+  const view = renderTree(tree("one/"));
+  choose(["a.txt", "b.txt", "c.txt", "d.txt"]);
+  await act(async () => {});
+  view.rerender(tree("two/"));
+  await act(async () => {
+    FakeRequest.sent[0]?.succeed();
+  });
+  expect(FakeRequest.sent[3]?.url).toBe("/api/buckets/bkt-1/object?key=one%2Fd.txt");
+});
+
+test("the objects page uploads into the folder being viewed", async () => {
+  window.history.replaceState(null, "", `/${hashForObjects("bkt-1", "photos/2024/")}`);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://ui.local");
+    if (url.pathname.endsWith("/object")) return new Response(JSON.stringify({ code: "not_found" }), { status: 404 });
+    return new Response(JSON.stringify({ prefix: "photos/2024/", entries: [], next: null }), { status: 200 });
+  }));
+  render(<Objects bucketId="bkt-1" onBack={() => {}} canWrite canTransfer={false} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Upload" }));
+  choose(["a.jpg"]);
+  await act(async () => {});
+  expect(FakeRequest.sent.map((request) => request.url)).toEqual([
+    "/api/buckets/bkt-1/object?key=photos%2F2024%2Fa.jpg",
+  ]);
+});

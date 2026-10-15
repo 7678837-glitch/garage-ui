@@ -1200,7 +1200,7 @@ export function Objects({
             {copy("ui.close.upload")}
             {activeUploads > 0 ? <span className="ui-status ml-3">{copy("ui.uploading")} · {activeUploads}</span> : null}
           </summary>
-          <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} onActiveChange={setActiveUploads} />
+          <UploadPanel key={bucketId} bucketId={bucketId} existingKeys={visibleKeys} prefix={prefix} onActiveChange={setActiveUploads} />
         </details>
       ) : null}
       {loading && !showRows ? (

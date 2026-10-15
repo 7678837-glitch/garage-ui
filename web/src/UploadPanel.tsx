@@ -18,7 +18,10 @@ type Verdict = "pending" | "absent" | "exists" | "overwrite";
 
 type Row = {
   id: number;
+  // The path shown in the list, relative to the folder being viewed.
   name: string;
+  // The full object key, fixed when the file is queued.
+  key: string;
   file: File;
   verdict: Verdict;
   phase:
@@ -142,10 +145,10 @@ function directoryEntries(transfer: DataTransfer): FileSystemEntry[] | null {
   return found;
 }
 
-function sharesName(rows: readonly Row[], name: string): boolean {
+function sharesKey(rows: readonly Row[], key: string): boolean {
   let seen = 0;
   for (const row of rows) {
-    if (row.name !== name) {
+    if (row.key !== key) {
       continue;
     }
     seen += 1;
@@ -160,7 +163,7 @@ function needsPrompt(row: Row, rows: readonly Row[], keys: ReadonlySet<string>):
   if (row.verdict === "overwrite") {
     return false;
   }
-  return row.verdict === "exists" || keys.has(row.name) || sharesName(rows, row.name);
+  return row.verdict === "exists" || keys.has(row.key) || sharesKey(rows, row.key);
 }
 
 function canStart(row: Row, rows: readonly Row[], keys: ReadonlySet<string>): boolean {
@@ -185,10 +188,12 @@ function byteRate(percent: number | null, loaded: number, startedAt: number, now
 export function UploadPanel({
   bucketId,
   existingKeys,
+  prefix = "",
   onActiveChange,
 }: {
   bucketId: string;
   existingKeys: readonly string[];
+  prefix?: string;
   onActiveChange?: (count: number) => void;
 }) {
   const queryClient = useQueryClient();
@@ -207,6 +212,8 @@ export function UploadPanel({
   const existingRef = useRef(existingKeys);
   bucketRef.current = bucketId;
   existingRef.current = existingKeys;
+  const prefixRef = useRef(prefix);
+  prefixRef.current = prefix;
   rowsRef.current = rows;
 
   function commit(next: Row[]) {
@@ -265,7 +272,7 @@ export function UploadPanel({
         const controller = new AbortController();
         const abort = () => controller.abort();
         abortRef.current.set(row.id, abort);
-        void api<unknown>(objectPath(targetBucket, row.name), { signal: controller.signal }).then(
+        void api<unknown>(objectPath(targetBucket, row.key), { signal: controller.signal }).then(
           () => completeCheck("exists"),
           (error: unknown) => {
             if (error instanceof ApiError && error.code === "not_found") completeCheck("absent");
@@ -284,7 +291,7 @@ export function UploadPanel({
       }
       const handle = putObject({
         bucketId: targetBucket,
-        key: row.name,
+        key: row.key,
         body: row.file,
         contentType: row.file.type === "" ? "application/octet-stream" : row.file.type,
         onProgress({ percent, loaded }) {
@@ -334,7 +341,7 @@ export function UploadPanel({
       void queryClient.invalidateQueries({ queryKey: ["bucket-objects", targetBucket] });
       void queryClient.invalidateQueries({ queryKey: ["bucket-object-search", targetBucket] });
       for (const family of ["bucket-object", "bucket-object-text", "bucket-object-inspect"]) {
-        void queryClient.invalidateQueries({ queryKey: [family, targetBucket, row.name], exact: true });
+        void queryClient.invalidateQueries({ queryKey: [family, targetBucket, row.key], exact: true });
       }
     }
     pump();
@@ -347,9 +354,11 @@ export function UploadPanel({
     const added = list.map((file) => {
       const id = nextIdRef.current;
       nextIdRef.current += 1;
+      const name = objectKey(file, directory);
       const row: Row = {
         id,
-        name: objectKey(file, directory),
+        name,
+        key: prefixRef.current + name,
         file,
         verdict: "pending",
         phase: { kind: "queued" },
@@ -396,13 +405,13 @@ export function UploadPanel({
   }
 
   function overwrite(id: number, all: boolean) {
-    const name = rowsRef.current.find((item) => item.id === id)?.name;
-    if (!name) {
+    const key = rowsRef.current.find((item) => item.id === id)?.key;
+    if (!key) {
       return;
     }
     commit(
       rowsRef.current.map((item) =>
-        item.id === id || (all && item.name === name) ? { ...item, verdict: "overwrite" } : item,
+        item.id === id || (all && item.key === key) ? { ...item, verdict: "overwrite" } : item,
       ),
     );
     pump();
