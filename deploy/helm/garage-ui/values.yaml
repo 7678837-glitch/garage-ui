@@ -3,7 +3,7 @@
 # The process writes its generated session key under /data when no session key file is configured.
 
 image:
-  repository: garage-ui
+  repository: ghcr.io/xjoker/garage-ui
   tag: "20261015.1"
   pullPolicy: IfNotPresent
 

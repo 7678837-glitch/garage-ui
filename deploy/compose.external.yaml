@@ -8,6 +8,7 @@ services:
     command: ["chown", "65532:65532", "/data"]
 
   garage-ui:
+    image: ghcr.io/xjoker/garage-ui:${GARAGE_UI_VERSION:-20261015.1}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
