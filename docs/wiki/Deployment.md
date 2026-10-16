@@ -2,7 +2,7 @@
 
 ## Recommended: Docker Compose
 
-Use the [three-step quick start](https://github.com/xjoker/garage-ui/blob/dev/README.md#quick-start-docker-compose). Download `compose.yaml` and `.env.example` from [Releases](https://github.com/xjoker/garage-ui/releases), fill in the Garage connection, and start the UI. The deployment files work in an empty directory: no repository checkout or build toolchain is needed. Docker automatically selects `linux/amd64` or `linux/arm64`.
+Use the [three-step quick start](https://github.com/xjoker/garage-ui/blob/dev/README.md#quick-start-docker-compose). Download `compose.yaml` and `default.env.example` (save it as `.env`) from [Releases](https://github.com/xjoker/garage-ui/releases), fill in the Garage connection, and start the UI. The deployment files work in an empty directory: no repository checkout or build toolchain is needed. Docker automatically selects `linux/amd64` or `linux/arm64`.
 
 The Compose service pulls `ghcr.io/xjoker/garage-ui` at the release pinned in the file. Set `GARAGE_UI_VERSION` in `.env` to select another release. It restarts unless explicitly stopped, stores UI state in a named volume, and runs as a non-root user with a read-only root filesystem. A one-shot init container sets the data volume ownership. The UI is one process and port with the browser assets embedded.
 
@@ -144,6 +144,6 @@ The command above is for local HTTP; omit the `COOKIE_SECURE=false` override beh
 
 Build-only CI runs on version tags, following the [release policy](https://github.com/xjoker/garage-ui/blob/dev/docs/engineering.md#79-release-and-images). Ordinary branch pushes and pull requests do not build. Tests run locally before the release tag is pushed.
 
-A valid `YYYYMMDD.N` tag must match `VERSION` and the package manifests. Only then does CI build and verify the amd64/arm64 images and static binaries, generate an SBOM and checksums, and publish the images and GitHub release attachments. `compose.yaml` and `.env.example` are included so users can deploy without cloning the repository.
+A valid `YYYYMMDD.N` tag must match `VERSION` and the package manifests. Only then does CI build and verify the amd64/arm64 images and static binaries, generate an SBOM and checksums, and publish the images and GitHub release attachments. `compose.yaml` and `default.env.example` (to save locally as `.env`) are included so users can deploy without cloning the repository.
 
 GHCR visibility is independent of repository visibility. The maintainer must make the package public once; the publication process verifies anonymous access before publishing the release. Images and binaries are unsigned, with signing and build-provenance attestations deferred.

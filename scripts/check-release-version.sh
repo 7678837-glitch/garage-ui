@@ -4,6 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 python3 - <<'PY'
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import unittest.mock
 
 workflow = Path(".github/workflows/ci.yml").read_text()
 gate = textwrap.dedent(workflow.split("          python3 - <<'PY_RELEASE_GATE'\n", 1)[1].split("          PY_RELEASE_GATE\n", 1)[0])
@@ -90,6 +92,9 @@ with tempfile.TemporaryDirectory() as temp:
     (root / "scripts").mkdir()
     (root / "scripts/publish.sh").write_text(Path("scripts/publish.sh").read_text())
     (root / "scripts/verify-image-tag-alias.sh").write_text(Path("scripts/verify-image-tag-alias.sh").read_text())
+    alias_spec = importlib.util.spec_from_file_location("verify_image_tag_alias", "scripts/verify-image-tag-alias.py")
+    alias_module = importlib.util.module_from_spec(alias_spec)
+    alias_spec.loader.exec_module(alias_module)
     artifacts = root / "artifacts"
     artifacts.mkdir()
     names = ["garage-ui-linux-amd64", "garage-ui-linux-arm64", "sbom.spdx.json", "compose.yaml", ".env.example"]
@@ -112,43 +117,25 @@ with tempfile.TemporaryDirectory() as temp:
             assert "already published" in result.stderr, result.stderr
         assert not probe.exists(), "Publication reached Docker before confirming a writable draft"
 
-    # GHCR may briefly serve the prior digest after assigning an alias. Retry
-    # until it converges, and fail after the bounded wait if it never matches.
-    (commands / "docker").write_text("""#!/bin/sh
-target=$4
-case "$target" in
-  *:20261016.3) printf 'sha256:expected\\n' ;;
-  *:latest)
-    count=0
-    [ ! -f "$ALIAS_COUNT" ] || count=$(cat "$ALIAS_COUNT")
-    count=$((count + 1))
-    printf '%s\\n' "$count" > "$ALIAS_COUNT"
-    if [ "$ALIAS_MODE" = transient ] && [ "$count" -lt 3 ]; then
-      printf 'sha256:old\\n'
-    elif [ "$ALIAS_MODE" = permanent ]; then
-      printf 'sha256:old\\n'
-    else
-      printf 'sha256:expected\\n'
-    fi
-    ;;
-esac
-""")
-    (commands / "docker").chmod(0o755)
-    (commands / "sleep").write_text("#!/bin/sh\\nexit 0\\n")
-    (commands / "sleep").chmod(0o755)
-    for mode, expected_count, expected_status in (("transient", 3, 0), ("permanent", 30, 1)):
-        alias_count = root / "alias-count"
-        alias_count.unlink(missing_ok=True)
-        env = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}", ALIAS_COUNT=str(alias_count), ALIAS_MODE=mode)
-        result = subprocess.run(
-            ["sh", "scripts/verify-image-tag-alias.sh", "ghcr.io/xjoker/garage-ui", "20261016.3", "latest"],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == expected_status, result.stderr
-        assert int(alias_count.read_text()) == expected_count, alias_count.read_text()
+    # GHCR can serve a stale manifest after publishing a tag alias. Verify the
+    # retry and timeout behavior without waiting on a real registry.
+    digest_responses = iter(["sha256:version", "sha256:old", "sha256:version", "sha256:version"])
+    with unittest.mock.patch.object(alias_module, "inspect_digest", side_effect=lambda *_: next(digest_responses)):
+        with unittest.mock.patch.object(alias_module.time, "monotonic", side_effect=[0, 0, 0, 3]):
+            with unittest.mock.patch.object(alias_module.time, "sleep") as sleep:
+                assert alias_module.verify_alias("ghcr.io/example/image", "v1", "latest", timeout=10)
+                sleep.assert_called_once_with(3)
+
+    times = iter([0, 0, 0, 2, 2, 4])
+    with unittest.mock.patch.object(
+        alias_module,
+        "inspect_digest",
+        side_effect=lambda reference, *_: "sha256:version" if reference.endswith(":v1") else "sha256:stale",
+    ):
+        with unittest.mock.patch.object(alias_module.time, "monotonic", side_effect=lambda: next(times, 4)):
+            with unittest.mock.patch.object(alias_module.time, "sleep") as sleep:
+                assert not alias_module.verify_alias("ghcr.io/example/image", "v1", "latest", timeout=4, poll_interval=2)
+                assert sleep.call_count == 2
 
     assert "needs: gate" in workflow, "release must not run before the tag gate"
     assert "pull_request:" not in workflow and "branches:" not in workflow, "ordinary pushes and PRs must not build"

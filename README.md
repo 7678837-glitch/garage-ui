@@ -31,7 +31,7 @@ In a new directory:
 mkdir garage-ui
 cd garage-ui
 curl -fLO https://github.com/xjoker/garage-ui/releases/latest/download/compose.yaml
-curl -fL https://github.com/xjoker/garage-ui/releases/latest/download/.env.example -o .env
+curl -fL https://github.com/xjoker/garage-ui/releases/latest/download/default.env.example -o .env
 chmod 600 .env
 ```
 
