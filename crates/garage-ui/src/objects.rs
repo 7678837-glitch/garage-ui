@@ -329,28 +329,31 @@ pub async fn presign_get(
     }
     let bucket = bucket_id.to_string();
     let object_key = key.to_string();
-    let sources = sources(app, bucket_id).await;
     let tls_insecure = app.settings.tls_insecure;
     let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let signed_bucket = bucket.clone();
     let attempted = app
-        .read_credential(&bucket, sources, move |credential| {
-            let client = s3_client(
-                &region,
-                &endpoint,
-                &credential,
-                tls_insecure,
-                tls_ca_pem.as_deref(),
-            );
-            let bucket = signed_bucket.clone();
-            let object_key = object_key.clone();
-            async move {
-                match sign_get(&client, &bucket, &object_key, ttl_secs).await {
-                    Ok(url) => Operation::Done(Ok(url)),
-                    Err(failure) => Operation::Done(Err(failure)),
+        .read_credential(
+            &bucket,
+            || sources(app, bucket_id),
+            move |credential| {
+                let client = s3_client(
+                    &region,
+                    &endpoint,
+                    &credential,
+                    tls_insecure,
+                    tls_ca_pem.as_deref(),
+                );
+                let bucket = signed_bucket.clone();
+                let object_key = object_key.clone();
+                async move {
+                    match sign_get(&client, &bucket, &object_key, ttl_secs).await {
+                        Ok(url) => Operation::Done(Ok(url)),
+                        Err(failure) => Operation::Done(Err(failure)),
+                    }
                 }
-            }
-        })
+            },
+        )
         .await;
     match attempted {
         Ok(Ok(url)) => Ok(url),
@@ -1479,33 +1482,36 @@ where
             Err(failure) => Err(failure_error(failure)),
         };
     }
-    let sources = sources(app, &bucket_id).await;
     let tls_insecure = app.settings.tls_insecure;
     let tls_ca_pem = app.settings.tls_ca_pem.clone();
     let notes = Arc::new(Mutex::new(None::<String>));
     let notes_for_call = Arc::clone(&notes);
     let attempted = app
-        .read_credential(&bucket_id, sources, move |credential| {
-            let client = s3_client(
-                &region,
-                &endpoint,
-                &credential,
-                tls_insecure,
-                tls_ca_pem.as_deref(),
-            );
-            let pending = call(client);
-            let notes = Arc::clone(&notes_for_call);
-            async move {
-                match pending.await {
-                    Ok(value) => Operation::Done(Ok(value)),
-                    Err(S3Failure::Forbidden(message)) => {
-                        *notes.lock().expect("403 note") = Some(message);
-                        Operation::Forbidden
+        .read_credential(
+            &bucket_id,
+            || sources(app, &bucket_id),
+            move |credential| {
+                let client = s3_client(
+                    &region,
+                    &endpoint,
+                    &credential,
+                    tls_insecure,
+                    tls_ca_pem.as_deref(),
+                );
+                let pending = call(client);
+                let notes = Arc::clone(&notes_for_call);
+                async move {
+                    match pending.await {
+                        Ok(value) => Operation::Done(Ok(value)),
+                        Err(S3Failure::Forbidden(message)) => {
+                            *notes.lock().expect("403 note") = Some(message);
+                            Operation::Forbidden
+                        }
+                        Err(failure) => Operation::Done(Err(failure)),
                     }
-                    Err(failure) => Operation::Done(Err(failure)),
                 }
-            }
-        })
+            },
+        )
         .await;
     match attempted {
         Ok(Ok(value)) => Ok(value),

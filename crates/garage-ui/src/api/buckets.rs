@@ -230,12 +230,109 @@ pub(crate) async fn put_bucket_credential(
     Json(body): Json<BucketCredentialBody>,
 ) -> Result<Json<Value>, ApiError> {
     require(&current.user, Op::ChangeBucketKeys)?;
-    db::set_bucket_key(&app.db, &id, &body.access_key_id)
+    if let Err(error) = check_bucket_credential(&app, &id, &body.access_key_id).await {
+        if error.code() == "invalid_bucket_key" {
+            record(
+                &app,
+                &current.user.username,
+                &current.ip,
+                "error",
+                "invalid_bucket_key",
+                "PUT",
+                "/api/buckets/credential",
+                &id,
+                400,
+            )
+            .await?;
+        }
+        return Err(error);
+    }
+    let mut transaction = app.db.begin().await.map_err(|_| ApiError::internal())?;
+    db::set_bucket_key(&mut *transaction, &id, &body.access_key_id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    db::insert_audit(
+        &mut *transaction,
+        db::AuditEvent {
+            username: &current.user.username,
+            ip: &current.ip,
+            result: "success",
+            reason: "bucket_key_selected",
+            method: "PUT",
+            path: "/api/buckets/credential",
+            target: &id,
+            status: 200,
+        },
+    )
+    .await
+    .map_err(|_| ApiError::internal())?;
+    transaction
+        .commit()
         .await
         .map_err(|_| ApiError::internal())?;
     app.clear_credential_cache(&state::credentials::KeyMutation::AllowBucketKey { bucket_id: id })
         .await;
     Ok(Json(json!({ "access_key_id": body.access_key_id })))
+}
+
+fn invalid_bucket_key() -> ApiError {
+    ApiError::bad_request(
+        "invalid_bucket_key",
+        "Choose a key with read and write access to this bucket",
+    )
+}
+
+/// Object operations sign with the saved key, so a key that does not exist or
+/// lacks read+write on the bucket would leave the bucket unusable (412) until
+/// someone picks another key. Ask Garage before saving.
+async fn check_bucket_credential(
+    app: &App,
+    bucket_id: &str,
+    access_key_id: &str,
+) -> Result<(), ApiError> {
+    if bucket_id.is_empty() || access_key_id.trim().is_empty() {
+        return Err(invalid_bucket_key());
+    }
+    let response = proxy::fetch_key_info(app, access_key_id).await?;
+    let status = response.status();
+    if status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST {
+        return Err(invalid_bucket_key());
+    }
+    if !status.is_success() {
+        return Err(ApiError::unavailable(
+            "garage_unavailable",
+            "Garage is unavailable",
+        ));
+    }
+    let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    let info: Value = serde_json::from_slice(&bytes).map_err(|_| ApiError::internal())?;
+    if key_can_read_write(&info, bucket_id) {
+        Ok(())
+    } else {
+        Err(invalid_bucket_key())
+    }
+}
+
+fn key_can_read_write(info: &Value, bucket_id: &str) -> bool {
+    if info.get("expired").and_then(Value::as_bool) != Some(false) {
+        return false;
+    }
+    info.get("buckets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|bucket| bucket.get("id").and_then(Value::as_str) == Some(bucket_id))
+        .any(|bucket| {
+            let allowed = |name: &str| {
+                bucket
+                    .pointer(&format!("/permissions/{name}"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            };
+            allowed("read") && allowed("write")
+        })
 }
 
 pub(crate) async fn put_bucket_quotas(
@@ -1035,4 +1132,50 @@ pub(crate) fn routes() -> Router<App> {
             "/api/buckets/{id}/permissions",
             post(grant_bucket_permissions).delete(revoke_bucket_permissions),
         )
+}
+
+#[cfg(test)]
+mod credential_check_tests {
+    use super::key_can_read_write;
+    use serde_json::json;
+
+    fn info(bucket: &str, read: bool, write: bool) -> serde_json::Value {
+        json!({
+            "accessKeyId": "GK1",
+            "expired": false,
+            "buckets": [{
+                "id": bucket,
+                "globalAliases": [],
+                "localAliases": [],
+                "permissions": { "read": read, "write": write, "owner": false }
+            }]
+        })
+    }
+
+    #[test]
+    fn needs_read_and_write_on_this_bucket() {
+        assert!(key_can_read_write(&info("b1", true, true), "b1"));
+        assert!(!key_can_read_write(&info("b1", true, false), "b1"));
+        assert!(!key_can_read_write(&info("b1", false, true), "b1"));
+        assert!(!key_can_read_write(&info("b2", true, true), "b1"));
+        assert!(!key_can_read_write(&json!({ "accessKeyId": "GK1" }), "b1"));
+    }
+
+    #[test]
+    fn expired_key_is_rejected() {
+        let mut value = info("b1", true, true);
+        value["expired"] = json!(true);
+        assert!(!key_can_read_write(&value, "b1"));
+    }
+
+    #[test]
+    fn missing_or_invalid_expiration_status_is_rejected() {
+        let mut value = info("b1", true, true);
+        value.as_object_mut().unwrap().remove("expired");
+        assert!(!key_can_read_write(&value, "b1"));
+        for expired in [json!(null), json!("false"), json!(0)] {
+            value["expired"] = expired;
+            assert!(!key_can_read_write(&value, "b1"));
+        }
+    }
 }

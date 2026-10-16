@@ -145,29 +145,33 @@ impl App {
         self.credentials.lock().await.clear(mutation);
     }
 
-    pub(crate) async fn read_credential<T, F, Fut>(
+    pub(crate) async fn read_credential<T, L, Load, F, Fut>(
         &self,
         bucket_id: &str,
-        load: credentials::CredentialSources,
+        mut load: L,
         mut operation: F,
     ) -> Result<T, credentials::ReadFailure>
     where
         T: Send + 'static,
+        L: FnMut() -> Load + Send,
+        Load: std::future::Future<Output = credentials::CredentialSources> + Send,
         F: FnMut(credentials::BucketCredential) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = credentials::Operation<T>> + Send + 'static,
     {
         use credentials::{Operation, ReadFailure};
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
-        let (first, revision) = self
-            .credentials
-            .lock()
-            .await
-            .resolve_attempt(bucket_id, now, &load)
-            .map_err(ReadFailure::NoUsableKey)?;
+        let (sources, first, revision) = loop {
+            let before = self.credentials.lock().await.invalidation_revision;
+            let sources = load().await;
+            let mut cache = self.credentials.lock().await;
+            if cache.invalidation_revision != before {
+                continue;
+            }
+            let (first, revision) = cache
+                .resolve_attempt(bucket_id, util::now_secs(), &sources)
+                .map_err(ReadFailure::NoUsableKey)?;
+            break (sources, first, revision);
+        };
         match operation(first).await {
             Operation::Done(value) => Ok(value),
             Operation::Forbidden => {
@@ -179,7 +183,7 @@ impl App {
                         return Err(ReadFailure::Forbidden);
                     }
                     cache
-                        .resolve_attempt(bucket_id, now, &load)
+                        .resolve_attempt(bucket_id, util::now_secs(), &sources)
                         .map_err(ReadFailure::NoUsableKey)?
                 };
                 match operation(second).await {
@@ -922,20 +926,24 @@ server.serve_forever()
         let reader = tokio::spawn(async move {
             let mut first = true;
             reader_app
-                .read_credential("photos", credential_sources("OLD"), move |_| {
-                    reader_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let entered = Arc::clone(&reader_entered);
-                    let release = Arc::clone(&reader_release);
-                    let wait = first;
-                    first = false;
-                    async move {
-                        if wait {
-                            entered.notify_one();
-                            release.notified().await;
+                .read_credential(
+                    "photos",
+                    || async { credential_sources("OLD") },
+                    move |_| {
+                        reader_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let entered = Arc::clone(&reader_entered);
+                        let release = Arc::clone(&reader_release);
+                        let wait = first;
+                        first = false;
+                        async move {
+                            if wait {
+                                entered.notify_one();
+                                release.notified().await;
+                            }
+                            Operation::<()>::Forbidden
                         }
-                        Operation::<()>::Forbidden
-                    }
-                })
+                    },
+                )
                 .await
         });
         timeout(Duration::from_secs(2), entered.notified())
@@ -943,9 +951,11 @@ server.serve_forever()
             .unwrap();
         let responsive = timeout(Duration::from_secs(1), async {
             let other = app
-                .read_credential("other", credential_sources("KEEP"), |key| async move {
-                    Operation::Done(key.access_key_id().to_string())
-                })
+                .read_credential(
+                    "other",
+                    || async { credential_sources("KEEP") },
+                    |key| async move { Operation::Done(key.access_key_id().to_string()) },
+                )
                 .await;
             assert_eq!(other, Ok("KEEP".to_string()));
             app.clear_credential_cache(&KeyMutation::DenyBucketKey {
@@ -967,9 +977,11 @@ server.serve_forever()
             "an invalidated request retried its captured stale credentials"
         );
         let fresh = app
-            .read_credential("photos", credential_sources("NEW"), |key| async move {
-                Operation::Done(key.access_key_id().to_string())
-            })
+            .read_credential(
+                "photos",
+                || async { credential_sources("NEW") },
+                |key| async move { Operation::Done(key.access_key_id().to_string()) },
+            )
             .await;
         assert_eq!(
             fresh,
@@ -983,44 +995,56 @@ server.serve_forever()
         use super::credentials::{Operation, ReadFailure};
 
         let app = super::test_app(&crate::util::temp_dir()).await;
-        app.read_credential("photos", credential_sources("OLD"), |_| async {
-            Operation::Done(())
-        })
+        app.read_credential(
+            "photos",
+            || async { credential_sources("OLD") },
+            |_| async { Operation::Done(()) },
+        )
         .await
         .unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let attempts = Arc::clone(&seen);
         let refreshed = app
-            .read_credential("photos", credential_sources("NEW"), move |key| {
-                attempts
-                    .lock()
-                    .unwrap()
-                    .push(key.access_key_id().to_string());
-                async move {
-                    if key.access_key_id() == "OLD" {
-                        Operation::Forbidden
-                    } else {
-                        Operation::Done(key.access_key_id().to_string())
+            .read_credential(
+                "photos",
+                || async { credential_sources("NEW") },
+                move |key| {
+                    attempts
+                        .lock()
+                        .unwrap()
+                        .push(key.access_key_id().to_string());
+                    async move {
+                        if key.access_key_id() == "OLD" {
+                            Operation::Forbidden
+                        } else {
+                            Operation::Done(key.access_key_id().to_string())
+                        }
                     }
-                }
-            })
+                },
+            )
             .await;
         assert_eq!(refreshed, Ok("NEW".to_string()));
         assert_eq!(*seen.lock().unwrap(), ["OLD", "NEW"]);
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts = Arc::clone(&calls);
         let denied = app
-            .read_credential("photos", credential_sources("NEW"), move |_| {
-                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                async { Operation::<()>::Forbidden }
-            })
+            .read_credential(
+                "photos",
+                || async { credential_sources("NEW") },
+                move |_| {
+                    attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { Operation::<()>::Forbidden }
+                },
+            )
             .await;
         assert_eq!(denied, Err(ReadFailure::Forbidden));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         let fresh = app
-            .read_credential("photos", credential_sources("AFTER"), |key| async move {
-                Operation::Done(key.access_key_id().to_string())
-            })
+            .read_credential(
+                "photos",
+                || async { credential_sources("AFTER") },
+                |key| async move { Operation::Done(key.access_key_id().to_string()) },
+            )
             .await;
         assert_eq!(fresh, Ok("AFTER".to_string()));
     }
@@ -1133,6 +1157,7 @@ pub mod credentials {
         ttl_secs: i64,
         entries: HashMap<String, Entry>,
         next_revision: u64,
+        pub(super) invalidation_revision: u64,
     }
 
     impl CredentialCache {
@@ -1141,6 +1166,7 @@ pub mod credentials {
                 ttl_secs: ttl_secs.clamp(0, MAX_TTL_SECS),
                 entries: HashMap::new(),
                 next_revision: 0,
+                invalidation_revision: 0,
             }
         }
 
@@ -1187,6 +1213,8 @@ pub mod credentials {
         }
 
         pub fn clear(&mut self, mutation: &KeyMutation) {
+            // A pending source load may hold a key that has no cache entry yet.
+            self.invalidation_revision += 1;
             match mutation {
                 KeyMutation::AllowBucketKey { bucket_id, .. }
                 | KeyMutation::DenyBucketKey { bucket_id, .. } => {

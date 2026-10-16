@@ -490,8 +490,8 @@ pub async fn delete_user_sessions(pool: &SqlitePool, user_id: i64) -> Result<(),
     Ok(())
 }
 
-pub async fn set_bucket_key(
-    pool: &SqlitePool,
+pub async fn set_bucket_key<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
     bucket_id: &str,
     access_key_id: &str,
 ) -> Result<(), sqlx::Error> {
@@ -501,7 +501,7 @@ pub async fn set_bucket_key(
     )
     .bind(bucket_id)
     .bind(access_key_id)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -513,7 +513,10 @@ pub async fn bucket_key(pool: &SqlitePool, bucket_id: &str) -> Result<Option<Str
         .await
 }
 
-pub async fn insert_audit(pool: &SqlitePool, event: AuditEvent<'_>) -> Result<(), sqlx::Error> {
+pub async fn insert_audit<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    event: AuditEvent<'_>,
+) -> Result<(), sqlx::Error> {
     let username = truncate(event.username, 128);
     sqlx::query(
         "INSERT INTO audit (at, username, ip, result, reason, method, path, target, status)
@@ -528,7 +531,7 @@ pub async fn insert_audit(pool: &SqlitePool, event: AuditEvent<'_>) -> Result<()
     .bind(event.path)
     .bind(event.target)
     .bind(event.status)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }

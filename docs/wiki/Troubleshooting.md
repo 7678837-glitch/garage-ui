@@ -44,7 +44,7 @@ Verify `S3_ENDPOINT_URL` and `S3_REGION` against Garage's S3 configuration. Expl
 
 Choose a **Bucket key** when prompted, or check the configured project-wide S3 key. Verify Read/Write grants for that bucket. A project-wide key overrides a per-bucket choice. An admin token is not an S3 credential. After restoring an unavailable Garage Admin API, retry the object operation in the same UI process: failed S3 discovery probes are not retained until restart. Explicit endpoint/region settings still take precedence.
 
-A pending upload or read releases the shared credential-cache lock before network I/O, allowing other buckets and permission changes to proceed. If a key is revoked or replaced during a request, that request cannot restore its stale credential on a forbidden retry. Check current grants and retry with the intended key. This does not cancel an operation Garage has already accepted.
+A pending credential lookup, upload, or read releases the shared credential-cache lock before network I/O, allowing other buckets and permission changes to proceed. When a key changes during credential loading, object operations and share-link signing reload their credentials before filling the cache. A revoked or replaced credential cannot be restored by an in-flight forbidden retry. Check current grants and retry with the intended key. This does not cancel an operation Garage has already accepted.
 
 ## Preview, download, share, or upload fails
 

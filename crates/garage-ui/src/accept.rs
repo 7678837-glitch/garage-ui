@@ -2026,7 +2026,7 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
     const MESSAGE: &str = "This bucket has no usable read-write key";
     let (s3_url, s3_seen, s3_task) = capture_requests(|_| empty_list_http()).await;
     let (admin_url, admin_task) =
-        serve_json(r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value"}"#).await;
+        serve_json(r#"{"accessKeyId":"CHOSEN","secretAccessKey":"chosen-secret-value","expired":false,"buckets":[{"id":"bkt-1","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":true,"owner":false}}]}"#).await;
     let dir = crate::util::temp_dir();
     let app = state::test_app_with(
         &dir,
@@ -2155,6 +2155,306 @@ async fn missing_bucket_key_returns_412_and_is_not_cached() {
     }
     s3_task.abort();
     admin_task.abort();
+}
+
+#[tokio::test]
+async fn bucket_credential_rejects_key_without_read_write_on_the_bucket() {
+    let (admin_url, admin_task) = serve_json(
+        r#"{"accessKeyId":"WEAK","expired":false,"buckets":[{"id":"bkt-1","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":false,"owner":false}},{"id":"bkt-2","globalAliases":[],"localAliases":[],"permissions":{"read":true,"write":true,"owner":false}}]}"#,
+    )
+    .await;
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("S3_ENDPOINT_URL", "http://127.0.0.1:9"),
+            ("S3_REGION", "garage"),
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    for body in [
+        json!({ "access_key_id": "WEAK" }),
+        json!({ "access_key_id": "" }),
+    ] {
+        let rejected = exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/credential",
+                Some(&body.to_string()),
+                Some(&ada),
+            ),
+        )
+        .await;
+        assert_eq!(
+            rejected.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            rejected.body
+        );
+        assert_eq!(code_of(&rejected.body), "invalid_bucket_key");
+    }
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT access_key_id FROM bucket_keys WHERE bucket_id = 'bkt-1'")
+            .fetch_optional(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, None);
+    assert!(audit_text(&app).await.contains("invalid_bucket_key"));
+
+    let accepted = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-2/credential",
+            Some(&json!({ "access_key_id": "WEAK" }).to_string()),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    assert!(audit_text(&app).await.contains("bucket_key_selected"));
+    admin_task.abort();
+}
+
+#[tokio::test]
+async fn bucket_credential_audit_failure_preserves_mapping_and_cache() {
+    use crate::db;
+    use crate::state::credentials::{BucketCredential, CredentialSources};
+
+    let (admin_url, admin_task) = serve_json(
+        r#"{"accessKeyId":"NEW","expired":false,"buckets":[{"id":"bkt-1","permissions":{"read":true,"write":true}}]}"#,
+    )
+    .await;
+    let dir = crate::util::temp_dir();
+    let app = state::test_app_with(
+        &dir,
+        &[
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    db::set_bucket_key(&app.db, "bkt-1", "OLD").await.unwrap();
+    let sources = |key| CredentialSources {
+        project_key: None,
+        explicit_key: Some(BucketCredential::new(key, "fixture-secret")),
+        read_write_keys: vec![],
+    };
+    let now = crate::util::now_secs();
+    app.resolve_bucket_credential("bkt-1", now, &sources("OLD"))
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_credential_audit BEFORE INSERT ON audit
+         WHEN NEW.reason = 'bucket_key_selected'
+         BEGIN SELECT RAISE(ABORT, 'injected audit write failure'); END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let body = json!({ "access_key_id": "NEW" }).to_string();
+    let failed = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-1/credential",
+            Some(&body),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(
+        failed.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        failed.body
+    );
+    assert_eq!(
+        db::bucket_key(&app.db, "bkt-1").await.unwrap().as_deref(),
+        Some("OLD")
+    );
+    assert_eq!(
+        app.resolve_bucket_credential("bkt-1", now, &sources("NEW"))
+            .await
+            .unwrap()
+            .access_key_id(),
+        "OLD",
+    );
+    assert!(!audit_text(&app).await.contains("bucket_key_selected"));
+
+    sqlx::query("DROP TRIGGER fail_credential_audit")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let accepted = exchange(
+        &app,
+        request(
+            "PUT",
+            "/api/buckets/bkt-1/credential",
+            Some(&body),
+            Some(&ada),
+        ),
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    assert_eq!(
+        db::bucket_key(&app.db, "bkt-1").await.unwrap().as_deref(),
+        Some("NEW")
+    );
+    assert_eq!(
+        app.resolve_bucket_credential("bkt-1", now, &sources("NEW"))
+            .await
+            .unwrap()
+            .access_key_id(),
+        "NEW",
+    );
+    assert!(audit_text(&app).await.contains("bucket_key_selected"));
+    admin_task.abort();
+}
+
+#[tokio::test]
+async fn object_credential_load_does_not_restore_a_replaced_key() {
+    replaced_key_during_credential_load(false).await;
+}
+
+#[tokio::test]
+async fn presign_credential_load_does_not_restore_a_replaced_key() {
+    replaced_key_during_credential_load(true).await;
+}
+
+async fn replaced_key_during_credential_load(presign: bool) {
+    use axum::{Json, Router, extract::Query, routing::get};
+    use std::collections::HashMap;
+    use tokio::sync::Notify;
+    use tokio::time::timeout;
+
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let admin_url = format!("http://{}", listener.local_addr().unwrap());
+    let admin = Router::new().route(
+        "/v2/GetKeyInfo",
+        get({
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            move |Query(query): Query<HashMap<String, String>>| {
+                let entered = Arc::clone(&entered);
+                let release = Arc::clone(&release);
+                async move {
+                    let id = &query["id"];
+                    if id == "OLD" {
+                        entered.notify_one();
+                        release.notified().await;
+                    }
+                    Json(json!({
+                        "accessKeyId": id,
+                        "secretAccessKey": "fixture-secret",
+                        "expired": false,
+                        "buckets": [{"id": "bkt-1", "permissions": {"read": true, "write": true}}]
+                    }))
+                }
+            }
+        }),
+    );
+    let admin_task = tokio::spawn(async move { axum::serve(listener, admin).await.unwrap() });
+    let (s3_url, seen, s3_task) = capture_requests(|_| empty_list_http()).await;
+    let app = state::test_app_with(
+        &crate::util::temp_dir(),
+        &[
+            ("GARAGE_ADMIN_URL", admin_url.as_str()),
+            ("GARAGE_ADMIN_TOKEN", "admin-token-value1"),
+            ("S3_ENDPOINT_URL", s3_url.as_str()),
+            ("PUBLIC_S3_URL", s3_url.as_str()),
+            ("S3_REGION", "garage"),
+        ],
+        test_quota(),
+    )
+    .await;
+    let ada = setup_admin(&app).await;
+    crate::db::set_bucket_key(&app.db, "bkt-1", "OLD")
+        .await
+        .unwrap();
+    let reader_app = app.clone();
+    let reader = tokio::spawn(async move {
+        if presign {
+            crate::objects::presign_get(&reader_app, "bkt-1", "file", 60, None)
+                .await
+                .unwrap()
+        } else {
+            crate::objects::list(&reader_app, "bkt-1", "", None, "", None)
+                .await
+                .unwrap();
+            String::new()
+        }
+    });
+    timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    let updated = timeout(
+        Duration::from_secs(2),
+        exchange(
+            &app,
+            request(
+                "PUT",
+                "/api/buckets/bkt-1/credential",
+                Some(&json!({"access_key_id": "NEW"}).to_string()),
+                Some(&ada),
+            ),
+        ),
+    )
+    .await
+    .expect("credential loading must not block invalidation");
+    assert_eq!(updated.status, StatusCode::OK, "{}", updated.body);
+    release.notify_one();
+    let result = timeout(Duration::from_secs(2), reader)
+        .await
+        .unwrap()
+        .unwrap();
+    let cached = app
+        .resolve_bucket_credential(
+            "bkt-1",
+            crate::util::now_secs(),
+            &crate::state::credentials::CredentialSources {
+                project_key: None,
+                explicit_key: None,
+                read_write_keys: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    admin_task.abort();
+    s3_task.abort();
+    assert_eq!(
+        cached.access_key_id(),
+        "NEW",
+        "a completed replacement was undone by a stale load"
+    );
+    if presign {
+        let url = reqwest::Url::parse(&result).unwrap();
+        let credential = url
+            .query_pairs()
+            .find(|(name, _)| name == "X-Amz-Credential")
+            .unwrap()
+            .1
+            .into_owned();
+        assert!(credential.starts_with("NEW/"), "{credential}");
+    } else {
+        let requests = seen.lock().unwrap();
+        assert!(!requests.is_empty());
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.contains("Credential=NEW/")),
+            "{requests:?}"
+        );
+    }
 }
 
 fn spawn_upstream(listener: Arc<TcpListener>) -> tokio::task::JoinHandle<String> {
