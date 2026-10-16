@@ -2,6 +2,18 @@
 
 Entries describe their named release or unpublished draft. Later development work is tracked in the [delivery roadmap](docs/roadmap.md) and [verification evidence](docs/README.md#verification-evidence); it is not automatically included in a release entry.
 
+## 20261016.1
+
+First public release. Requires Garage v2.3.0 or later; browser integration is verified against Garage v2.3.0 and v2.4.1.
+
+- Manage buckets, keys, grants, aliases, quotas, CORS, lifecycle rules, and scoped administrator tokens.
+- Browse, preview, upload, share, and download objects, including multipart transfers and ZIP archives; cancel transfers and delete individual objects, selections, or prefixes.
+- Configure the first administrator and manage users, roles, sessions, and audit exports. Validate bucket credentials and update their mapping and audit record atomically; prevent invalidated credentials from being restored by concurrent cache loads.
+- Inspect cluster health, metrics, layout history, workers, and block errors, and run guarded maintenance operations.
+- Provide responsive English and Simplified Chinese interfaces, light and dark themes, keyboard navigation, and accessible controls. Preserve concurrent upload completion states and readable light-theme accent text.
+- Verify browser workflows in Chromium, Firefox, and WebKit, including upload cancellation, ZIP downloads, video seeking, setup, and TLS warnings.
+- Publish static Linux amd64 and arm64 binaries, multi-architecture container images, an SPDX SBOM, and SHA-256 checksums. Images and binaries are unsigned; signing and build-provenance attestations are deferred. Release-image health reports identify the exact source commit and version.
+
 ## 20261015.1 (DRAFT)
 
 Unpublished release draft following 20261014.1. This update expands storage, access management, cluster administration, and observability, and migrates the embedded React 18 interface to Radix Themes. All pages use compact desktop and mobile layouts with updated Garage UI branding. The minimum supported Garage version remains v2.3.0, with compatibility verified on Garage v2.3.0 and v2.4.1.
@@ -20,9 +32,9 @@ Unpublished release draft following 20261014.1. This update expands storage, acc
 - Add repeatable list-performance, ZIP-memory, and large-file thumbnail checks, and redact session cookies from browser-check failure logs.
 - Expand the operator Wiki and AI contribution guide with current interface screenshots, task-oriented workflows, configuration, and verification guidance.
 
-## 20261014.1
+## 20261014.1 (DRAFT)
 
-First version. The minimum Garage version is v2.3.0. This version was verified on v2.3.0 and v2.4.1.
+Unpublished initial release draft. The minimum Garage version is v2.3.0. This version was verified on v2.3.0 and v2.4.1.
 
 - Set up the first administrator, log in, log out, and change a password. Roles are admin and viewer, with separate download and share permission bits.
 - List, create, and delete buckets. Set aliases and quotas. Grant and revoke bucket permissions.

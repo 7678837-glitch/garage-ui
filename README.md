@@ -46,7 +46,7 @@ docker run -d --name garage-ui --read-only --tmpfs /tmp \
   ghcr.io/xjoker/garage-ui:latest
 ```
 
-Replace the four Garage values with your cluster's. Use a version tag such as `ghcr.io/xjoker/garage-ui:20261015.1` to pin a release. Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. `COOKIE_SECURE=false` is for this local HTTP address; use HTTPS and the default secure cookies when serving the UI remotely. To keep the token out of your shell history, use Compose with an `.env` file as shown below.
+Replace the four Garage values with your cluster's. Use a version tag such as `ghcr.io/xjoker/garage-ui:20261016.1` to pin a release. Open [http://127.0.0.1:3909](http://127.0.0.1:3909) and create your first administrator. `COOKIE_SECURE=false` is for this local HTTP address; use HTTPS and the default secure cookies when serving the UI remotely. To keep the token out of your shell history, use Compose with an `.env` file as shown below.
 
 ### Download the binary
 

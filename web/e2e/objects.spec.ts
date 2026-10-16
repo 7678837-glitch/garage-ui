@@ -1,6 +1,6 @@
 import { submitLogin } from "./login";
 import { assertAuthenticated, bucketIdFromRow, chooseTheme, openNavigation, openRowActions, openUpload, selectChoice } from "./interactions";
-import { expect, type CDPSession, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Request as BrowserRequest, test } from "@playwright/test";
 import { closeSync, createReadStream, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -40,7 +40,6 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
 
   let bucketId = "";
   let keyId = "";
-  let cdp: CDPSession | null = null;
   const objects = page.locator("section[aria-label=\"Objects\"]");
   const upload = page.getByRole("region", { name: "Upload" });
 
@@ -63,6 +62,11 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await objects.getByRole("button", { name: "notes/", exact: true }).click();
       const prefixNav = objects.getByRole("navigation", { name: "Prefix" });
       await expect(prefixNav.getByRole("button", { name: "notes (notes/)", exact: true })).toBeVisible();
+      // Directory pickers can omit MIME types; explicitly type the inline-preview fixture.
+      await openUpload(objects);
+      await objects.getByLabel("Choose files").setInputFiles({ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from(note) });
+      await uploadRow(upload, "a.txt").last().getByRole("button", { name: "Overwrite", exact: true }).click();
+      await expect(uploadRow(upload, "a.txt").last().getByText("Done", { exact: true })).toBeVisible();
       await objects.getByRole("checkbox", { name: "Select notes/a.txt" }).click();
       await expect(objects.getByRole("button", { name: "Copy path", exact: true })).toBeVisible();
       const details = objects.getByRole("region", { name: "Object details" });
@@ -99,13 +103,14 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("upload three files and cancel one", async () => {
-      cdp = await throttle(page, cdp, 1024 * 1024);
+      const slowUpload = await pauseUpload(page, bucketId, "slow.bin");
       await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles([
         join(work, "keep-a.txt"),
         join(work, "keep-b.txt"),
         join(work, "slow.bin"),
       ]);
+      await slowUpload.started;
       const slow = uploadRow(upload, "slow.bin");
       await expect(slow.getByRole("button", { name: "Cancel", exact: true })).toBeVisible({
         timeout: 15_000,
@@ -118,7 +123,7 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
       await slow.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(slow.getByText("Cancelled", { exact: true })).toBeVisible();
       await expect(slow.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
-      cdp = await throttle(page, cdp, -1);
+      await slowUpload.resume();
       await expect(uploadRow(upload, "keep-a.txt").getByText("Done", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
@@ -137,14 +142,15 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
     });
 
     await test.step("accepted upload departure cancels real transfer", async () => {
-      cdp = await throttle(page, cdp, 128 * 1024);
+      const guardedUpload = await pauseUpload(page, bucketId, "guard.bin");
       await openUpload(objects);
       await objects.getByLabel("Choose files").setInputFiles(join(work, "guard.bin"));
+      await guardedUpload.started;
       await expect(uploadRow(upload, "guard.bin").getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
       page.once("dialog", (dialog) => dialog.accept());
       await page.getByRole("navigation", { name: "Breadcrumb", exact: true }).getByRole("link", { name: "Buckets", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Buckets", exact: true })).toBeVisible();
-      cdp = await throttle(page, cdp, -1);
+      await guardedUpload.resume();
       await openObjects(page, bucketId);
       await expect(objects.getByRole("button", { name: "keep-a.txt", exact: true })).toBeVisible();
       const missing = await page.request.get(objectUrl(bucketId, "guard.bin"));
@@ -232,7 +238,10 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
           return;
         }
         const url = new URL(request.url());
-        const result = await putFile(widePath, `${url.pathname}${url.search}`, request.headers());
+        const headers = await request.allHeaders();
+        // WebKit interception happens before Cookie is attached to the request.
+        headers.cookie = (await page.context().cookies(request.url())).map(({ name, value }) => `${name}=${value}`).join("; ");
+        const result = await putFile(widePath, `${url.pathname}${url.search}`, headers);
         captured.status = result.status;
         captured.body = result.body;
         await route.fulfill({
@@ -383,9 +392,6 @@ test("browses, previews, transfers, and deletes objects", async ({ page }) => {
 
     await deleteBucketThroughThePage(page, alias, bucketId);
   } finally {
-    if (cdp) {
-      await throttle(page, cdp, -1).catch(() => undefined);
-    }
     rmSync(work, { recursive: true, force: true });
     await release(page, alias, bucketId, keyId).catch(() => undefined);
   }
@@ -469,35 +475,33 @@ async function multipartKeys(page: Page, bucketId: string): Promise<string[]> {
   return (body.uploads ?? []).flatMap((upload) => (upload.key ? [upload.key] : []));
 }
 
-async function throttle(
-  page: Page,
-  current: CDPSession | null,
-  bytesPerSecond: number,
-): Promise<CDPSession | null> {
-  if (bytesPerSecond < 0) {
-    if (!current) {
-      return null;
-    }
-    await current.send("Network.emulateNetworkConditions", {
-      offline: false,
-      latency: 0,
-      downloadThroughput: -1,
-      uploadThroughput: -1,
-    });
-    await current.detach();
-    return null;
-  }
-  const client = current ?? (await page.context().newCDPSession(page));
-  if (!current) {
-    await client.send("Network.enable");
-  }
-  await client.send("Network.emulateNetworkConditions", {
-    offline: false,
-    latency: 0,
-    downloadThroughput: -1,
-    uploadThroughput: bytesPerSecond,
+async function pauseUpload(page: Page, bucketId: string, key: string): Promise<{ started: Promise<void>; resume: () => Promise<void> }> {
+  const pathname = `/api/buckets/${encodeURIComponent(bucketId)}/object`;
+  const matcher = (url: URL) => url.pathname === pathname && url.searchParams.get("key") === key;
+  let release!: () => void;
+  let markStarted!: () => void;
+  let intercepted!: BrowserRequest;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  return client;
+  await page.route(matcher, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    intercepted = route.request();
+    markStarted();
+    await paused;
+  });
+  return {
+    started,
+    async resume() {
+      await expect.poll(() => intercepted.failure(), { timeout: 15_000 }).not.toBeNull();
+      release();
+      await page.unroute(matcher);
+    },
+  };
 }
 
 async function logIn(page: Page): Promise<void> {

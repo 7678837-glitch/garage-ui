@@ -327,6 +327,7 @@ async function sliderOverVideo(page: Page, video: Locator): Promise<Box | null> 
 }
 
 async function timelineFromShadow(page: Page): Promise<Box | null> {
+  if (page.context().browser()?.browserType().name() !== "chromium") return null;
   const client = await page.context().newCDPSession(page);
   try {
     const described = await describeVideo(client);

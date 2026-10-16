@@ -90,7 +90,8 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   await expect(account.getByRole("status")).toBeVisible();
   await expect(account).toContainText(garageTarget().version);
   await page.screenshot({ path: `${evidenceDir}/${label}-account-open.png`, fullPage: false });
-  await summary.click();
+  await summary.focus();
+  await page.keyboard.press("Enter");
   await expect(summary).toHaveAttribute("aria-expanded", "false");
   // Radix unregisters the closing popover layer and restores focus after unmount.
   await expect(page.locator(".console-account-panel")).toHaveCount(0);
@@ -118,6 +119,7 @@ async function headerLayout(page: Page, label: string): Promise<void> {
   await page.setViewportSize({ width: 360, height: 800 });
   await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("dialog", { name: /^(Sections|分区)$/ })).toHaveCount(0);
+  await expect(page.locator(".console-account-panel")).toHaveCount(0);
 }
 
 for (const width of [360, 1280]) for (const theme of ["Light", "Dark"] as const) {

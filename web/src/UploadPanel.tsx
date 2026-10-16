@@ -204,6 +204,7 @@ export function UploadPanel({
   const [rows, setRows] = useState<Row[]>([]);
   const [pendingDrops, setPendingDrops] = useState(0);
   const [dropError, setDropError] = useState<string | null>(null);
+  // Upload callbacks own the current queue; a rendered snapshot can lag concurrent completions.
   const rowsRef = useRef(rows);
   const abortRef = useRef(new Map<number, () => void>());
   const nextIdRef = useRef(1);
@@ -214,7 +215,6 @@ export function UploadPanel({
   existingRef.current = existingKeys;
   const prefixRef = useRef(prefix);
   prefixRef.current = prefix;
-  rowsRef.current = rows;
 
   function commit(next: Row[]) {
     if (!mounted.current) return;

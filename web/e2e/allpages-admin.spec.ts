@@ -113,6 +113,7 @@ for (const width of [360, 390, 768, 1280]) {
         await expect(page.getByText('Password updated', { exact: true })).toBeVisible();
         await openAccount(page);
         await page.getByRole('button', { name: 'Log out', exact: true }).click();
+        await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
         await login(page, admin, 'allpages-next-pass');
         await nav(page, 'Settings');
         await page.getByLabel('Current password', { exact: true }).fill('allpages-next-pass');
@@ -144,8 +145,8 @@ for (const width of [360, 390, 768, 1280]) {
         expect((await dl).suggestedFilename()).toBe('audit.csv');
         record('Audit', width, ['real audit events', 'no-match user', 'user/date/action filters', 'CSV download', 'pagination inspected']);
     });
-    test(`Admin tokens ${width}`, async ({ page, context }) => {
-        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    test(`Admin tokens ${width}`, async ({ page, context, browserName }) => {
+        if (browserName === 'chromium') await context.grantPermissions(['clipboard-read', 'clipboard-write']);
         await page.setViewportSize({ width, height: 800 });
         await login(page);
         await nav(page, 'Admin tokens');
@@ -186,7 +187,15 @@ for (const width of [360, 390, 768, 1280]) {
         const secret = page.getByRole('dialog', { name: 'Admin token secret', exact: true });
         await expect(secret.getByRole('heading', { name: 'Admin token secret', exact: true })).toBeVisible();
         await secret.getByRole('button', { name: 'Copy secret', exact: true }).click();
-        await expect(secret.getByText('Copied', { exact: true })).toBeVisible();
+        if (browserName !== 'chromium') {
+            await expect(secret.getByRole('status')).toHaveText(/^(Copied|Select the secret and copy it)$/);
+            if (await secret.getByRole('status').innerText() === 'Select the secret and copy it') {
+                await expect(secret.locator('input')).toHaveAttribute('type', 'text');
+                await expect(secret.locator('input')).not.toHaveValue('');
+            }
+        } else {
+            await expect(secret.getByText('Copied', { exact: true })).toBeVisible();
+        }
         await secret.getByRole('button', { name: 'I have saved it', exact: true }).click();
         const row = tokens.locator('tbody tr', { hasText: name });
         await expect(row).toBeVisible();

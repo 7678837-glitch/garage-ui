@@ -15,7 +15,7 @@ docker run -d --name garage-ui --read-only --tmpfs /tmp \
   ghcr.io/xjoker/garage-ui:latest
 ```
 
-Pin a release with a version tag such as `ghcr.io/xjoker/garage-ui:20261015.1`. `COOKIE_SECURE=false` is for a local HTTP trial only; behind HTTPS keep the default. The Compose files below run the same image.
+Pin a release with a version tag such as `ghcr.io/xjoker/garage-ui:20261016.1`. `COOKIE_SECURE=false` is for a local HTTP trial only; behind HTTPS keep the default. The Compose files below run the same image.
 
 ## Download the binary
 

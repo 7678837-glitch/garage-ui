@@ -34,7 +34,7 @@ async function accessibility(page: Page, name: string): Promise<void> {
 
 for (const width of [1280, 360]) {
   for (const theme of ["Light", "Dark"] as const) {
-    test(`redesign delivered pages ${width} ${theme}`, async ({ page }) => {
+    test(`redesign delivered pages ${width} ${theme}`, async ({ page, browserName }) => {
       test.setTimeout(300_000);
       await page.setViewportSize({ width, height: 800 });
       await page.goto("/");
@@ -214,7 +214,8 @@ for (const width of [1280, 360]) {
       await expect(preview).toBeFocused();
       await objects.getByRole("button", { name: "preview.txt", exact: true }).click();
       await expect(preview).toBeInViewport();
-      await objects.getByRole("checkbox", { name: "Select preview.txt", exact: true }).check();
+      await objects.getByRole("checkbox", { name: "Select preview.txt", exact: true }).focus();
+      await page.keyboard.press("Space");
       await expect(objects.getByRole("checkbox", { name: "Select preview.txt", exact: true })).toBeFocused();
       await expect(preview.locator("pre")).toHaveText("Readable preview below the object list.");
       await expect(objects.getByRole("checkbox", { name: "Select preview.txt", exact: true })).toBeChecked();
@@ -267,6 +268,12 @@ for (const width of [1280, 360]) {
         await expect(page.getByRole("region", { name: "Upload", exact: true }).getByRole("listitem").filter({ hasText: longKey }).getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
         await closeUpload(objects);
         await objects.getByRole("button", { name: `${longPrefix}/`, exact: true }).click();
+        // Directory pickers can omit MIME types; explicitly type the text-preview fixture.
+        await openUpload(objects);
+        await objects.getByLabel("Choose files").setInputFiles({ name: longName, mimeType: "text/plain", buffer: Buffer.from(longBody) });
+        await objects.getByRole("button", { name: "Overwrite", exact: true }).click();
+        await expect(page.getByRole("region", { name: "Upload", exact: true }).getByRole("listitem").filter({ hasText: longName }).last().getByText("Done", { exact: true })).toBeVisible();
+        await closeUpload(objects);
         const row = objects.locator("tbody tr").filter({ has: page.getByRole("button", { name: longKey, exact: true }) });
         await expect(row).toBeVisible();
         const nameControl = row.getByRole("button", { name: longKey, exact: true });
@@ -343,9 +350,10 @@ for (const width of [1280, 360]) {
         await menu.focus();
         await page.keyboard.press("Enter");
         await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
-        await page.keyboard.press("Tab");
+        const tab = browserName === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
+        await page.keyboard.press(tab);
         await expect(page.getByRole("dialog", { name: "Sections", exact: true }).getByRole("link", { name: "Overview", exact: true })).toBeFocused();
-        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press(`Shift+${tab}`);
         await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toBeFocused();
         const resizeHash = new URL(page.url()).hash;
         for (const switchedWidth of [768, 1280, 1440]) {

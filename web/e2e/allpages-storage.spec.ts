@@ -21,6 +21,7 @@ async function nav(page: Page, name: "Buckets" | "Keys") {
   await openNavigation(page);
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name, exact: true })).toHaveAttribute("aria-busy", "false");
 }
 async function api(page: Page, path: string, method = "GET", data?: unknown) {
   const cookies = await page.context().cookies();
@@ -188,7 +189,8 @@ for (const width of [1280, 360]) {
       await expect(page.getByText(extra, { exact: true })).toBeVisible();
       await shot(page, "bucket-long-global-alias", "Added long global alias; full identity and removal action remain visible");
       await page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true }).click();
-      await expect(page.getByRole("button", { name: `Remove global alias ${extra}`, exact: true })).toHaveCount(0);
+      // The button label changes while deletion is pending; wait for the record itself.
+      await expect(page.getByText(extra, { exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: "Add alias", exact: true }).click();
       await page.getByRole("radio", { name: `Local for ${fixture.bucketId}`, exact: true }).click();
       await page.getByLabel(`Local alias for ${fixture.bucketId}`).fill(extra);

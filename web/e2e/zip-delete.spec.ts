@@ -130,30 +130,16 @@ function zipEntries(file: string): { name: string; text: string }[] {
 }
 
 async function readZip(page: Page, objects: Locator): Promise<string> {
-  const downloadTask = page
-    .waitForEvent("download", { timeout: 30_000 })
-    .then((download) => ({ kind: "download" as const, download }));
-  const popupTask = page
-    .context()
-    .waitForEvent("page", { timeout: 30_000 })
-    .then((popup) => ({ kind: "popup" as const, popup }));
+  const downloadTask = page.waitForEvent("download", { timeout: 30_000 });
+  const popupTask = page.context().waitForEvent("page", { timeout: 30_000 }).then(async (popup) => {
+    const download = await popup.waitForEvent("download", { timeout: 30_000 });
+    return download;
+  });
+  // WebKit can open a popup but deliver its attachment download on the opener.
+  const downloaded = Promise.any([downloadTask, popupTask]);
   await objects.getByRole("button", { name: "Download ZIP", exact: true }).click();
-  const outcome = await Promise.race([downloadTask, popupTask]);
-  downloadTask.catch(() => undefined);
-  popupTask.catch(() => undefined);
-  if (outcome.kind === "download") {
-    const path = await outcome.download.path();
-    if (!path) {
-      throw new Error("ZIP download has no file");
-    }
-    return path;
-  }
-  const download = await outcome.popup.waitForEvent("download", { timeout: 30_000 });
-  const path = await download.path();
-  await outcome.popup.close();
-  if (!path) {
-    throw new Error("ZIP popup download has no file");
-  }
+  const path = await (await downloaded).path();
+  if (!path) throw new Error("ZIP download has no file");
   return path;
 }
 

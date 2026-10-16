@@ -76,6 +76,7 @@ export async function assertAuthenticated(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: /^(Log out|退出)$/ })).toBeEnabled();
   await page.locator(".console-account-trigger").click();
   await expect(page.locator(".console-account-trigger")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".console-account-panel")).toHaveCount(0);
 }
 
 export async function closeUpload(scope: Locator): Promise<void> {

@@ -54,6 +54,30 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$work/ui"
+# macOS protects personal Firefox app data even when -profile points to a test directory.
+# Give the test browser its own application identity without changing the installed bundle.
+if [ "$(uname -s)" = Darwin ]; then
+  firefox=$("$bun" -e 'import { firefox } from "./web/node_modules/@playwright/test"; console.log(firefox.executablePath())')
+  if [ -x "$firefox" ]; then
+    XUL_APP_FILE=$(python3 - "$firefox" "$work" <<'PY'
+from pathlib import Path
+import sys
+
+resources = Path(sys.argv[1]).parent.parent / "Resources"
+app = Path(sys.argv[2]) / "firefox-app"
+app.mkdir()
+for source in (resources / "browser").iterdir():
+    if source.name != "application.ini":
+        (app / source.name).symlink_to(source)
+ini = (resources / "application.ini").read_text()
+ini = ini.replace("\nName=Firefox\n", "\nName=GarageUITestFirefox\n")
+(app / "application.ini").write_text(ini)
+print(app / "application.ini")
+PY
+    )
+    export XUL_APP_FILE
+  fi
+fi
 export GARAGE_VERSION="$version" GARAGE_CONTAINER="$container" GARAGE_UI_E2E_DATA_DIR="$work/ui"
 GARAGE_ADMIN_TOKEN=$("$bun" -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))')
 export GARAGE_ADMIN_TOKEN

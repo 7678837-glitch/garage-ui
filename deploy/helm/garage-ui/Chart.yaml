@@ -3,4 +3,4 @@ name: garage-ui
 description: Deploy the Garage admin UI only. This chart does not deploy Garage.
 type: application
 version: 0.1.0
-appVersion: "20261015.1"
+appVersion: "20261016.1"

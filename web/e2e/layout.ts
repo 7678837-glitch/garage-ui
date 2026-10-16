@@ -16,7 +16,7 @@ function ensureDir(): void {
 
 export async function assertRenderedLayout(page: Page, name: string): Promise<void> {
   const measured = await page.evaluate(async () => {
-    const visible = (element: Element) => element.checkVisibility() && element.getClientRects().length > 0;
+    const visible = (element: Element) => element.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && element.getClientRects().length > 0;
     // Portals animate their transform, so measure only after the visible finite animations settle.
     for (let attempt = 0; ; attempt += 1) {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));

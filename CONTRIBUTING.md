@@ -121,6 +121,8 @@ GARAGE_VERSION=v2.3.0 scripts/e2e-check.sh
 
 The [runner](scripts/e2e-check.sh) defaults to Garage v2.4.1 and `disposable-smoke.spec.ts`. It requires the Bun version pinned in [web/package.json](web/package.json) (`BUN_BIN` can select its executable), Docker, installed Playwright browsers, and the prerequisites above. It never installs dependencies, pulls images, or builds the application. It resolves the selected local image to its ID, creates a single-node Garage fixture on random loopback Admin/S3 ports, and uses a fresh UI data directory. Cleanup removes only the fixture container and volume with its exact ownership label plus its temporary directory; cleanup failures identify the resources to inspect. Do not run two browser checks concurrently on port 3909.
 
+On macOS, the runner gives the bundled Firefox a separate `GarageUITestFirefox` application-data identity through a temporary `XUL_APP_FILE`. This avoids accessing the personal Firefox directory protected by macOS 27 ([upstream issue](https://github.com/microsoft/playwright/issues/42768)); the installed browser bundle and personal profiles are not modified. Use the runner for Firefox checks on these systems.
+
 Pass an affected spec or a separate configuration when appropriate:
 
 ```sh

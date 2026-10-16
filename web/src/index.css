@@ -310,6 +310,8 @@ button:not(.rt-reset)[aria-pressed="true"] { font-weight: 600; background: var(-
   font-size: 14px;
   line-height: 1.5;
 }
+/* Keep small accent text above AA contrast on white in both sRGB and P3 browsers. */
+.radix-themes.light { --orange-11: #b45309; --orange-a11: #b45309; }
 /* Radix's high-contrast solid palette keeps small button text readable in both themes. */
 .rt-Button:where(.rt-variant-solid) {
   --accent-9: var(--accent-12);
