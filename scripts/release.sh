@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: scripts/release.sh [output-directory]
-# Creates two static Linux binaries, deployment files, their SBOM and SHA256SUMS, without signing.
+# Packages and verifies prebuilt Linux images, deployment files, their SBOM and SHA256SUMS, without signing.
 set -eu
 if [ "$#" -gt 1 ]; then
   echo "Usage: $0 [output-directory]" >&2
@@ -16,6 +16,12 @@ if ! git diff --quiet HEAD --; then
   echo "Release requires clean tracked source" >&2
   exit 1
 fi
+for arch in amd64 arm64; do
+  if ! docker image inspect "garage-ui:$version-$arch" >/dev/null 2>&1; then
+    echo "Missing garage-ui:$version-$arch; build both images before preparing release artifacts" >&2
+    exit 1
+  fi
+done
 out=${1:-/tmp/garage-ui-release/$version}
 case "$out" in
   /*) ;;
@@ -150,8 +156,6 @@ if counts["cargo"] == 0 or counts["bun"] == 0:
 dest.write_text(json.dumps(doc, indent=2) + "\n")
 print(f"sbom packages cargo={counts['cargo']} bun={counts['bun']} total={len(packages)}")
 PY
-
-scripts/build.sh --images
 
 copy_bin() {
   platform=$1

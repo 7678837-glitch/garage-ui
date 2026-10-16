@@ -2,7 +2,7 @@
 
 Entries describe their named release or unpublished draft. Later development work is tracked in the [delivery roadmap](docs/roadmap.md) and [verification evidence](docs/README.md#verification-evidence); it is not automatically included in a release entry.
 
-## 20261016.1
+## 20261016.2
 
 First public release. Requires Garage v2.3.0 or later; browser integration is verified against Garage v2.3.0 and v2.4.1.
 
@@ -12,7 +12,7 @@ First public release. Requires Garage v2.3.0 or later; browser integration is ve
 - Inspect cluster health, metrics, layout history, workers, and block errors, and run guarded maintenance operations.
 - Provide responsive English and Simplified Chinese interfaces, light and dark themes, keyboard navigation, and accessible controls. Preserve concurrent upload completion states and readable light-theme accent text.
 - Verify browser workflows in Chromium, Firefox, and WebKit, including upload cancellation, ZIP downloads, video seeking, setup, and TLS warnings.
-- Provide a Docker-first quick start with standalone Compose and configuration downloads; build releases only from version tags that match the repository manifests. Tests run locally before tagging.
+- Provide a Docker-first quick start with standalone Compose and configuration downloads; build each architecture on a native runner only from version tags that match the repository manifests. Tests run locally before tagging.
 - Publish static Linux amd64 and arm64 binaries, multi-architecture container images, an SPDX SBOM, and SHA-256 checksums. Images and binaries are unsigned; signing and build-provenance attestations are deferred. Release-image health reports identify the exact source commit and version.
 
 ## 20261015.1 (DRAFT)

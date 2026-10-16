@@ -79,8 +79,47 @@ jobs:
               output.write(f"version={version}\ncommit={commit}\n")
           PY_RELEASE_GATE
 
-  release:
+  build-images:
     needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      BUILD_VERSION: ${{ needs.gate.outputs.version }}
+      GIT_COMMIT: ${{ needs.gate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Confirm validated source identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$GIT_COMMIT"
+          test "$(cat VERSION)" = "$BUILD_VERSION"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          version: v0.25.0
+      - name: Build native image
+        run: scripts/build.sh --images ${{ matrix.architecture }}
+      - name: Save native image
+        run: docker image save --output "$RUNNER_TEMP/garage-ui-${{ matrix.architecture }}.tar" "garage-ui:$BUILD_VERSION-${{ matrix.architecture }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: garage-ui-image-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/garage-ui-${{ matrix.architecture }}.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [gate, build-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -99,9 +138,6 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GIT_COMMIT"
           test "$(cat VERSION)" = "$BUILD_VERSION"
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
       - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
@@ -110,6 +146,18 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           version: v0.25.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: garage-ui-image-amd64
+          path: ${{ runner.temp }}/prebuilt-images/amd64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: garage-ui-image-arm64
+          path: ${{ runner.temp }}/prebuilt-images/arm64
+      - name: Load native images
+        run: |
+          docker image load --input "$RUNNER_TEMP/prebuilt-images/amd64/garage-ui-amd64.tar"
+          docker image load --input "$RUNNER_TEMP/prebuilt-images/arm64/garage-ui-arm64.tar"
       - name: Build and verify unsigned release artifacts
         run: scripts/release.sh "$RUNNER_TEMP/release-artifacts"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

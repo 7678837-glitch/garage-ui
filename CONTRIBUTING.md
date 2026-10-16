@@ -20,7 +20,7 @@ Use English for code comments, errors, UI copy, documentation, commits, and pull
 | [docs](docs/README.md), [evidence](evidence) | Working spec, operator Wiki, delivery status, and revision-specific verification reports |
 | [VERSION](VERSION), [CHANGELOG.md](CHANGELOG.md) | Release identity and historical change notes |
 
-Use [scripts/build.sh](scripts/build.sh) for host or local image builds and [scripts/check-build-identity.sh](scripts/check-build-identity.sh) for the focused source-identity check. [scripts/release.sh](scripts/release.sh) owns local release artifact preparation; read [release requirements](docs/engineering.md#79-release-and-images) before using it. Publishing requires separate maintainer authorization.
+Use [scripts/build.sh](scripts/build.sh) for host or local image builds and [scripts/check-build-identity.sh](scripts/check-build-identity.sh) for the focused source-identity check. [scripts/release.sh](scripts/release.sh) packages prebuilt release images; read [release requirements](docs/engineering.md#79-release-and-images) before using it. To prepare local release artifacts, run `BUILD_VERSION=$(cat VERSION) scripts/build.sh --images`, then `scripts/release.sh <output-directory>`. Publishing requires separate maintainer authorization.
 
 Focused tooling checks run from the repository root:
 

@@ -4,7 +4,7 @@
 
 image:
   repository: ghcr.io/xjoker/garage-ui
-  tag: "20261016.1"
+  tag: "20261016.2"
   pullPolicy: IfNotPresent
 
 # Garage admin API base URL. Leave empty until that URL is known.
