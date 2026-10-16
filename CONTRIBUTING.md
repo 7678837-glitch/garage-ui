@@ -1,6 +1,6 @@
 # Contributing
 
-Garage UI is under active development. The CI workflow remains disabled until development is finished; do not re-enable it as part of a contribution or treat missing CI checks as passing checks. Read the [development and release identity rules](docs/engineering.md#79-release-and-images) before preparing artifacts; verification applies to the recorded source commit.
+CI builds and publishes release artifacts only for valid version tags. Ordinary branch pushes and pull requests do not build or run tests. Run the relevant checks locally before proposing changes or pushing a release tag; a successful artifact build is not test evidence. Read the [development and release identity rules](docs/engineering.md#79-release-and-images) before preparing artifacts; verification applies to the recorded source commit.
 
 ## Read before changing code
 
@@ -26,7 +26,7 @@ Focused tooling checks run from the repository root:
 
 | Command | Scope and prerequisites |
 |---|---|
-| `scripts/check-dev-version.sh` | Checks local/development build-version propagation and CI identity assignment using disposable command fixtures; requires Python 3 and Git, without building binaries or images |
+| `sh scripts/check-release-version.sh` | Checks release-tag, manifest, and source-identity validation using disposable command fixtures; requires Python 3, without building binaries or images |
 | `bun scripts/check-browser-projects.ts` | Checks browser-project selection and propagation to Playwright workers; requires Bun and the installed `web` dependencies, without launching browsers |
 | `scripts/check-secret-scan.sh` | Checks scanner detection, redaction, and all-ref history behavior in disposable repositories with synthetic fixtures; requires Python 3, Git, and the pinned Gitleaks binary described below |
 
@@ -46,7 +46,7 @@ This installs frontend dependencies with the frozen lockfile, builds `web/dist`,
 
 The shipped UI uses React, Vite, Radix Themes, and `radix-ui`; [web/package.json](web/package.json) and the lockfile own the dependency versions. Reuse the installed Radix controls and the theme tokens in `web/src/theme.tsx` and `web/src/index.css` before adding local styling. Keep native file inputs for upload and the existing confirmation flow for destructive actions. The production Rust binary embeds `web/dist`; Bun runs only during builds and local development, so changes must not require a browser CDN, Node.js runtime, or separately deployed frontend.
 
-For frontend iteration, run the backend with the Garage configuration described in [Build and run](README.md#build-and-run), then run this in another terminal:
+For frontend iteration, run the backend with the Garage configuration described in [Deployment](docs/wiki/Deployment.md#download-the-linux-binary), then run this in another terminal:
 
 ```sh
 cd web
@@ -151,6 +151,18 @@ scripts/secret-scan.sh --history
 The default (`--all`) scans both the working tree and Git history reachable from all local refs, using [the repository configuration](data/config/gitleaks.toml). History scanning requires a complete, non-shallow checkout; fetch the missing history and tags before scanning a shallow clone. The script redacts findings and ignores inline `gitleaks:allow` directives. Its rules and explicit allowlist have limits: a passing scan does not prove that all secrets were detected. Review the actual diff and any files intended for publication for credentials and personal data.
 
 An AI-generated completion report should state what changed, the exact commands and results, the initial failing and final passing regression where applicable, browser evidence for UI work, and any checks not run. Do not infer coverage, security, compatibility, or deployment success from an unrelated earlier run. Human maintainers remain responsible for reviewing contributions, merging, and publishing releases.
+
+## Publish a tested version
+
+Run the local release checks, commit the version and change notes, and push that source revision before tagging. Root `VERSION` must use `YYYYMMDD.N`; Cargo workspace/lockfile and web manifest versions must use the same value followed by `.0`. Then push the matching tag, without a `v` prefix:
+
+```sh
+version=$(cat VERSION)
+git tag "$version"
+git push origin "$version"
+```
+
+Only this tag push starts CI. The gate validates the date, sequence, manifest versions, and source identity before building. CI uploads the images, binaries, deployment files, SBOM, and checksums, verifies public image access, and publishes the release. The GHCR package must be public; this is a one-time owner setting independent of the source repository's visibility. Existing published releases are immutable. A failed run can be retried while its release is still a draft.
 
 ## Submit a focused contribution
 

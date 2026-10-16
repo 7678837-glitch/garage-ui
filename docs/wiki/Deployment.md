@@ -1,137 +1,125 @@
 # Deployment
 
-Garage UI is published as the multi-arch container image `ghcr.io/xjoker/garage-ui` (`linux/amd64` and `linux/arm64`) and as static Linux binaries on [GitHub Releases](https://github.com/xjoker/garage-ui/releases). Building from source is also supported.
+## Recommended: Docker Compose
 
-## Run the published image
+Use the [three-step quick start](https://github.com/xjoker/garage-ui/blob/dev/README.md#quick-start-docker-compose). Download `compose.yaml` and `.env.example` from [Releases](https://github.com/xjoker/garage-ui/releases), fill in the Garage connection, and start the UI. The deployment files work in an empty directory: no repository checkout or build toolchain is needed. Docker automatically selects `linux/amd64` or `linux/arm64`.
+
+The Compose service pulls `ghcr.io/xjoker/garage-ui` at the release pinned in the file. Set `GARAGE_UI_VERSION` in `.env` to select another release. It restarts unless explicitly stopped, stores UI state in a named volume, and runs as a non-root user with a read-only root filesystem. A one-shot init container sets the data volume ownership. The UI is one process and port with the browser assets embedded.
+
+Supply these four required values in the private `.env` file:
+
+| Variable | Value |
+|---|---|
+| `GARAGE_ADMIN_URL` | Garage Admin API URL reachable from the UI container |
+| `GARAGE_ADMIN_TOKEN` | Garage Admin API token, not an S3 access key |
+| `S3_ENDPOINT_URL` | Garage S3 API URL reachable from the UI container |
+| `S3_REGION` | Region configured in Garage |
+
+Keep `.env` out of version control. Docker-network service names work when the UI and Garage share that network. Do not use `localhost` or `127.0.0.1` to reach another container. `S3_PUBLIC_ENDPOINT_URL`, when needed for share links, must instead be reachable by the recipient's browser. See [Configuration](Configuration.md) for secret files, private certificates, and other settings.
+
+For local HTTP:
 
 ```sh
-docker run -d --name garage-ui --read-only --tmpfs /tmp \
-  -p 127.0.0.1:3909:3909 -v garage-ui-data:/data \
-  -e GARAGE_ADMIN_URL=http://garage.example:3903 \
-  -e GARAGE_ADMIN_TOKEN=replace-with-your-admin-token \
-  -e S3_ENDPOINT_URL=http://garage.example:3900 \
-  -e S3_REGION=garage \
-  -e COOKIE_SECURE=false \
-  ghcr.io/xjoker/garage-ui:latest
+COOKIE_SECURE=false docker compose up -d
 ```
 
-Pin a release with a version tag such as `ghcr.io/xjoker/garage-ui:20261016.1`. `COOKIE_SECURE=false` is for a local HTTP trial only; behind HTTPS keep the default. The Compose files below run the same image.
+Open [http://localhost:3909](http://localhost:3909) and create the first administrator. For a remote Docker host, keep the loopback binding and forward it over SSH during setup:
 
-## Download the binary
+```sh
+ssh -L 3909:127.0.0.1:3909 your-server
+```
 
-Download `garage-ui-linux-amd64` or `garage-ui-linux-arm64` and `SHA256SUMS` from the release page, then verify and run it:
+Open the same local URL on your workstation. Replace `your-server` with your SSH destination.
+
+## Serve the UI over HTTPS
+
+The supplied Compose file binds to `127.0.0.1:3909`. Put a host HTTPS reverse proxy in front of this address and keep `COOKIE_SECURE=true` (the default). A proxy in another container needs a shared Docker network and must reach the `garage-ui:3909` service address; its loopback address is not the host's.
+
+Only set `TRUSTED_PROXY=true` if your proxy overwrites `X-Forwarded-For`. See [Configuration](Configuration.md) for proxy and cookie settings. Garage Admin and S3 connection addresses remain server-side settings; they need not be public browser endpoints.
+
+## Check startup, restart, or stop
+
+```sh
+docker compose ps
+docker compose logs --tail=100 garage-ui
+docker compose restart garage-ui
+docker compose down
+```
+
+`down` preserves the data volume. Adding `--volumes` deletes its saved state. If an image pull reports `unauthorized`, first check that you selected a published release and that its GHCR package is public; public release images require no GitHub account or Docker login. A public source repository alone does not make its container package public.
+
+## Try the bundled local Garage demo
+
+For evaluation without an existing Garage cluster, clone the development branch and start the demo:
+
+```sh
+git clone --branch dev https://github.com/xjoker/garage-ui.git
+cd garage-ui
+docker compose -f deploy/compose.yaml up -d
+```
+
+Open [http://localhost:3909](http://localhost:3909) and create the first administrator. The example starts Garage v2.4.1 in single-node mode, generates credentials, initializes its layout, and connects the UI to the Admin and S3 APIs. You can then create a bucket and upload a file.
+
+The UI receives only the Admin/metrics tokens in a dedicated secret volume; Garage's RPC secret stays separate. Data lives in named volumes. The example uses loopback ports and HTTP for local evaluation. Configure a browser-reachable `S3_PUBLIC_ENDPOINT_URL` if you need share links outside its Docker network.
+
+## Docker without Compose
+
+Create a private `.env` file with the four Garage settings above, then run:
+
+```sh
+docker run -d --name garage-ui --restart unless-stopped \
+  --read-only --tmpfs /tmp --env-file .env \
+  -p 127.0.0.1:3909:3909 -v garage-ui-data:/data \
+  -e COOKIE_SECURE=false ghcr.io/xjoker/garage-ui:20261016.1
+```
+
+This uses local HTTP. Open [http://localhost:3909](http://localhost:3909). Use HTTPS and secure cookies for remote access. The image initializes a fresh named volume with the non-root user's ownership; an existing directory or volume must already be writable by UID/GID 65532.
+
+## Download the Linux binary
+
+Choose `garage-ui-linux-amd64` for an x86-64 Linux host or `garage-ui-linux-arm64` for an ARM64 Linux host. These binaries do not run natively on macOS or Windows; use Docker there. Download the binary and `SHA256SUMS` from the same [release](https://github.com/xjoker/garage-ui/releases), then verify:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
 chmod +x garage-ui-linux-amd64
+```
+
+Set the four Garage connection variables in the process environment. For example, with a local Garage and a token stored in a private file:
+
+```sh
+export GARAGE_ADMIN_URL=http://127.0.0.1:3903
+export API_ADMIN_KEY_FILE="$HOME/.config/garage-ui/admin-token"
+export S3_ENDPOINT_URL=http://127.0.0.1:3900
+export S3_REGION=garage
+export COOKIE_SECURE=false
 ./garage-ui-linux-amd64
 ```
 
-On macOS, use `shasum -a 256 --check --ignore-missing SHA256SUMS`. Configure the Garage connection through environment variables as in the next sections. The release also carries `sbom.spdx.json`. Checksums verify file integrity; the binaries are unsigned.
+Replace the addresses and region with your Garage configuration, create the token file before starting, and use the ARM64 filename on that architecture. The binary defaults to `127.0.0.1:3909` and stores UI state in `./data`. Preserve that directory across upgrades. Binaries and images are unsigned; SHA-256 checksums verify integrity, not publisher identity. Releases also include an SPDX SBOM.
 
-## Compose files
+## Build from source
 
-The Compose files are in the repository. Clone it to use them:
+Source builds are for contributors or custom changes. Follow [Contributing](https://github.com/xjoker/garage-ui/blob/dev/CONTRIBUTING.md#set-up-local-development) for the Rust/Bun prerequisites and `scripts/build.sh`. Use `scripts/build.sh --images amd64` or `arm64` to load a local container image; omit the architecture to build both. The image tags default to `garage-ui:<VERSION>-local-<architecture>` and are not pushed.
 
-```sh
-git clone https://github.com/xjoker/garage-ui.git
-cd garage-ui
-```
+The existing-cluster Compose file uses published images and has no source build context. To use a custom image with it, tag your image as `ghcr.io/xjoker/garage-ui:local`, set `GARAGE_UI_VERSION=local` in `.env`, and start with `docker compose up -d --pull never`. The bundled demo retains its optional `--build` source-build path.
 
-The `garage-ui` service in both files runs `ghcr.io/xjoker/garage-ui:${GARAGE_UI_VERSION}`; the default is the current release, and setting `GARAGE_UI_VERSION` pins another. `docker compose up -d` pulls it. Adding `--build` builds the image from your checkout instead and tags it with the same name locally, without pushing it.
-
-## Try the bundled local Garage demo
-
-With Docker and Docker Compose available, run from the repository root:
+## Verify the deployed version
 
 ```sh
-docker compose -f deploy/compose.yaml up -d
-```
-
-Open [the local UI](http://127.0.0.1:3909), create the first administrator, and check **Overview**. The example starts Garage v2.4.1 in single-node mode, initializes its layout, and wires the UI to Garage's admin/S3 services. You do not need an additional layout assign/apply command for this demo.
-
-The UI uses `http://garage:3903` for administration and `http://garage:3900` for S3 with region `garage`. A dedicated UI secret volume receives only admin/metrics tokens, readable by UID 65532. Garage's RPC secret stays separate. Data lives in named volumes.
-
-The example publishes services on loopback only and sets `COOKIE_SECURE=false` for its local HTTP UI. It is a development example, not an Internet-facing HTTPS deployment. For share links, set a public S3 address reachable by the intended recipients.
-
-Inspect startup with:
-
-```sh
-docker compose -f deploy/compose.yaml ps
-docker compose -f deploy/compose.yaml logs garage-ui garage
-```
-
-Preserve volumes when stopping the demo. Removing its data volumes removes its persisted state.
-
-## Connect containers to your existing Garage
-
-Use [deploy/compose.external.yaml](https://github.com/xjoker/garage-ui/blob/dev/deploy/compose.external.yaml). This starts the UI against an existing cluster rather than starting another Garage.
-
-Create a private `.env` file outside version control, supplying these four required variables with your actual cluster settings:
-
-| Variable | Required value |
-|---|---|
-| `GARAGE_ADMIN_URL` | Admin API address reachable from the UI container |
-| `GARAGE_ADMIN_TOKEN` | Actual Garage admin token |
-| `S3_ENDPOINT_URL` | S3 API address reachable from the UI container |
-| `S3_REGION` | Region configured in Garage |
-
-Then run:
-
-```sh
-docker compose --env-file .env -f deploy/compose.external.yaml up -d
-```
-
-This example keeps secure cookies enabled by default. Serve the UI behind your HTTPS reverse proxy. For an explicitly local HTTP trial only:
-
-```sh
-COOKIE_SECURE=false docker compose --env-file .env -f deploy/compose.external.yaml up -d
-```
-
-Do not use container-local `127.0.0.1` for an API hosted in another container. Use a Docker-network service address or another address reachable from this container. For sharing, configure `S3_PUBLIC_ENDPOINT_URL` independently with an address reachable by browsers.
-
-## Build from source and local images
-
-```sh
-scripts/build.sh --images amd64
-```
-
-This builds and loads `garage-ui:<VERSION>-local-amd64` locally. Choose `arm64` for ARM, or omit the architecture to build both. An explicit `BUILD_VERSION` produces `garage-ui:<BUILD_VERSION>-<architecture>`; see the [stable, development, and local version policy](https://github.com/xjoker/garage-ui/blob/dev/docs/engineering.md#79-release-and-images). `scripts/build.sh` passes the full current Git commit as `GIT_COMMIT` to native and image builds; `scripts/release.sh` uses the stable `VERSION` and checks the exact final images against `/healthz` for matching version and commit. The build uses buildx without cache; it does not push images.
-
-The runtime image contains one Rust binary with the browser assets embedded. It serves the UI and API from one process on 0.0.0.0:3909, runs as UID/GID 65532, and has no shell, Bun, or Node.js runtime. It needs no browser CDN or separate frontend deployment. Mount a writable `/data` for its UI database and generated session key; mount secret files read-only. Put a trusted HTTPS proxy in front of externally reachable deployments.
-
-## Verify the deployed source revision
-
-Compare `/healthz` with the full commit used for the build. The response field is `commit`, alongside `version`, `status`, and `build_time`:
-
-```sh
-git rev-parse HEAD
 curl --fail --silent http://127.0.0.1:3909/healthz
 ```
 
-The commit must match exactly; matching version numbers alone are insufficient. Run the probe against the actual deployment address when verifying a remote instance. A source archive without Git metadata reports `unknown` unless its builder supplies a valid full hexadecimal `GIT_COMMIT` (40 or 64 characters); malformed values fail the build.
-
-For Compose, source identity is optional. The default is honestly `unknown`. To embed the current revision when building the local demo:
-
-```sh
-GIT_COMMIT=$(git rev-parse HEAD) docker compose -f deploy/compose.yaml up -d
-```
-
-The existing-cluster Compose file accepts the same environment variable. Build from the intended checked-out source; the identifier does not attest to uncommitted edits.
+The response includes `version`, `commit`, `status`, and `build_time`. Compare the version and full commit with the release tag. Probe the actual deployment address when verifying a remote instance; a successful push or a running container does not prove that the intended image is in use. **Settings → About** also shows the version.
 
 ## Deploy the UI with Helm
 
-The [Helm chart](https://github.com/xjoker/garage-ui/tree/dev/deploy/helm/garage-ui) installs the UI only. It expects an existing Garage cluster. The default image is `ghcr.io/xjoker/garage-ui` at the chart's release tag; for a locally built image, load or publish it using your cluster's normal workflow and override `image.repository` and `image.tag`.
-
-Create a private values file with your cluster addresses (and image override, if any). Configure `garageAdminUrl`, `s3EndpointUrl`, and `s3Region`; use `s3PublicEndpointUrl` when sharing is needed. Supply `secrets.garageAdminToken` and any metrics or S3 key pair through your private deployment configuration. Do not commit the resulting file. The chart stores those secrets in a Secret named `<release>-secrets` and references them from the Deployment. Set `trustedProxy: true` when the UI runs behind an ingress or proxy that overwrites `X-Forwarded-For`; it sets `TRUSTED_PROXY=true`.
+The [Helm chart](https://github.com/xjoker/garage-ui/tree/dev/deploy/helm/garage-ui) installs the UI only and expects an existing Garage cluster. Configure `garageAdminUrl`, `s3EndpointUrl`, and `s3Region` in a private values file. Supply `secrets.garageAdminToken` through private deployment configuration. Set `s3PublicEndpointUrl` when sharing is needed. Do not commit secrets.
 
 ```sh
 helm upgrade --install garage-ui deploy/helm/garage-ui -f private-values.yaml
 ```
 
-`persistence.size` controls the UI volume request. The chart's TLS settings are for the UI's outgoing Garage connections: `tls.caSecret` mounts a Secret containing `ca.crt`; `tls.insecure` deliberately disables certificate verification. These settings do not provision HTTPS for the browser. Arrange ingress/proxy TLS through your cluster's normal configuration.
-
-The chart uses `/readyz` for readiness and the binary's `-health` check for liveness. Liveness checks whether the UI responds; it is separate from Garage connection status displayed in the console.
+The chart uses the release image by default. Override `image.repository` and `image.tag` for another image, and `persistence.size` for the UI volume. `trustedProxy: true` is appropriate only behind an ingress or proxy that overwrites `X-Forwarded-For`. The TLS settings `tls.caSecret` and `tls.insecure` apply to outgoing Garage connections, not browser HTTPS; arrange ingress TLS separately. Liveness uses the binary's health check, while readiness uses `/readyz`.
 
 ## Back up and restore UI state
 
@@ -143,12 +131,19 @@ UI backups preserve local accounts, sessions, audit, ZIP tokens, and bucket-key 
 
 ## Upgrade deliberately
 
-Back up state, pull the intended image tag (or build the intended source revision), and restart with the same data volume and configuration. Check **Settings → About** and the exact `/healthz` commit, then verify login, health, and an appropriate storage operation against the intended Garage. A version number or a running container alone does not prove the correct browser bundle or cluster connection is in use.
+Back up UI state first. Set `GARAGE_UI_VERSION` in `.env` to the chosen release tag, then pull and recreate the service with the same volume and configuration:
 
-## Release artifacts
+```sh
+docker compose pull garage-ui
+COOKIE_SECURE=false docker compose up -d
+```
 
-Release preparation and publication are maintainer tasks. Follow the [development and release identity rules](https://github.com/xjoker/garage-ui/blob/dev/docs/engineering.md#79-release-and-images). `scripts/release.sh` builds the binaries, SBOM, checksums, and local images and verifies them; `scripts/publish.sh` then pushes the images to `ghcr.io/xjoker/garage-ui`, verifies the pushed image, and uploads the files to a draft GitHub release. Publishing the draft is a separate manual step.
+The command above is for local HTTP; omit the `COOKIE_SECURE=false` override behind HTTPS. Check **Settings → About**, verify `/healthz`, and confirm login and a storage operation. Keep your backup until verification succeeds.
 
-The repository's [release workflow](https://github.com/xjoker/garage-ui/blob/dev/.github/workflows/release.yml) is manual-only. When explicitly dispatched, it builds unsigned Linux binaries, an SPDX SBOM, and SHA-256 checksums, then creates a fresh unpublished draft for the selected source commit. It refuses to update an existing draft or published release with the same version, and it does not push container images. Publication and signing require manual review.
+## How release artifacts are produced
 
-The CI workflow remains disabled during development. A workflow file is not evidence that a build has run; consult revision-specific verification and [Releases](https://github.com/xjoker/garage-ui/releases) for artifacts actually available to users.
+Build-only CI runs on version tags, following the [release policy](https://github.com/xjoker/garage-ui/blob/dev/docs/engineering.md#79-release-and-images). Ordinary branch pushes and pull requests do not build. Tests run locally before the release tag is pushed.
+
+A valid `YYYYMMDD.N` tag must match `VERSION` and the package manifests. Only then does CI build and verify the amd64/arm64 images and static binaries, generate an SBOM and checksums, and publish the images and GitHub release attachments. `compose.yaml` and `.env.example` are included so users can deploy without cloning the repository.
+
+GHCR visibility is independent of repository visibility. The maintainer must make the package public once; the publication process verifies anonymous access before publishing the release. Images and binaries are unsigned, with signing and build-provenance attestations deferred.

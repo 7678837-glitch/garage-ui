@@ -67,7 +67,7 @@ Acceptance: After a language switch, no key is untranslated (a test checks that 
 - Bun: the `packageManager` field in `package.json` pins 1.4.2. Commit `bun.lock`. Do not use `latest` in a build. Dependencies of the build scripts (esbuild, `@swc/core`, and the same kind of package) may be listed explicitly.
 - Do not use `.nvmrc` or pnpm.
 - Pin each base image by digest. Do not use a floating tag.
-- An automation bot opens dependency updates every week. Merge them after CI passes.
+- An automation bot opens dependency updates every week. Merge them after the relevant local checks pass.
 
 ## 7.3 Build
 
@@ -78,17 +78,13 @@ Acceptance: After a language switch, no key is untranslated (a test checks that 
 
 ## 7.4 CI
 
-These are acceptance requirements. The workflow remains disabled on GitHub during development; no current remote execution or blocking-gate status is implied.
+CI builds and publishes release artifacts only. It is triggered by candidate date-version tags, with a cheap validation job before any toolchain or image build. Ordinary branch pushes, pull requests, schedules, and manual dispatches do not build.
 
-Required behavior when enabled, on every commit and every merge request:
+The gate requires a valid calendar date and positive sequence in `YYYYMMDD.N`, an exact match with root `VERSION`, matching Cargo workspace/lockfile and web manifest versions (`YYYYMMDD.N.0`), and the exact tagged source commit. Invalid tags stop before the build. There is no `v` prefix or rolling development tag.
 
-1. `bun install --frozen-lockfile`.
-2. Frontend: type check, lint, unit tests, and build. Bun runs the commands.
-3. Backend: `cargo fmt --check`, `cargo clippy` with zero warnings, and `cargo test`.
-4. Security: reachable vulnerabilities from `cargo audit` are 0. `bun audit --prod --audit-level=high` is 0. Critical vulnerabilities in build-time dependencies are 0. Secret scan. Container image scan.
-5. Integration tests: run E2E against Garage v2.3.x and v2.4.1 containers. The same tests may be run locally in containers for evaluation.
+Tests and audits run locally before the maintainer pushes the release tag: frontend type/lint/unit/build and generated-type checks, Rust formatting/Clippy/tests, dependency and secret checks, and affected real-Garage browser workflows. Release candidates receive the full regression run. Record the source identity and actual results; a green build is not test evidence.
 
-The main branch rebuilds every night and catches newly disclosed vulnerabilities. Every check is a blocking check.
+The build produces and verifies Linux amd64/arm64 images and binaries, an SBOM, checksums, and standalone deployment files. Publication uses the workflow's scoped `GITHUB_TOKEN`. A published release is not overwritten. Public anonymous image access is verified before the GitHub release is published.
 
 ## 7.5 lint
 
@@ -111,19 +107,18 @@ Do not copy the original draft's `go test -race`. Cover shared mutable state (se
 ## 7.8 Generate types from the Garage OpenAPI document
 
 - The only source is the Admin API v2 OpenAPI description in the Garage repository (`garage-admin-v2.json`). Generate TypeScript types from it. Rust types may be generated the same way.
-- Commit the generator script, the generator version, and the pinned OpenAPI file version together. CI checks that the generated output matches the commit.
+- Commit the generator script, the generator version, and the pinned OpenAPI file version together. Local pre-release checks verify that the generated output matches the commit.
 - When the supported Garage version is raised, regenerate and list the field differences in the change notes.
 
 ## 7.9 Release and images
 
-- Publish this admin UI as a container image, side by side with running the binary directly. The split of work in the multi-stage build is in "Containerized deployment of this project" in [decisions.md](decisions.md).
+- Docker Compose with a published image is the primary installation path. Provide standalone deployment files in each release so users do not need Git, Rust, or Bun. Static Linux binaries remain an alternative. The split of work in the multi-stage build is in "Containerized deployment of this project" in [decisions.md](decisions.md).
 - Runtime image: distroless static nonroot, with no shell. The user is not root. `/data` is a volume. Expose 3909. Inside the image, listen on `0.0.0.0` by default (3.1 in [security.md](security.md)). The binary is statically linked. Do not install a shell, Node, Bun, the system libsqlite, libssl, or glibc in the image. CI builds `linux/amd64` and `linux/arm64`.
 - Write the compose example's port mapping so that it binds only the host `127.0.0.1`. Acceptance: after a start from the example, reaching 3909 from another address on the host fails, and reaching it from `127.0.0.1` succeeds.
 - The health check uses the binary's own `-health` (interval 30 seconds, timeout 5 seconds, start grace 10 seconds, 3 retries). Do not bring in an extra tool image.
 - Release artifacts: a multi-arch image, a binary for each platform, `SHA256SUMS`, and signatures (sign the image with cosign keyless signing or with a key; sign the binary with ed25519), plus an SBOM and a proof of build provenance. The first public release, `20261016.1`, ships unsigned images and binaries with an SBOM and checksums; signatures and build-provenance attestations are deferred to a later release. Checksums establish file integrity, not publisher identity.
-- Publishing: the image goes only to `ghcr.io/xjoker/garage-ui` (tags `<VERSION>-amd64`, `<VERSION>-arm64`, and the multi-arch `<VERSION>` and `latest`). After `scripts/release.sh` succeeds, the owner runs `scripts/publish.sh <release-directory>` while logged in to ghcr. It refuses a dirty tree or local images that do not report the current commit, pushes and creates the manifests, then pulls the published `<VERSION>` tag and requires `/healthz` to report the same version and commit before touching GitHub. It uploads the binaries, SBOM, and `SHA256SUMS` to a draft release and stops there; the owner publishes the draft with the command the script prints, which creates the tag.
+- Publishing: images go only to `ghcr.io/xjoker/garage-ui` (tags `<VERSION>-amd64`, `<VERSION>-arm64`, and multi-arch `<VERSION>` and `latest`). Tag-gated CI runs `scripts/release.sh`, then `scripts/publish.sh`, and publishes the verified GitHub draft. The scripts reject dirty source or mismatched build identity; publication verifies the remote index, pulled image health, checksums, and anonymous GHCR access. A source repository being public does not make its GHCR package public: the owner sets that once in package settings. The local publish script stops at a draft; CI completes publication. Attach `compose.yaml` and `.env.example` alongside both binaries, the SBOM, and `SHA256SUMS`.
 - Version numbers are `YYYYMMDD.N`. The first release on a calendar day is `.1`. Another release on the same day increments `N`. A new day starts again at `.1`. The only source is the `VERSION` file at the repository root, and its contents are that string. The Cargo workspace version and `web/package.json` `version` are `YYYYMMDD.N.0`. The trailing `.0` exists only to satisfy the manifest format. Git tags and GitHub release names match `VERSION` exactly, with no `v` prefix. Before changing the version, run `date +%Y%m%d`, then `git tag -l '<that date>.*'` and `gh release list`, and take the next unused sequence for that day. Do not increment from the previous version's date. Change `VERSION` and the manifest/lockfile version fields only in a release commit; ordinary development does not change them. The change notes for each version list the minimum Garage version required.
-- Development identity is assigned once by the existing `.github/workflows/ci.yml` identity job on a `dev` push: `YYYYMMDD.N-dev`, where the UTC date comes from the workflow run's original `created_at` and `N` is its `run_number`. This sequence belongs to that workflow and does not reset each day. Preserve the workflow filename. A rerun reuses the original date, sequence, and full commit; `run_attempt` appears only in the build receipt and artifact name. No contributor allocates development numbers or changes version files. Fork workflows have their own sequence and do not allocate canonical development identities.
-- Every CI job and image build reuses the identity job's `BUILD_VERSION` and full `GIT_COMMIT`; the image tag uses the same version as the binary. Only the identity job needs `actions: read` to read the current run. CI remains disabled on GitHub until development is finished.
-- An unassigned local build, including a direct Docker build, uses `<VERSION>-local`. Other CI events use that local identity. `BUILD_VERSION` can explicitly supply a validated stable, development, or local version; `scripts/release.sh` always supplies the stable `VERSION`. A local suffix carries no CI sequence claim. `/healthz` reports the embedded version and full commit.
+- CI uses the validated tag version and full tagged commit for every artifact. It does not allocate a development sequence on branch pushes. Push the version tag only after local validation of that source revision succeeds.
+- An unassigned local build, including a direct Docker build, uses `<VERSION>-local`. `BUILD_VERSION` can explicitly supply a validated version; `scripts/release.sh` always supplies the stable `VERSION`. `/healthz` reports the embedded version and full commit.
 - Provide a compose example (Garage v2.4.1 + this project) and a Helm Chart (P2).

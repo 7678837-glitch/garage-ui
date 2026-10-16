@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: scripts/release.sh [output-directory]
-# Creates two static Linux binaries, their SBOM and SHA256SUMS, without signing.
+# Creates two static Linux binaries, deployment files, their SBOM and SHA256SUMS, without signing.
 set -eu
 if [ "$#" -gt 1 ]; then
   echo "Usage: $0 [output-directory]" >&2
@@ -224,6 +224,25 @@ static_one() {
 static_one linux/amd64 "$out/garage-ui-linux-amd64"
 static_one linux/arm64 "$out/garage-ui-linux-arm64"
 
+# Keep the container-first deployment path beside the matching release image.
+python3 - "$version" "$out/compose.yaml" <<'PY_DEPLOYMENT'
+from pathlib import Path
+import re
+import sys
+
+version, destination = sys.argv[1:]
+source = Path("deploy/compose.external.yaml").read_text()
+rendered, replacements = re.subn(
+    r"\$\{GARAGE_UI_VERSION:-[^}]+\}",
+    lambda _: "${GARAGE_UI_VERSION:-" + version + "}",
+    source,
+)
+if replacements != 1:
+    raise SystemExit("Compose must contain exactly one default GARAGE_UI_VERSION")
+Path(destination).write_text(rendered)
+PY_DEPLOYMENT
+cp .env.example "$out/.env.example"
+
 # Verify build identity and runtime restrictions on the exact final images.
 python3 - "$version" "$commit" <<'PY'
 import json
@@ -274,7 +293,13 @@ import sys
 from pathlib import Path
 
 out = Path(sys.argv[1])
-names = ["garage-ui-linux-amd64", "garage-ui-linux-arm64", "sbom.spdx.json"]
+names = [
+    "garage-ui-linux-amd64",
+    "garage-ui-linux-arm64",
+    "sbom.spdx.json",
+    "compose.yaml",
+    ".env.example",
+]
 lines = []
 for name in names:
     digest = hashlib.sha256((out / name).read_bytes()).hexdigest()

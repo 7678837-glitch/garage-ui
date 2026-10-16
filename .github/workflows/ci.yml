@@ -2,173 +2,129 @@ name: ci
 
 on:
   push:
-  pull_request:
+    # The gate below performs the full numeric and calendar validation. This
+    # filter keeps ordinary branch pushes and pull requests from starting CI.
+    tags:
+      - '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[1-9]*'
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  identity:
+  gate:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      actions: read
+    timeout-minutes: 5
     outputs:
-      version: ${{ steps.identity.outputs.version }}
-      commit: ${{ steps.identity.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Read original workflow run
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/workflow-run.json"
-      - name: Assign build identity
-        id: identity
+      - name: Validate release tag and source identity
+        id: release
         run: |
-          python3 - <<'PY_IDENTITY'
-          from datetime import datetime, timezone
+          python3 - <<'PY_RELEASE_GATE'
+          import datetime
           import json
           import os
           from pathlib import Path
           import re
           import subprocess
+          import tomllib
+
+          version = Path("VERSION").read_text().strip()
+          tag = os.environ["GITHUB_REF_NAME"]
+          ref = os.environ["GITHUB_REF"]
+          if ref != f"refs/tags/{tag}":
+              raise SystemExit("Release builds require a tag ref")
+          if not re.fullmatch(r"[0-9]{8}\.[1-9][0-9]*", version):
+              raise SystemExit("VERSION must use YYYYMMDD.N with a positive sequence")
+          try:
+              datetime.datetime.strptime(version.split(".", 1)[0], "%Y%m%d")
+          except ValueError:
+              raise SystemExit("VERSION must contain a valid calendar date") from None
+          if tag != version:
+              raise SystemExit(f"Tag {tag!r} must exactly match VERSION {version!r}")
+
+          expected_manifest_version = f"{version}.0"
+          cargo = tomllib.loads(Path("Cargo.toml").read_text())
+          if cargo.get("workspace", {}).get("package", {}).get("version") != expected_manifest_version:
+              raise SystemExit("Cargo workspace version must equal VERSION + .0")
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          workspace_packages = {
+              package.get("name"): package.get("version")
+              for package in lock.get("package", [])
+              if package.get("name") in {"garage-ui", "garage-loadgen"}
+          }
+          if workspace_packages != {
+              "garage-ui": expected_manifest_version,
+              "garage-loadgen": expected_manifest_version,
+          }:
+              raise SystemExit("Cargo.lock workspace package versions must equal VERSION + .0")
+          web = json.loads(Path("web/package.json").read_text())
+          if web.get("version") != expected_manifest_version:
+              raise SystemExit("web/package.json version must equal VERSION + .0")
 
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-          if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or commit != os.environ["GITHUB_SHA"]:
+          workflow_commit = os.environ["GITHUB_SHA"]
+          if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or commit != workflow_commit:
               raise SystemExit("Checkout must match the full workflow commit")
-          version = Path("VERSION").read_text().removesuffix("\n")
-          if not re.fullmatch(r"[0-9]{8}\.[1-9][0-9]*", version):
-              raise SystemExit("VERSION must be YYYYMMDD.N")
-          datetime.strptime(version[:8], "%Y%m%d")
-          version += "-local"
-          if os.environ["GITHUB_EVENT_NAME"] == "push" and os.environ["GITHUB_REF"] == "refs/heads/dev":
-              run = json.loads((Path(os.environ["RUNNER_TEMP"]) / "workflow-run.json").read_text())
-              if (run["id"] != int(os.environ["GITHUB_RUN_ID"])
-                  or run["run_number"] != int(os.environ["GITHUB_RUN_NUMBER"])
-                  or run["run_number"] < 1 or run["head_sha"] != commit):
-                  raise SystemExit("Workflow run identity does not match this checkout")
-              created = datetime.strptime(run["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-              version = f"{created:%Y%m%d}.{run['run_number']}-dev"
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
               output.write(f"version={version}\ncommit={commit}\n")
-          receipt = {
-              "version": version,
-              "git_commit": commit,
-              "run_id": int(os.environ["GITHUB_RUN_ID"]),
-              "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
-              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-          }
-          (Path(os.environ["RUNNER_TEMP"]) / "build-identity.json").write_text(json.dumps(receipt, indent=2) + "\n")
-          PY_IDENTITY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: build-identity-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/build-identity.json
+          PY_RELEASE_GATE
 
-  check:
-    needs: identity
+  release:
+    needs: gate
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
     env:
-      BUILD_VERSION: ${{ needs.identity.outputs.version }}
-      GIT_COMMIT: ${{ needs.identity.outputs.commit }}
+      BUILD_VERSION: ${{ needs.gate.outputs.version }}
+      GIT_COMMIT: ${{ needs.gate.outputs.commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Confirm validated source identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$GIT_COMMIT"
+          test "$(cat VERSION)" = "$BUILD_VERSION"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
       - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
-        with:
-          components: rustfmt, clippy
-      - name: frontend
-        working-directory: web
-        run: |
-          bun install --frozen-lockfile
-          bun run typecheck
-          bun run lint
-          bun run test
-          bun run generate:api
-          git diff --exit-code -- src/api/garage-admin-v2.ts
-          bun audit --prod --audit-level=high
-          bun run build
-      - name: Build identity regression checks
-        run: |
-          sh scripts/check-build-identity.sh
-          sh scripts/check-dev-version.sh
-          bun scripts/check-browser-projects.ts
-      - name: rust
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test --workspace
-      - name: cargo audit
-        run: |
-          cargo install cargo-audit --version 0.22.2 --locked
-          cargo audit
-      - name: Install pinned Gitleaks
-        run: |
-          archive="$RUNNER_TEMP/gitleaks_8.30.0_linux_x64.tar.gz"
-          curl --fail --location --silent --show-error \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz \
-            --output "$archive"
-          printf '%s  %s\n' 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e "$archive" | sha256sum --check
-          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
-          echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
-      - name: Secret scanner regression checks
-        run: scripts/check-secret-scan.sh
-      - name: Worktree and full-history secret scan
-        run: scripts/secret-scan.sh
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: tonistiigi/binfmt:qemu-v9.2.2-52
+          platforms: arm64
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          context: .
-          file: deploy/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: garage-ui:${{ needs.identity.outputs.version }}
-          build-args: |
-            BUILD_VERSION=${{ needs.identity.outputs.version }}
-            GIT_COMMIT=${{ needs.identity.outputs.commit }}
-
-  e2e:
-    needs: identity
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        garage-version: [v2.3.0, v2.4.1]
-    env:
-      BUILD_VERSION: ${{ needs.identity.outputs.version }}
-      GIT_COMMIT: ${{ needs.identity.outputs.commit }}
-      GARAGE_VERSION: ${{ matrix.garage-version }}
-      GARAGE_BROWSER: chromium
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+          version: v0.25.0
+      - name: Build and verify unsigned release artifacts
+        run: scripts/release.sh "$RUNNER_TEMP/release-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
-      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
-      - name: Pull the Garage image for Rust CORS checks
-        run: docker pull --platform linux/amd64 dxflrs/garage:v2.4.1
-      - name: Install browser dependencies
-        working-directory: web
-        run: |
-          bun install --frozen-lockfile
-          bunx playwright install --with-deps chromium
-      - name: Build the application for browser checks
-        run: |
-          (cd web && bun run build)
-          cargo build -p garage-ui --bin garage-ui
-      - name: Pull the selected Garage fixture
-        run: docker pull --platform linux/amd64 "dxflrs/garage:$GARAGE_VERSION"
-      - name: Disposable real-Garage smoke checks
-        run: scripts/e2e-check.sh disposable-smoke.spec.ts --project=chromium
+          name: release-artifacts-${{ needs.gate.outputs.version }}
+          path: ${{ runner.temp }}/release-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+      - name: Log in to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_GITHUB_RELEASE: "true"
+        run: scripts/publish.sh "$RUNNER_TEMP/release-artifacts"

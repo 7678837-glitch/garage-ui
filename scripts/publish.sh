@@ -3,7 +3,8 @@
 # Publishes the images and files that scripts/release.sh prepared:
 #   - pushes ghcr.io/xjoker/garage-ui:<VERSION>-amd64|arm64 plus the multi-arch <VERSION> and latest tags;
 #   - verifies the pushed image by pulling it and probing /healthz;
-#   - uploads the binaries, SBOM and SHA256SUMS to a DRAFT GitHub release. Publishing the draft is manual.
+#   - uploads binaries, deployment files, the SBOM and SHA256SUMS to a GitHub release.
+# Set PUBLISH_GITHUB_RELEASE=true to publish the draft after upload; the tag workflow uses this.
 # Requires an existing login; this script never reads or stores a token:
 #   gh auth token | docker login ghcr.io -u <github-user> --password-stdin
 set -eu
@@ -26,10 +27,41 @@ if ! git diff --quiet HEAD --; then
   echo "Publishing requires clean tracked source" >&2
   exit 1
 fi
-files="garage-ui-linux-amd64 garage-ui-linux-arm64 sbom.spdx.json SHA256SUMS"
+files="garage-ui-linux-amd64 garage-ui-linux-arm64 sbom.spdx.json compose.yaml .env.example SHA256SUMS"
 for name in $files; do
   [ -f "$out/$name" ] || { echo "Missing $out/$name; run scripts/release.sh first" >&2; exit 1; }
 done
+(cd "$out" && sha256sum --check SHA256SUMS)
+
+# A published release is immutable from this script. Check before any registry
+# mutation; a draft may be retargeted to the source commit being published.
+releases=$(gh api --paginate "repos/$repo/releases?per_page=100" \
+  --jq '.[] | [.tag_name, .draft] | @tsv')
+release_state=$(printf '%s\n' "$releases" | awk -v version="$version" '$1 == version { print $2 }')
+case "$release_state" in
+  true) release_exists=true ;;
+  '') release_exists=false ;;
+  *) echo "Release $version is already published; refusing to modify it" >&2; exit 1 ;;
+esac
+
+notes=$(mktemp)
+trap 'rm -f "$notes"' EXIT HUP INT TERM
+python3 - "$version" "$notes" <<'PY'
+import sys
+from pathlib import Path
+
+version, destination = sys.argv[1:]
+lines = Path("CHANGELOG.md").read_text().splitlines()
+heading = f"## {version}"
+try:
+    start = lines.index(heading)
+except ValueError:
+    raise SystemExit(f"CHANGELOG.md has no entry for {version}")
+end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")), len(lines))
+body = "\n".join(lines[start:end]).strip()
+policy = "\n\n## Release integrity\n\nThis release is unsigned and has no build-provenance attestation. SHA-256 checksums provide file-integrity verification only."
+Path(destination).write_text(f"{body}{policy}\n")
+PY
 
 # Runs an image read-only and requires /healthz to report this release's version and commit.
 verify_image() {
@@ -78,11 +110,11 @@ for arch in amd64 arm64; do
   docker tag "garage-ui:$version-$arch" "$registry:$version-$arch"
   docker push "$registry:$version-$arch"
 done
-docker buildx imagetools create -t "$registry:$version" -t "$registry:latest" \
+docker buildx imagetools create -t "$registry:$version" \
   "$registry:$version-amd64" "$registry:$version-arm64"
 
 # A successful push is not proof: both platforms must be in the index and the pulled image must be this build.
-for tag in "$version" latest; do
+for tag in "$version"; do
   platforms=$(docker buildx imagetools inspect "$registry:$tag" \
     --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}')
   case "$platforms" in
@@ -109,19 +141,30 @@ if [ -z "$anon_token" ] || ! curl -fsS -o /dev/null -H "Authorization: Bearer $a
   exit 1
 fi
 
-# The tag is created when the owner publishes the draft, at the commit this release was built from.
-if gh release view "$version" --repo "$repo" >/dev/null 2>&1; then
-  if [ "$(gh release view "$version" --repo "$repo" --json isDraft --jq .isDraft)" != true ]; then
-    echo "Release $version is already published; refusing to modify it" >&2
-    exit 1
-  fi
+# The draft can be updated to the exact source commit. A published release was
+# rejected above before images were pushed.
+if [ "$release_exists" = true ]; then
+  gh release edit "$version" --repo "$repo" --draft --target "$commit" \
+    --title "$version" --notes-file "$notes"
 else
   gh release create "$version" --repo "$repo" --draft --target "$commit" \
-    --title "$version" --notes "See CHANGELOG.md for $version."
+    --title "$version" --notes-file "$notes"
 fi
 for name in $files; do
   gh release upload "$version" "$out/$name" --repo "$repo" --clobber
 done
 
-echo "Draft release $version is ready. Review it, then publish with:"
-echo "  gh release edit $version --repo $repo --draft=false"
+if [ "${PUBLISH_GITHUB_RELEASE:-}" = true ]; then
+  docker buildx imagetools create -t "$registry:latest" "$registry:$version"
+  version_digest=$(docker buildx imagetools inspect "$registry:$version" --format '{{.Manifest.Digest}}')
+  latest_digest=$(docker buildx imagetools inspect "$registry:latest" --format '{{.Manifest.Digest}}')
+  if [ "$version_digest" != "$latest_digest" ]; then
+    echo "latest does not match the verified $version image" >&2
+    exit 1
+  fi
+  gh release edit "$version" --repo "$repo" --draft=false
+  echo "Published release $version"
+else
+  echo "Draft release $version is ready. Review it, then publish with:"
+  echo "  PUBLISH_GITHUB_RELEASE=true scripts/publish.sh \"$out\""
+fi

@@ -6,7 +6,7 @@ Garage UI is an unofficial browser console for Garage, the S3-compatible object 
 
 The React interface is bundled into the Rust server. A production deployment serves the UI and API from one process and port; it needs neither a separate frontend service nor a browser CDN.
 
-Check [Releases](https://github.com/xjoker/garage-ui/releases) for published artifacts. Build from the source you intend to run; an unpublished draft has no public downloads and does not establish that later source changes are included. Garage **v2.3.0 or newer** is required for writes. Compatibility has been exercised with v2.3.0 and v2.4.1. The [official Garage support assessment](https://github.com/xjoker/garage-ui/blob/dev/docs/garage-support.md) records the exact stable API match, current UI gaps, vendor limits, and verification boundary; newer releases require separate validation.
+Start with the [Docker Compose quick start](https://github.com/xjoker/garage-ui/blob/dev/README.md#quick-start-docker-compose). [Releases](https://github.com/xjoker/garage-ui/releases) provide ready-to-run images, Linux binaries, and deployment files; users do not need to build from source. An unpublished draft has no public downloads. Garage **v2.3.0 or newer** is required for writes. Compatibility has been exercised with v2.3.0 and v2.4.1. The [official Garage support assessment](https://github.com/xjoker/garage-ui/blob/dev/docs/garage-support.md) records the exact stable API match, current UI gaps, vendor limits, and verification boundary; newer releases require separate validation.
 
 ## Start here
 

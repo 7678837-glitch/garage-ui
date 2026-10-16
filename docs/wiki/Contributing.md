@@ -18,7 +18,7 @@ The canonical guide pages live in [docs/wiki](https://github.com/xjoker/garage-u
 
 Write repository material in English. The Simplified Chinese locale catalog and non-ASCII test fixtures are intentional exceptions. Make a change focused enough to review independently, and explain which behavior you actually verified.
 
-The CI workflow is disabled while development is unfinished. A separate manual release workflow prepares unpublished drafts. Do not assume a pull request has remote test coverage because a workflow file exists, and do not re-enable CI as part of a documentation contribution.
+CI only builds and publishes artifacts for validated release tags. Branch pushes and pull requests do not trigger builds or tests. Contributors run affected checks locally, and maintainers complete release validation before pushing a version tag.
 
 ## Work with an AI assistant
 

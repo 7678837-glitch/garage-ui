@@ -9,11 +9,7 @@ services:
 
   garage-ui:
     image: ghcr.io/xjoker/garage-ui:${GARAGE_UI_VERSION:-20261016.1}
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
     depends_on:
       garage-ui-init:
         condition: service_completed_successfully

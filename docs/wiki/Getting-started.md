@@ -1,39 +1,12 @@
 # Getting started
 
-You need a running Garage cluster, its admin API address and token, and its S3 API address and region. The admin and S3 APIs are separate services. On the repository's local Garage example they use ports **3903** and **3900**, respectively.
+The recommended installation is **Docker Compose**. Follow the [three-step quick start](https://github.com/xjoker/garage-ui/blob/dev/README.md#quick-start-docker-compose): download two small deployment files, enter your existing Garage connection, and start the container. Docker chooses the correct Linux architecture; no source checkout, compiler, or frontend build is required.
 
-This development version requires a source build. Do not assume that a public container tag or downloadable release is available.
+You need a running Garage v2.3.0 or later cluster, its Admin API URL and token, and its S3 API URL and region. The Admin and S3 APIs are separate services, usually on ports **3903** and **3900**. Use addresses reachable from the UI container; its `localhost` is not your host or another container.
 
-## Build the application
+If you do not have Garage yet, use the [bundled local demo](Deployment.md#try-the-bundled-local-garage-demo). For HTTPS, standalone binaries, Kubernetes, or backups, see [Deployment](Deployment.md).
 
-Install the Rust toolchain from [rust-toolchain.toml](https://github.com/xjoker/garage-ui/blob/dev/rust-toolchain.toml) and the Bun version from [web/package.json](https://github.com/xjoker/garage-ui/blob/dev/web/package.json). Clone the development branch, then build from the repository root:
-
-```sh
-git clone --branch dev https://github.com/xjoker/garage-ui.git
-cd garage-ui
-scripts/build.sh
-```
-
-This installs the locked frontend dependencies, builds the browser assets, and builds `target/release/garage-ui`. The browser bundle is embedded in the binary. Bun is a build tool, not a production runtime. Keep the frontend build before the Rust build so the binary includes current assets.
-
-## Connect to an existing local Garage
-
-Save the actual Garage admin token to `$HOME/.config/garage-ui/admin-token` outside your checkout, readable only by the account running the UI. If you use another location, set `API_ADMIN_KEY_FILE` to that file's absolute path. For a Garage instance using the example ports and `garage` region:
-
-```sh
-export API_ADMIN_KEY_FILE="$HOME/.config/garage-ui/admin-token"
-export GARAGE_ADMIN_URL=http://127.0.0.1:3903
-export S3_ENDPOINT_URL=http://127.0.0.1:3900
-export S3_REGION=garage
-export COOKIE_SECURE=false
-./target/release/garage-ui
-```
-
-The token file must exist before starting the binary. Alternatively, supply the actual token through `GARAGE_ADMIN_TOKEN`. Keep secrets outside shell history and version control. `COOKIE_SECURE=false` is for this local HTTP example; use the default `true` behind HTTPS.
-
-The binary listens on **127.0.0.1:3909** by default. Open [the local UI](http://127.0.0.1:3909). If you use different Garage addresses or a different region, change the values to match your cluster. v2.3.0 and v2.4.1 require an explicit S3 endpoint and region because they lack the newer discovery fields.
-
-For the repository's bundled Garage example and Kubernetes deployments, follow [Deployment](Deployment.md).
+Once the container starts, open **[http://localhost:3909](http://localhost:3909)** on the Docker host. The UI has its own accounts; a Garage token or S3 key is not a UI login.
 
 ## Create the first administrator
 
