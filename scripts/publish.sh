@@ -156,12 +156,7 @@ done
 
 if [ "${PUBLISH_GITHUB_RELEASE:-}" = true ]; then
   docker buildx imagetools create -t "$registry:latest" "$registry:$version"
-  version_digest=$(docker buildx imagetools inspect "$registry:$version" --format '{{.Manifest.Digest}}')
-  latest_digest=$(docker buildx imagetools inspect "$registry:latest" --format '{{.Manifest.Digest}}')
-  if [ "$version_digest" != "$latest_digest" ]; then
-    echo "latest does not match the verified $version image" >&2
-    exit 1
-  fi
+  sh scripts/verify-image-tag-alias.sh "$registry" "$version" latest
   gh release edit "$version" --repo "$repo" --draft=false
   echo "Published release $version"
 else

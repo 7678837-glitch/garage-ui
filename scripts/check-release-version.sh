@@ -89,6 +89,7 @@ with tempfile.TemporaryDirectory() as temp:
     # release or when GitHub cannot establish the existing release state.
     (root / "scripts").mkdir()
     (root / "scripts/publish.sh").write_text(Path("scripts/publish.sh").read_text())
+    (root / "scripts/verify-image-tag-alias.sh").write_text(Path("scripts/verify-image-tag-alias.sh").read_text())
     artifacts = root / "artifacts"
     artifacts.mkdir()
     names = ["garage-ui-linux-amd64", "garage-ui-linux-arm64", "sbom.spdx.json", "compose.yaml", ".env.example"]
@@ -110,6 +111,44 @@ with tempfile.TemporaryDirectory() as temp:
         else:
             assert "already published" in result.stderr, result.stderr
         assert not probe.exists(), "Publication reached Docker before confirming a writable draft"
+
+    # GHCR may briefly serve the prior digest after assigning an alias. Retry
+    # until it converges, and fail after the bounded wait if it never matches.
+    (commands / "docker").write_text("""#!/bin/sh
+target=$4
+case "$target" in
+  *:20261016.3) printf 'sha256:expected\\n' ;;
+  *:latest)
+    count=0
+    [ ! -f "$ALIAS_COUNT" ] || count=$(cat "$ALIAS_COUNT")
+    count=$((count + 1))
+    printf '%s\\n' "$count" > "$ALIAS_COUNT"
+    if [ "$ALIAS_MODE" = transient ] && [ "$count" -lt 3 ]; then
+      printf 'sha256:old\\n'
+    elif [ "$ALIAS_MODE" = permanent ]; then
+      printf 'sha256:old\\n'
+    else
+      printf 'sha256:expected\\n'
+    fi
+    ;;
+esac
+""")
+    (commands / "docker").chmod(0o755)
+    (commands / "sleep").write_text("#!/bin/sh\\nexit 0\\n")
+    (commands / "sleep").chmod(0o755)
+    for mode, expected_count, expected_status in (("transient", 3, 0), ("permanent", 30, 1)):
+        alias_count = root / "alias-count"
+        alias_count.unlink(missing_ok=True)
+        env = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}", ALIAS_COUNT=str(alias_count), ALIAS_MODE=mode)
+        result = subprocess.run(
+            ["sh", "scripts/verify-image-tag-alias.sh", "ghcr.io/xjoker/garage-ui", "20261016.3", "latest"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == expected_status, result.stderr
+        assert int(alias_count.read_text()) == expected_count, alias_count.read_text()
 
     assert "needs: gate" in workflow, "release must not run before the tag gate"
     assert "pull_request:" not in workflow and "branches:" not in workflow, "ordinary pushes and PRs must not build"

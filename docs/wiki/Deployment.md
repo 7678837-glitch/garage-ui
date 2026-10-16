@@ -70,7 +70,7 @@ Create a private `.env` file with the four Garage settings above, then run:
 docker run -d --name garage-ui --restart unless-stopped \
   --read-only --tmpfs /tmp --env-file .env \
   -p 127.0.0.1:3909:3909 -v garage-ui-data:/data \
-  -e COOKIE_SECURE=false ghcr.io/xjoker/garage-ui:20261016.2
+  -e COOKIE_SECURE=false ghcr.io/xjoker/garage-ui:20261016.3
 ```
 
 This uses local HTTP. Open [http://localhost:3909](http://localhost:3909). Use HTTPS and secure cookies for remote access. The image initializes a fresh named volume with the non-root user's ownership; an existing directory or volume must already be writable by UID/GID 65532.
