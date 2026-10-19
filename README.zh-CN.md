@@ -78,7 +78,7 @@ docker compose down
 
 ### 还没有 Garage 集群？
 
-[本地演示](docs/wiki/Deployment.md#try-the-bundled-local-garage-demo)会同时启动 Garage 和 UI，生成演示用凭据，并初始化单节点布局。它仅用于本地评估。
+[本地演示](docs/wiki/Deployment.md#try-the-bundled-local-garage-demo)会同时启动 Garage 和 UI，生成演示用凭据，并初始化单节点布局。它用于本地评估。
 
 ### 其他安装方式
 
@@ -100,7 +100,7 @@ docker compose down
 
 ## 保护你的数据和凭据
 
-首次访问时会创建一个管理员；身份验证始终开启。Garage 管理令牌只保存在服务器端，浏览器会话使用 HttpOnly cookie。请让 UI 只在私有网络中可访问，或放在 HTTPS 反向代理之后，并使用只包含所需权限范围的 Garage 令牌。
+首次访问时会创建一个管理员；身份验证始终开启。Garage 管理令牌只保存在服务器端，浏览器会话使用 HttpOnly cookie。请不要公开暴露 UI，或将其放在 HTTPS 反向代理之后，并使用只包含所需权限范围的 Garage 令牌。
 
 在容器中请持久化并备份 `/data`；直接运行二进制时请持久化并备份 `DATA_DIR`（默认：`./data`）。这个目录包含 UI 账号、会话、审计记录、存储桶到密钥的映射，以及生成的会话密钥。复制该目录前请先停止 UI，以得到一致的备份。实际的对象和集群状态由 Garage 保存：请另行备份 Garage 的数据和配置。删除 Docker 卷会删除其中保存的数据。
 
