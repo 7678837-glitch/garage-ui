@@ -6,7 +6,7 @@ CI builds and publishes release artifacts only for valid version tags. Ordinary 
 
 Read the applicable [repository instructions](AGENTS.md), the [working spec](docs/README.md), and the relevant source and tests. [DEV-GUIDE.md](DEV-GUIDE.md) is the historical requirements draft, with superseded Go/pnpm instructions. Honor generated-file notices and update their source rather than editing managed instruction files directly. The working spec and [decisions](docs/decisions.md) describe the current Rust/Bun stack. Specs contain acceptance targets, so confirm a feature in source before describing it as implemented.
 
-Use English for code comments, errors, UI copy, documentation, commits, and pull requests. Simplified Chinese belongs in the existing UI locale catalog or deliberate non-ASCII test fixtures.
+Use English for code comments, errors, UI copy, documentation, commits, and pull requests. Simplified Chinese belongs in the existing UI locale catalog or deliberate non-ASCII test fixtures. The only Chinese documentation is `README.zh-CN.md`, a companion translation of `README.md`; update it whenever `README.md` changes.
 
 ## Repository and script map
 

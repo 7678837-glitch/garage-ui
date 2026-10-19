@@ -8,7 +8,9 @@
 
 **在一个浏览器里管理你的 Garage 集群、存储桶和文件。**
 
-[English](README.md) · 简体中文
+[English](README.md) | 简体中文
+
+本文为英文版的辅助译本，内容以英文版为准。
 
 Garage UI 是 [Garage](https://garagehq.deuxfleurs.fr/)（Deuxfleurs 开发的 S3 兼容对象存储）的非官方 Web 界面。你可以浏览存储、上传和下载文件、管理访问权限、查看集群状态，不需要在多个工具之间切换。一个 Rust 二进制同时提供 React 界面，并连接你的 Garage Admin API 和 S3 API。界面使用 Radix Themes，并适配窄屏。
 
