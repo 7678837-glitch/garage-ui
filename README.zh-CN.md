@@ -12,7 +12,7 @@
 
 Garage UI 是 [Garage](https://garagehq.deuxfleurs.fr/)（Deuxfleurs 开发的 S3 兼容对象存储）的非官方 Web 界面。你可以浏览存储、上传和下载文件、管理访问权限、查看集群状态，不需要在多个工具之间切换。一个 Rust 二进制同时提供 React 界面，并连接你的 Garage Admin API 和 S3 API。界面使用 Radix Themes，并适配窄屏。
 
-本仓库与名称相近的 [Noooste/garage-ui](https://github.com/Noooste/garage-ui) 是两个不同的项目，两者互不为 fork。
+本仓库与 [Noooste/garage-ui](https://github.com/Noooste/garage-ui) 是不同的项目。
 
 ![Garage UI 对象浏览器](docs/images/objects-desktop.png)
 

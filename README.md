@@ -12,7 +12,7 @@ English · [简体中文](README.zh-CN.md)
 
 Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. One Rust binary serves the React interface and connects to your Garage Admin and S3 APIs. The interface uses Radix Themes and adapts to narrow screens.
 
-This repository is a separate project from [Noooste/garage-ui](https://github.com/Noooste/garage-ui), which has a similar name; neither is a fork of the other.
+This repository is a different project from [Noooste/garage-ui](https://github.com/Noooste/garage-ui).
 
 ![Garage UI object browser](docs/images/objects-desktop.png)
 
