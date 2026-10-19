@@ -16,7 +16,7 @@ Use a separate UI data directory and a test Garage cluster for changes that writ
 
 The canonical guide pages live in [docs/wiki](https://github.com/xjoker/garage-ui/tree/dev/docs/wiki). Keep instructions tied to the actual source behavior: exact labels, commands, defaults, expected results, and relevant failure cases. Requirements in [docs](https://github.com/xjoker/garage-ui/tree/dev/docs) are acceptance targets. Check the [delivery roadmap](https://github.com/xjoker/garage-ui/blob/dev/docs/roadmap.md) and its revision-specific evidence before labeling a requirement as complete or outstanding.
 
-Write repository material in English. The Simplified Chinese locale catalog and non-ASCII test fixtures are intentional exceptions. `README.zh-CN.md` is also allowed: it is the maintained Simplified Chinese translation of `README.md`, so update it whenever `README.md` changes; all other documentation stays English-only. Make a change focused enough to review independently, and explain which behavior you actually verified.
+Write repository material in English. The Simplified Chinese locale catalog and non-ASCII test fixtures are intentional exceptions. Make a change focused enough to review independently, and explain which behavior you actually verified.
 
 CI only builds and publishes artifacts for validated release tags. Branch pushes and pull requests do not trigger builds or tests. Contributors run affected checks locally, and maintainers complete release validation before pushing a version tag.
 
