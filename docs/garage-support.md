@@ -1,4 +1,6 @@
-# Official Garage support assessment
+# Garage release support assessment
+
+Garage UI maintains this assessment itself. It compares Garage UI with official Garage releases and is not issued or endorsed by the Garage project or Deuxfleurs.
 
 As of **2026-10-15**, Garage UI targets the latest official stable Garage release, **v2.4.1**, and has exercised compatibility with **v2.3.0 and v2.4.1**. Its pinned Admin API document exactly matches official v2.4.1, and the proxy allowlist covers all 46 stable `/v2` HTTP operations. Endpoint coverage does not establish complete UI exposure or runtime acceptance of every operation.
 

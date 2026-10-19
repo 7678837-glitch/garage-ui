@@ -8,7 +8,11 @@
 
 **Your Garage cluster, buckets, and files in one browser.**
 
-Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. One Rust binary serves the React interface and connects to your Garage Admin and S3 APIs. The interface uses Radix Themes for accessible controls and adapts to narrow screens.
+English · [简体中文](README.zh-CN.md)
+
+Garage UI is an unofficial web interface for [Garage](https://garagehq.deuxfleurs.fr/), the S3-compatible object store from Deuxfleurs. Browse your storage, upload and download files, manage access, and check your cluster without switching between tools. One Rust binary serves the React interface and connects to your Garage Admin and S3 APIs. The interface uses Radix Themes and adapts to narrow screens.
+
+This repository is a separate project from [Noooste/garage-ui](https://github.com/Noooste/garage-ui), which has a similar name; neither is a fork of the other.
 
 ![Garage UI object browser](docs/images/objects-desktop.png)
 
@@ -92,7 +96,7 @@ Release images and binaries are unsigned. Each release includes an SBOM and SHA-
 - **See what needs attention:** check cluster health and capacity, manage nodes and layout, inspect workers and block errors, and run repair tasks.
 - **Keep daily work comfortable:** use light or dark mode, English or Simplified Chinese, and layouts that adapt to desktop and narrow screens.
 
-Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. See the [official Garage support assessment](docs/garage-support.md) for the stable API match, UI gaps, vendor limits, and verification boundary. Versions older than v2.3.0 cannot perform writes through the UI.
+Compatibility has been tested with **Garage v2.3.0 and v2.4.1**. See the [Garage release support assessment](docs/garage-support.md) for the stable API match, UI gaps, vendor limits, and verification boundary. Versions older than v2.3.0 cannot perform writes through the UI.
 
 ## Keep your data and credentials safe
 
@@ -105,7 +109,7 @@ Persist and back up `/data` in containers, or `DATA_DIR` when running the binary
 - [Operator guide and reference](docs/wiki/Home.md): deployment, configuration, storage, permissions, cluster operations, and troubleshooting.
 - [Contributing](CONTRIBUTING.md): local development, focused verification, and AI-assisted contributions.
 - [Requirements](docs/README.md): the working specification and acceptance targets. Requirements are not a record of completed verification.
-- [Official Garage support assessment](docs/garage-support.md): supported releases, upstream API drift, feature gaps, and validation limits.
+- [Garage release support assessment](docs/garage-support.md): supported releases, upstream API drift, feature gaps, and validation limits.
 - [Delivery status and roadmap](docs/roadmap.md): implemented areas, verification limits, and deferred work.
 - [Verification evidence](docs/README.md#verification-evidence): dated reports, source identities, limits, and reproduction commands.
 
